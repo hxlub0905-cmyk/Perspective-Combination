@@ -2027,9 +2027,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         btn_row.addWidget(self.btn_export)
         basic_layout.addLayout(btn_row)
 
-        self.btn_close = QtWidgets.QPushButton("Close")
-        basic_layout.addWidget(self.btn_close)
-
         left_layout.addWidget(self.grp_basic_controls)
         left_divider = QtWidgets.QFrame()
         left_divider.setFrameShape(QtWidgets.QFrame.HLine)
@@ -2457,7 +2454,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
         self.btn_compute.clicked.connect(self._on_compute)
         self.btn_export.clicked.connect(self._on_export)
-        self.btn_close.clicked.connect(self.close)
         self.btn_select_all.clicked.connect(self._select_all_compare)
         self.btn_select_none.clicked.connect(self._select_none_compare)
         self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
