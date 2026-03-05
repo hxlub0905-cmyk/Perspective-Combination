@@ -21,48 +21,48 @@ class Colors:
     BRAND_PRIMARY_GLOW = "#F59E0B44"  # 橙色光暈（透明度 27%）
 
     # 語義色系 (Semantic Colors)
-    SUCCESS = "#26D7AE"            # 成功/正面色（青綠色）
+    SUCCESS = "#0EA5A4"            # 成功/正面色（青綠色）
     WARNING = "#EF4444"            # 警告/錯誤色（紅色）
     INFO = "#3B82F6"               # 資訊色（藍色）
 
     # 背景色系 (Background Colors)
-    BG_WINDOW = "#0F141A"          # 主窗口背景
-    BG_PANEL = "#171D25"           # 面板背景
-    BG_CARD = "#141A22"            # 卡片背景
-    BG_ALT = "#1E2734"             # 替代背景
-    BG_HEADER = "#1C232E"          # 標題欄背景
-    BG_INPUT = "#141A22"           # 輸入框背景
+    BG_WINDOW = "#F6F7F9"          # 主窗口背景
+    BG_PANEL = "#FFFFFF"           # 面板背景
+    BG_CARD = "#FCFCFD"            # 卡片背景
+    BG_ALT = "#EEF1F5"             # 替代背景
+    BG_HEADER = "#E9EDF2"          # 標題欄背景
+    BG_INPUT = "#FFFFFF"           # 輸入框背景
 
     # 文字色系 (Text Colors)
-    TEXT_PRIMARY = "#EAEAEA"       # 主要文字
-    TEXT_SECONDARY = "#A0A7AF"     # 次要文字
-    TEXT_MUTED = "#6B7280"         # 禁用/弱化文字
-    TEXT_INVERSE = "#0F141A"       # 反色文字（用於亮色背景）
+    TEXT_PRIMARY = "#1F2937"       # 主要文字
+    TEXT_SECONDARY = "#4B5563"     # 次要文字
+    TEXT_MUTED = "#9CA3AF"         # 禁用/弱化文字
+    TEXT_INVERSE = "#111827"       # 反色文字（用於亮色背景）
 
     # 邊框色系 (Border Colors)
-    BORDER_DEFAULT = "#202633"     # 默認邊框
+    BORDER_DEFAULT = "#D5DBE3"     # 默認邊框
     BORDER_HOVER = "#F59E0B8C"     # 懸停邊框（橙色，透明度 55%）
-    BORDER_ACTIVE = "#26D7AE99"    # 激活邊框（綠色，透明度 60%）
+    BORDER_ACTIVE = "#F59E0B99"    # 激活邊框（橙色，透明度 60%）
     BORDER_FOCUS = "#F59E0B"       # 焦點邊框
 
     # 圖表色系 (Chart Colors)
     CHART_PRIMARY = "#F59E0B"      # 主要圖表色
-    CHART_SECONDARY = "#26D7AE"    # 次要圖表色
-    CHART_TERTIARY = "#A0A7AF"     # 第三圖表色
+    CHART_SECONDARY = "#0EA5A4"    # 次要圖表色
+    CHART_TERTIARY = "#4B5563"     # 第三圖表色
     CHART_QUATERNARY = "#3B82F6"   # 第四圖表色
 
     # 漸變色 (Gradients)
-    GRADIENT_CARD_START = "#3A3A3E"
-    GRADIENT_CARD_MID = "#2D2D32"
-    GRADIENT_CARD_END = "#252529"
+    GRADIENT_CARD_START = "#FFFFFF"
+    GRADIENT_CARD_MID = "#F8FAFC"
+    GRADIENT_CARD_END = "#EEF2F7"
 
-    GRADIENT_BG_START = "#2A2A2E"
-    GRADIENT_BG_MID = "#232327"
-    GRADIENT_BG_END = "#1C1C1F"
+    GRADIENT_BG_START = "#F8FAFC"
+    GRADIENT_BG_MID = "#F1F5F9"
+    GRADIENT_BG_END = "#E8EEF5"
 
     # 半透明色 (Transparent Colors)
-    OVERLAY_DARK = "rgba(15, 20, 26, 0.85)"
-    OVERLAY_LIGHT = "rgba(234, 234, 234, 0.1)"
+    OVERLAY_DARK = "rgba(17, 24, 39, 0.55)"
+    OVERLAY_LIGHT = "rgba(255, 255, 255, 0.75)"
     SELECTION_BG = "rgba(245, 158, 11, 0.3)"  # 選擇背景
     SLIDER_FILLED = "rgba(245, 158, 11, 0.35)"  # 滑塊已填充部分
 
@@ -84,9 +84,9 @@ class Typography:
     FONT_SIZE_H1 = "22px"          # 大標題（Feature cards）
     FONT_SIZE_H2 = "18px"          # 二級標題
     FONT_SIZE_H3 = "14px"          # 三級標題（Section headers）
-    FONT_SIZE_BODY = "12px"        # 正文
-    FONT_SIZE_SMALL = "11px"       # 小字
-    FONT_SIZE_CAPTION = "10px"     # 說明文字
+    FONT_SIZE_BODY = "13px"        # 正文
+    FONT_SIZE_SMALL = "12px"       # 小字
+    FONT_SIZE_CAPTION = "11px"     # 說明文字
 
     # 字重
     FONT_WEIGHT_REGULAR = "400"
@@ -121,10 +121,10 @@ class Spacing:
     XXXL = "48px"
 
     # 常用組合
-    BUTTON_PADDING = "6px 16px"
-    GROUPBOX_PADDING = "14px 10px 10px 10px"
+    BUTTON_PADDING = "8px 16px"
+    GROUPBOX_PADDING = "16px 12px 12px 12px"
     CARD_PADDING = "16px"
-    INPUT_PADDING = "6px 12px"
+    INPUT_PADDING = "7px 12px"
     DIALOG_PADDING = "20px"
 
 
@@ -187,7 +187,7 @@ class Shadows:
     XL = "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)"
     INNER = "inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)"
     GLOW_PRIMARY = f"0 0 20px {Colors.BRAND_PRIMARY_GLOW}"
-    GLOW_SUCCESS = "0 0 20px rgba(38, 215, 174, 0.3)"
+    GLOW_SUCCESS = "0 0 20px rgba(14, 165, 164, 0.28)"
 
 
 # ============================================================================

@@ -48,10 +48,17 @@ BRAND_TEXT = Colors.TEXT_PRIMARY               # #EAEAEA
 BRAND_TEXT_SEC = Colors.TEXT_SECONDARY         # #A0A7AF
 BRAND_TEXT_MUTED = Colors.TEXT_MUTED           # #6B7280
 BRAND_TEXT_INVERSE = Colors.TEXT_INVERSE       # #0F141A
-BRAND_HOVER = "#232E3D"
+BRAND_TEXT_ON_PRIMARY = "#FFFFFF"
+BRAND_HOVER = "#EEF3F8"
 BRAND_SUCCESS = Colors.SUCCESS                # #26D7AE
 BRAND_WARN = Colors.BRAND_PRIMARY_SOFT        # #FBBF24
 BRAND_WARNING = Colors.WARNING                # #EF4444
+
+
+def _hex_to_bgr(color: str) -> Tuple[int, int, int]:
+    """Convert #RRGGBB color to BGR tuple for OpenCV drawing."""
+    c = color.lstrip("#")
+    return (int(c[4:6], 16), int(c[2:4], 16), int(c[0:2], 16))
 
 DIALOG_STYLE = f"""
     QDialog {{
@@ -69,7 +76,7 @@ DIALOG_STYLE = f"""
         border: 1px solid {BRAND_BORDER};
         border-radius: {BorderRadius.MD};
         background-color: {BRAND_PANEL};
-        margin-top: 14px;
+        margin-top: 16px;
         padding: {Spacing.GROUPBOX_PADDING};
     }}
     QGroupBox::title {{
@@ -79,6 +86,24 @@ DIALOG_STYLE = f"""
         padding: 2px 6px;
         color: {BRAND_TEXT};
         background-color: transparent;
+    }}
+    QGroupBox#AdvancedSettings {{
+        background-color: {BRAND_CARD};
+        border: 1px solid #C9D3DF;
+    }}
+    QGroupBox#AdvancedSettings::title {{
+        color: {BRAND_TEXT_SEC};
+        font-weight: {Typography.FONT_WEIGHT_BOLD};
+    }}
+    QFrame#TopToolbar {{
+        background-color: {BRAND_CARD};
+        border: 1px solid {BRAND_BORDER};
+        border-radius: {BorderRadius.MD};
+    }}
+    QLabel[toolbarLabel="true"] {{
+        color: {BRAND_TEXT_SEC};
+        font-size: {Typography.FONT_SIZE_SMALL};
+        font-weight: {Typography.FONT_WEIGHT_MEDIUM};
     }}
 
     /* Label */
@@ -98,26 +123,28 @@ DIALOG_STYLE = f"""
         border: 1px solid {BRAND_BORDER};
         border-radius: {BorderRadius.MD};
         padding: {Spacing.BUTTON_PADDING};
+        min-height: 30px;
         font-weight: {Typography.FONT_WEIGHT_MEDIUM};
         font-size: {Typography.FONT_SIZE_SMALL};
     }}
     QPushButton:hover {{
-        background-color: {BRAND_HOVER};
+        background-color: #FFF7ED;
         border-color: {BRAND_PRIMARY};
     }}
     QPushButton:pressed {{
-        background-color: {BRAND_BORDER};
+        background-color: #FFE7C2;
+        border-color: #E98A00;
     }}
     QPushButton:disabled {{
-        background-color: {BRAND_PANEL};
+        background-color: {BRAND_ALT};
         color: {BRAND_TEXT_MUTED};
-        border-color: {BRAND_PANEL};
+        border-color: {BRAND_BORDER};
     }}
     QPushButton[variant="primary"] {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                     stop:0 {BRAND_PRIMARY},
                                     stop:1 #D97706);
-        color: {BRAND_TEXT_INVERSE};
+        color: {BRAND_TEXT_ON_PRIMARY};
         font-weight: {Typography.FONT_WEIGHT_BOLD};
         border: none;
     }}
@@ -125,6 +152,44 @@ DIALOG_STYLE = f"""
         background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                     stop:0 {BRAND_PRIMARY_SOFT},
                                     stop:1 {BRAND_PRIMARY});
+    }}
+    QPushButton#LeftAdvancedToggle {{
+        background-color: transparent;
+        color: {BRAND_TEXT_SEC};
+        border: 1px solid transparent;
+        border-bottom: 1px solid {BRAND_BORDER};
+        border-radius: 0px;
+        text-align: left;
+        padding: 4px 2px 6px 2px;
+        min-height: 24px;
+        font-weight: {Typography.FONT_WEIGHT_MEDIUM};
+    }}
+    QPushButton#LeftAdvancedToggle:hover {{
+        color: {BRAND_PRIMARY};
+        border-bottom: 1px solid {BRAND_PRIMARY};
+        background-color: transparent;
+    }}
+    QPushButton#LeftAdvancedToggle:checked {{
+        color: {BRAND_PRIMARY};
+        border-bottom: 1px solid {BRAND_PRIMARY};
+    }}
+    QPushButton[toolbarToggle="true"] {{
+        background-color: {BRAND_PANEL};
+        border: 1px solid {BRAND_BORDER};
+        border-radius: {BorderRadius.SM};
+        padding: 4px 8px;
+        min-height: 28px;
+        font-size: {Typography.FONT_SIZE_SMALL};
+    }}
+    QPushButton[toolbarToggle="true"]:hover {{
+        background-color: #FFF7ED;
+        border-color: {BRAND_PRIMARY};
+    }}
+    QPushButton[toolbarToggle="true"]:checked {{
+        background-color: {BRAND_PRIMARY};
+        color: {BRAND_TEXT_ON_PRIMARY};
+        font-weight: {Typography.FONT_WEIGHT_BOLD};
+        border: none;
     }}
 
     /* ComboBox */
@@ -135,7 +200,7 @@ DIALOG_STYLE = f"""
         border-radius: {BorderRadius.SM};
         padding: {Spacing.INPUT_PADDING};
         font-size: {Typography.FONT_SIZE_SMALL};
-        min-height: 20px;
+        min-height: 28px;
     }}
     QComboBox:hover {{
         border-color: {BRAND_PRIMARY};
@@ -145,10 +210,10 @@ DIALOG_STYLE = f"""
         padding-right: 8px;
     }}
     QComboBox QAbstractItemView {{
-        background-color: {BRAND_CARD};
+        background-color: {BRAND_PANEL};
         color: {BRAND_TEXT};
         selection-background-color: {BRAND_PRIMARY};
-        selection-color: {BRAND_TEXT_INVERSE};
+        selection-color: {BRAND_TEXT_ON_PRIMARY};
         border: 1px solid {BRAND_BORDER};
         border-radius: {BorderRadius.SM};
     }}
@@ -162,12 +227,12 @@ DIALOG_STYLE = f"""
     QCheckBox::indicator {{
         width: 18px;
         height: 18px;
-        border: 2px solid rgba(245, 158, 11, 0.45);
+        border: 2px solid rgba(245, 158, 11, 0.35);
         border-radius: 4px;
-        background-color: rgba(245, 158, 11, 0.12);
+        background-color: rgba(245, 158, 11, 0.08);
     }}
     QCheckBox::indicator:hover {{
-        border-color: rgba(245, 158, 11, 0.65);
+        border-color: rgba(245, 158, 11, 0.55);
     }}
     QCheckBox::indicator:checked {{
         background-color: {BRAND_PRIMARY};
@@ -181,9 +246,24 @@ DIALOG_STYLE = f"""
         border: 1px solid {BRAND_BORDER};
         border-radius: {BorderRadius.SM};
         padding: 4px 8px;
+        min-height: 28px;
         font-size: {Typography.FONT_SIZE_SMALL};
     }}
     QSpinBox:hover, QDoubleSpinBox:hover {{
+        border-color: {BRAND_PRIMARY};
+    }}
+
+    /* LineEdit */
+    QLineEdit {{
+        background-color: {BRAND_CARD};
+        color: {BRAND_TEXT};
+        border: 1px solid {BRAND_BORDER};
+        border-radius: {BorderRadius.SM};
+        padding: {Spacing.INPUT_PADDING};
+        selection-background-color: {BRAND_PRIMARY};
+        selection-color: {BRAND_TEXT_ON_PRIMARY};
+    }}
+    QLineEdit:focus {{
         border-color: {BRAND_PRIMARY};
     }}
 
@@ -191,7 +271,7 @@ DIALOG_STYLE = f"""
     QSlider::groove:horizontal {{
         border: none;
         height: {Spacing.SM};
-        background: {BRAND_BORDER};
+        background: {BRAND_ALT};
         border-radius: 3px;
     }}
     QSlider::handle:horizontal {{
@@ -217,13 +297,13 @@ DIALOG_STYLE = f"""
         background-color: transparent;
     }}
     QScrollBar:vertical {{
-        background-color: {BRAND_PANEL};
+        background-color: {BRAND_ALT};
         width: 8px;
         margin: 0;
         border-radius: 4px;
     }}
     QScrollBar::handle:vertical {{
-        background-color: {BRAND_BORDER};
+        background-color: #C7D0DC;
         min-height: 30px;
         border-radius: 4px;
     }}
@@ -464,7 +544,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         # Draw hint box if enabled
         if self._show_hint and self._hint_rect is not None:
             x, y, rw, rh = self._hint_rect
-            hint_color = (174, 215, 38)  # #26D7AE in BGR
+            hint_color = _hex_to_bgr(BRAND_SUCCESS)
             cv2.rectangle(img_rgb, (x, y), (x + rw, y + rh), hint_color, 2)
             cx, cy = x + rw // 2, y + rh // 2
             mark_len = 10
@@ -798,7 +878,7 @@ class ImageDisplayWidget(QtWidgets.QLabel):
         if self._show_hint and self._hint_rect is not None:
             x, y, rw, rh = self._hint_rect
             # Draw rectangle (teal accent color - BGR format)
-            hint_color = (174, 215, 38)  # #26D7AE in BGR
+            hint_color = _hex_to_bgr(BRAND_SUCCESS)
             cv2.rectangle(img_rgb, (x, y), (x + rw, y + rh), hint_color, 2)
             # Draw corner marks instead of full crosshair
             cx, cy = x + rw // 2, y + rh // 2
@@ -904,9 +984,9 @@ class HistogramCanvas(FigureCanvas):
         bar_colors = []
         for edge in edges[:-1]:
             if lo_set and hi_set and lo_v <= edge <= hi_v:
-                bar_colors.append('#26D7AE')  # teal highlight
+                bar_colors.append(BRAND_SUCCESS)  # success highlight
             elif lo_set and not hi_set and edge >= lo_v:
-                bar_colors.append('#26D7AE')  # pending second click — same cyan
+                bar_colors.append(BRAND_SUCCESS)  # pending second click
             else:
                 bar_colors.append(BRAND_PRIMARY)
 
@@ -915,25 +995,25 @@ class HistogramCanvas(FigureCanvas):
 
         # Range shading
         if lo_set and hi_set:
-            self.ax.axvspan(lo_v, hi_v, alpha=0.12, color='#26D7AE', zorder=0)
+            self.ax.axvspan(lo_v, hi_v, alpha=0.12, color=BRAND_SUCCESS, zorder=0)
 
         # Vertical markers
         if lo_set:
-            self.ax.axvline(lo_v, color='#26D7AE', linewidth=1.5, linestyle='--')
+            self.ax.axvline(lo_v, color=BRAND_SUCCESS, linewidth=1.5, linestyle='--')
         if hi_set:
-            self.ax.axvline(hi_v, color='#26D7AE', linewidth=1.5, linestyle='--')
+            self.ax.axvline(hi_v, color=BRAND_SUCCESS, linewidth=1.5, linestyle='--')
 
         # Annotation
         if lo_set and not hi_set:
             self.ax.text(0.02, 0.96, f"lo={lo_v}  ← click to set hi",
                          transform=self.ax.transAxes, fontsize=7.5,
-                         color='#26D7AE', va='top')
+                         color=BRAND_SUCCESS, va='top')
         elif lo_set and hi_set:
             pct = np.sum((edges[:-1] >= lo_v) & (edges[:-1] <= hi_v) * counts)
             total = counts.sum() or 1
             self.ax.text(0.02, 0.96, f"GL {lo_v}–{hi_v}  ({pct/total*100:.1f}%)",
                          transform=self.ax.transAxes, fontsize=7.5,
-                         color='#26D7AE', va='top')
+                         color=BRAND_SUCCESS, va='top')
 
         # Y-axis formatter
         from matplotlib.ticker import FuncFormatter
@@ -1491,6 +1571,31 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout = QtWidgets.QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
+
+        self.grp_basic_controls = QtWidgets.QGroupBox("Basic Workflow")
+        self.grp_basic_controls.setObjectName("BasicSettings")
+        basic_layout = QtWidgets.QVBoxLayout(self.grp_basic_controls)
+        basic_layout.setContentsMargins(8, 12, 8, 8)
+        basic_layout.setSpacing(8)
+
+        self.grp_advanced_controls = QtWidgets.QGroupBox("Advanced Settings")
+        self.grp_advanced_controls.setObjectName("AdvancedSettings")
+        adv_controls_layout = QtWidgets.QVBoxLayout(self.grp_advanced_controls)
+        adv_controls_layout.setContentsMargins(8, 12, 8, 8)
+        adv_controls_layout.setSpacing(8)
+
+        self.btn_left_adv_toggle = QtWidgets.QPushButton("Show Advanced Settings ▸")
+        self.btn_left_adv_toggle.setObjectName("LeftAdvancedToggle")
+        self.btn_left_adv_toggle.setCheckable(True)
+        self.btn_left_adv_toggle.setChecked(False)
+        adv_controls_layout.addWidget(self.btn_left_adv_toggle)
+
+        self.wgt_left_advanced = QtWidgets.QWidget()
+        self.left_advanced_layout = QtWidgets.QVBoxLayout(self.wgt_left_advanced)
+        self.left_advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_advanced_layout.setSpacing(8)
+        self.wgt_left_advanced.setVisible(False)
+        adv_controls_layout.addWidget(self.wgt_left_advanced)
         
         # Image Selection Group
         grp_select = QtWidgets.QGroupBox("Image Selection")
@@ -1669,7 +1774,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._qf_roi_rect: Optional[tuple] = None  # (norm_x, norm_y, norm_w, norm_h)
         self._qf_last_result: Optional[QuadrantFusionResult] = None
         
-        left_layout.addWidget(grp_select)
+        basic_layout.addWidget(grp_select)
 
         # Operation Settings Group (Standard mode only)
         self.grp_op = grp_op = QtWidgets.QGroupBox("Operation")
@@ -1704,7 +1809,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         op_layout.addWidget(self.grp_blend_coef)
 
         # ── Advanced options (collapsed by default) ─────────────────────────
-        self.btn_adv_toggle = QtWidgets.QPushButton("⚙ Advanced ▶")
+        self.btn_adv_toggle = QtWidgets.QPushButton("Advanced \u25b6")
         self.btn_adv_toggle.setCheckable(True)
         self.btn_adv_toggle.setChecked(False)
         self.btn_adv_toggle.setStyleSheet(f"""
@@ -1879,7 +1984,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.grp_advanced.setVisible(False)
         op_layout.addWidget(self.grp_advanced)
 
-        left_layout.addWidget(grp_op)
+        self.left_advanced_layout.addWidget(grp_op)
 
         # Alignment Settings Group (Standard mode only)
         self.grp_align = grp_align = QtWidgets.QGroupBox("Alignment")
@@ -1910,9 +2015,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         snr_win_row.addStretch()
         align_layout.addLayout(snr_win_row)
 
-        left_layout.addWidget(grp_align)
-
-        left_layout.addStretch()
+        self.left_advanced_layout.addWidget(grp_align)
         
         # Action buttons
         btn_row = QtWidgets.QHBoxLayout()
@@ -1922,10 +2025,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_export.setEnabled(False)
         btn_row.addWidget(self.btn_compute)
         btn_row.addWidget(self.btn_export)
-        left_layout.addLayout(btn_row)
+        basic_layout.addLayout(btn_row)
 
-        self.btn_close = QtWidgets.QPushButton("Close")
-        left_layout.addWidget(self.btn_close)
+        left_layout.addWidget(self.grp_basic_controls)
+        left_divider = QtWidgets.QFrame()
+        left_divider.setFrameShape(QtWidgets.QFrame.HLine)
+        left_divider.setStyleSheet(f"color: {BRAND_BORDER};")
+        left_layout.addWidget(left_divider)
+        left_layout.addWidget(self.grp_advanced_controls)
+        left_layout.addStretch()
         
         main_layout.addWidget(left_panel)
         
@@ -1936,10 +2044,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_layout.setSpacing(8)
         
         # === TOP CONTROL BAR (above images) ===
-        control_row = QtWidgets.QHBoxLayout()
+        top_toolbar = QtWidgets.QFrame()
+        top_toolbar.setObjectName("TopToolbar")
+        control_row = QtWidgets.QHBoxLayout(top_toolbar)
+        control_row.setContentsMargins(10, 8, 10, 8)
+        control_row.setSpacing(8)
         
         # Left: Visual preview info
-        control_row.addWidget(QtWidgets.QLabel("Preview:"))
+        lbl_preview = QtWidgets.QLabel("Preview")
+        lbl_preview.setProperty("toolbarLabel", True)
+        control_row.addWidget(lbl_preview)
         self.lbl_blend_info = QtWidgets.QLabel("Visual cross-fade (drag slider below)")
         self.lbl_blend_info.setStyleSheet(f"color: {BRAND_TEXT_SEC}; font-size: {Typography.FONT_SIZE_SMALL};")
         control_row.addWidget(self.lbl_blend_info)
@@ -1955,7 +2069,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         control_row.addSpacing(30)
         
         # Right: Diff controls
-        control_row.addWidget(QtWidgets.QLabel("Display:"))
+        lbl_display = QtWidgets.QLabel("Display")
+        lbl_display.setProperty("toolbarLabel", True)
+        control_row.addWidget(lbl_display)
         self.btn_mode_diff = QtWidgets.QPushButton("Diff")
         self.btn_mode_diff.setCheckable(True)
         self.btn_mode_diff.setChecked(True)
@@ -1964,29 +2080,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_mode_zmap.setCheckable(True)
         self.btn_mode_zmap.setFixedWidth(55)
         
-        toggle_style = f"""
-            QPushButton {{
-                background-color: {BRAND_CARD};
-                border: 1px solid {BRAND_BORDER};
-                border-radius: 4px;
-                padding: 3px 6px;
-                font-size: {Typography.FONT_SIZE_SMALL};
-            }}
-            QPushButton:checked {{
-                background-color: {BRAND_PRIMARY};
-                color: {BRAND_TEXT_INVERSE};
-                font-weight: {Typography.FONT_WEIGHT_BOLD};
-                border: none;
-            }}
-        """
-        self.btn_mode_diff.setStyleSheet(toggle_style)
-        self.btn_mode_zmap.setStyleSheet(toggle_style)
+        self.btn_mode_diff.setProperty("toolbarToggle", True)
+        self.btn_mode_zmap.setProperty("toolbarToggle", True)
         
         control_row.addWidget(self.btn_mode_diff)
         control_row.addWidget(self.btn_mode_zmap)
         
         control_row.addSpacing(15)
-        control_row.addWidget(QtWidgets.QLabel("Range:"))
+        lbl_range = QtWidgets.QLabel("Range")
+        lbl_range.setProperty("toolbarLabel", True)
+        control_row.addWidget(lbl_range)
         self.cmb_range = QtWidgets.QComboBox()
         self.cmb_range.addItems(["Auto", "Zero-centered", "P1-P99", "P0.5-P99.5"])
         self.cmb_range.setFixedWidth(100)
@@ -2002,7 +2105,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         control_row.addWidget(self.btn_show_norm_compare)
 
         control_row.addSpacing(10)
-        control_row.addWidget(QtWidgets.QLabel("Colormap:"))
+        lbl_colormap = QtWidgets.QLabel("Colormap")
+        lbl_colormap.setProperty("toolbarLabel", True)
+        control_row.addWidget(lbl_colormap)
         self.cmb_colormap = QtWidgets.QComboBox()
         self.cmb_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
         self.cmb_colormap.setFixedWidth(90)
@@ -2010,7 +2115,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         control_row.addWidget(self.cmb_colormap)
 
         control_row.addStretch()
-        right_layout.addLayout(control_row)
+        right_layout.addWidget(top_toolbar)
         
         # === IMAGE COMPARISON ROW ===
         image_row = QtWidgets.QHBoxLayout()
@@ -2130,7 +2235,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.histogram_canvas.setFixedHeight(160)
         hist_layout.addWidget(self.histogram_canvas)
         hist_ctrl_row = QtWidgets.QHBoxLayout()
-        self.lbl_hist_range = QtWidgets.QLabel("Range: —")
+        self.lbl_hist_range = QtWidgets.QLabel("Range: -")
         self.lbl_hist_range.setStyleSheet(
             f"color: {BRAND_TEXT_SEC}; font-family: {Typography.FONT_FAMILY_MONO};"
             f" font-size: {Typography.FONT_SIZE_SMALL};"
@@ -2162,51 +2267,44 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         qf_right_layout.setSpacing(8)
 
         # Top: output type toggle buttons
-        qf_top_row = QtWidgets.QHBoxLayout()
-        qf_top_row.addWidget(QtWidgets.QLabel("Output View:"))
-        qf_toggle_style = f"""
-            QPushButton {{
-                background-color: {BRAND_CARD};
-                border: 1px solid {BRAND_BORDER};
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-size: {Typography.FONT_SIZE_SMALL};
-            }}
-            QPushButton:checked {{
-                background-color: {BRAND_PRIMARY};
-                color: {BRAND_TEXT_INVERSE};
-                font-weight: {Typography.FONT_WEIGHT_BOLD};
-                border: none;
-            }}
-        """
+        qf_top_toolbar = QtWidgets.QFrame()
+        qf_top_toolbar.setObjectName("TopToolbar")
+        qf_top_row = QtWidgets.QHBoxLayout(qf_top_toolbar)
+        qf_top_row.setContentsMargins(10, 8, 10, 8)
+        qf_top_row.setSpacing(8)
+        lbl_output_view = QtWidgets.QLabel("Output View")
+        lbl_output_view.setProperty("toolbarLabel", True)
+        qf_top_row.addWidget(lbl_output_view)
         self.btn_qf_show_bse = QtWidgets.QPushButton("BSE Enhanced")
         self.btn_qf_show_bse.setCheckable(True)
         self.btn_qf_show_bse.setChecked(True)
         self.btn_qf_show_bse.setFixedWidth(110)
-        self.btn_qf_show_bse.setStyleSheet(qf_toggle_style)
+        self.btn_qf_show_bse.setProperty("toolbarToggle", True)
 
         self.btn_qf_show_topo = QtWidgets.QPushButton("Topography")
         self.btn_qf_show_topo.setCheckable(True)
         self.btn_qf_show_topo.setFixedWidth(110)
-        self.btn_qf_show_topo.setStyleSheet(qf_toggle_style)
+        self.btn_qf_show_topo.setProperty("toolbarToggle", True)
 
         self.btn_qf_show_comp = QtWidgets.QPushButton("Composite")
         self.btn_qf_show_comp.setCheckable(True)
         self.btn_qf_show_comp.setFixedWidth(110)
-        self.btn_qf_show_comp.setStyleSheet(qf_toggle_style)
+        self.btn_qf_show_comp.setProperty("toolbarToggle", True)
 
         qf_top_row.addWidget(self.btn_qf_show_bse)
         qf_top_row.addWidget(self.btn_qf_show_topo)
         qf_top_row.addWidget(self.btn_qf_show_comp)
 
         qf_top_row.addSpacing(20)
-        qf_top_row.addWidget(QtWidgets.QLabel("Colormap:"))
+        lbl_qf_colormap = QtWidgets.QLabel("Colormap")
+        lbl_qf_colormap.setProperty("toolbarLabel", True)
+        qf_top_row.addWidget(lbl_qf_colormap)
         self.cmb_qf_colormap = QtWidgets.QComboBox()
         self.cmb_qf_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
         self.cmb_qf_colormap.setFixedWidth(90)
         qf_top_row.addWidget(self.cmb_qf_colormap)
         qf_top_row.addStretch()
-        qf_right_layout.addLayout(qf_top_row)
+        qf_right_layout.addWidget(qf_top_toolbar)
 
         # 3-column image viewers: Illuminator | Main Output | Topo Reference
         qf_image_row = QtWidgets.QHBoxLayout()
@@ -2356,12 +2454,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
         self.btn_compute.clicked.connect(self._on_compute)
         self.btn_export.clicked.connect(self._on_export)
-        self.btn_close.clicked.connect(self.close)
         self.btn_select_all.clicked.connect(self._select_all_compare)
         self.btn_select_none.clicked.connect(self._select_none_compare)
         self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
         self.chk_auto_pair.stateChanged.connect(self._on_auto_pair_toggle)
         self.btn_adv_toggle.toggled.connect(self._on_adv_toggle)
+        self.btn_left_adv_toggle.toggled.connect(self._on_left_adv_toggle)
         self.slider_blend.valueChanged.connect(self._on_blend_change)
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
@@ -2482,6 +2580,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Left panel: Standard-only groups
         self.grp_op.setVisible(not is_qf)
         self.grp_align.setVisible(not is_qf)
+        self.grp_advanced_controls.setVisible(not is_qf)
+        if is_qf and self.btn_left_adv_toggle.isChecked():
+            self.btn_left_adv_toggle.setChecked(False)
         # Right panel: swap entire display
         self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
         # Window title
@@ -3268,19 +3369,26 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_adv_toggle(self, checked: bool):
         """Show/hide Advanced operation options."""
         self.grp_advanced.setVisible(checked)
-        self.btn_adv_toggle.setText("⚙ Advanced ▼" if checked else "⚙ Advanced ▶")
+        self.btn_adv_toggle.setText("Advanced \u25bc" if checked else "Advanced \u25b6")
+
+    def _on_left_adv_toggle(self, checked: bool):
+        """Show/hide the left-panel advanced settings section."""
+        self.wgt_left_advanced.setVisible(checked)
+        self.btn_left_adv_toggle.setText(
+            "Hide Advanced Settings ▾" if checked else "Show Advanced Settings ▸"
+        )
 
     def _on_hist_range_changed(self, lo: int, hi: int):
         """Called when user finishes selecting a gray-level range on histogram."""
         self._hist_range = (lo, hi)
-        self.lbl_hist_range.setText(f"Range: GL {lo} – {hi}")
+        self.lbl_hist_range.setText(f"Range: GL {lo} - {hi}")
         self.btn_clear_hist_range.setEnabled(True)
         self._refresh_diff_display()
 
     def _on_clear_hist_range(self):
         """Clear histogram range filter."""
         self._hist_range = None
-        self.lbl_hist_range.setText("Range: —")
+        self.lbl_hist_range.setText("Range: -")
         self.btn_clear_hist_range.setEnabled(False)
         self.histogram_canvas.clear_range()
         self._refresh_diff_display()
