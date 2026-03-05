@@ -38,19 +38,19 @@ from .design_tokens import Colors, Typography, Spacing, BorderRadius
 
 BRAND_PRIMARY = Colors.BRAND_PRIMARY          # #F59E0B
 BRAND_PRIMARY_SOFT = Colors.BRAND_PRIMARY_SOFT  # #FBBF24
-BRAND_ACCENT = Colors.SUCCESS                 # #26D7AE
-BRAND_DARK = Colors.BG_WINDOW                 # #0F141A
-BRAND_PANEL = Colors.BG_PANEL                 # #171D25
-BRAND_CARD = Colors.BG_CARD                   # #141A22
-BRAND_ALT = Colors.BG_ALT                     # #1E2734
-BRAND_BORDER = Colors.BORDER_DEFAULT          # #202633
-BRAND_TEXT = Colors.TEXT_PRIMARY               # #EAEAEA
-BRAND_TEXT_SEC = Colors.TEXT_SECONDARY         # #A0A7AF
-BRAND_TEXT_MUTED = Colors.TEXT_MUTED           # #6B7280
-BRAND_TEXT_INVERSE = Colors.TEXT_INVERSE       # #0F141A
+BRAND_ACCENT = Colors.SUCCESS                 # #22C55E
+BRAND_DARK = Colors.BG_WINDOW                 # #1A1D23
+BRAND_PANEL = Colors.BG_PANEL                 # #21262D
+BRAND_CARD = Colors.BG_CARD                   # #1C2028
+BRAND_ALT = Colors.BG_ALT                     # #2D333B
+BRAND_BORDER = Colors.BORDER_DEFAULT          # #373E47
+BRAND_TEXT = Colors.TEXT_PRIMARY               # #E6EDF3
+BRAND_TEXT_SEC = Colors.TEXT_SECONDARY         # #8B949E
+BRAND_TEXT_MUTED = Colors.TEXT_MUTED           # #545D68
+BRAND_TEXT_INVERSE = Colors.TEXT_INVERSE       # #1A1D23
 BRAND_TEXT_ON_PRIMARY = "#FFFFFF"
-BRAND_HOVER = "#EEF3F8"
-BRAND_SUCCESS = Colors.SUCCESS                # #26D7AE
+BRAND_HOVER = "#2D333B"
+BRAND_SUCCESS = Colors.SUCCESS                # #22C55E
 BRAND_WARN = Colors.BRAND_PRIMARY_SOFT        # #FBBF24
 BRAND_WARNING = Colors.WARNING                # #EF4444
 
@@ -89,7 +89,7 @@ DIALOG_STYLE = f"""
     }}
     QGroupBox#AdvancedSettings {{
         background-color: {BRAND_CARD};
-        border: 1px solid #C9D3DF;
+        border: 1px solid #373E47;
     }}
     QGroupBox#AdvancedSettings::title {{
         color: {BRAND_TEXT_SEC};
@@ -128,12 +128,12 @@ DIALOG_STYLE = f"""
         font-size: {Typography.FONT_SIZE_SMALL};
     }}
     QPushButton:hover {{
-        background-color: #FFF7ED;
+        background-color: #2D333B;
         border-color: {BRAND_PRIMARY};
     }}
     QPushButton:pressed {{
-        background-color: #FFE7C2;
-        border-color: #E98A00;
+        background-color: #3D434B;
+        border-color: #D97706;
     }}
     QPushButton:disabled {{
         background-color: {BRAND_ALT};
@@ -182,7 +182,7 @@ DIALOG_STYLE = f"""
         font-size: {Typography.FONT_SIZE_SMALL};
     }}
     QPushButton[toolbarToggle="true"]:hover {{
-        background-color: #FFF7ED;
+        background-color: #2D333B;
         border-color: {BRAND_PRIMARY};
     }}
     QPushButton[toolbarToggle="true"]:checked {{
@@ -303,7 +303,7 @@ DIALOG_STYLE = f"""
         border-radius: 4px;
     }}
     QScrollBar::handle:vertical {{
-        background-color: #C7D0DC;
+        background-color: #444C56;
         min-height: 30px;
         border-radius: 4px;
     }}

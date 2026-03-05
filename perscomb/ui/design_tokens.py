@@ -4,7 +4,7 @@ PixelOpt UI Design Tokens
 
 作者：Claude AI
 日期：2026-01-23
-版本：1.0 - 方案 A：優化橙色系
+版本：2.0 - 深色主題（Dark Theme with Orange Accent）
 """
 
 # ============================================================================
@@ -12,59 +12,60 @@ PixelOpt UI Design Tokens
 # ============================================================================
 
 class Colors:
-    """顏色常量"""
+    """顏色常量 - 深色主題"""
 
     # 品牌色系 (Brand Colors)
-    # 主要橙色：降低飽和度，更柔和舒適
-    BRAND_PRIMARY = "#F59E0B"      # 主要橙色（優化後）
+    # 主要橙色：保持高辨識度的琥珀橙
+    BRAND_PRIMARY = "#F59E0B"      # 主要橙色
     BRAND_PRIMARY_SOFT = "#FBBF24"  # 柔和橙色
     BRAND_PRIMARY_GLOW = "#F59E0B44"  # 橙色光暈（透明度 27%）
+    BRAND_PRIMARY_DARK = "#D97706"  # 深橙色（按下狀態）
 
     # 語義色系 (Semantic Colors)
-    SUCCESS = "#0EA5A4"            # 成功/正面色（青綠色）
+    SUCCESS = "#22C55E"            # 成功/正面色（綠色）
     WARNING = "#EF4444"            # 警告/錯誤色（紅色）
     INFO = "#3B82F6"               # 資訊色（藍色）
 
-    # 背景色系 (Background Colors)
-    BG_WINDOW = "#F6F7F9"          # 主窗口背景
-    BG_PANEL = "#FFFFFF"           # 面板背景
-    BG_CARD = "#FCFCFD"            # 卡片背景
-    BG_ALT = "#EEF1F5"             # 替代背景
-    BG_HEADER = "#E9EDF2"          # 標題欄背景
-    BG_INPUT = "#FFFFFF"           # 輸入框背景
+    # 背景色系 (Background Colors) - 深色主題
+    BG_WINDOW = "#1A1D23"          # 主窗口背景（最深）
+    BG_PANEL = "#21262D"           # 面板背景
+    BG_CARD = "#1C2028"            # 卡片/輸入框背景
+    BG_ALT = "#2D333B"             # 替代背景（稍亮）
+    BG_HEADER = "#282D35"          # 標題欄背景
+    BG_INPUT = "#161B22"           # 輸入框背景
 
-    # 文字色系 (Text Colors)
-    TEXT_PRIMARY = "#1F2937"       # 主要文字
-    TEXT_SECONDARY = "#4B5563"     # 次要文字
-    TEXT_MUTED = "#9CA3AF"         # 禁用/弱化文字
-    TEXT_INVERSE = "#111827"       # 反色文字（用於亮色背景）
+    # 文字色系 (Text Colors) - 深色主題下的淺色文字
+    TEXT_PRIMARY = "#E6EDF3"       # 主要文字（亮白）
+    TEXT_SECONDARY = "#8B949E"     # 次要文字（灰色）
+    TEXT_MUTED = "#545D68"         # 禁用/弱化文字
+    TEXT_INVERSE = "#1A1D23"       # 反色文字（用於亮色背景上）
 
-    # 邊框色系 (Border Colors)
-    BORDER_DEFAULT = "#D5DBE3"     # 默認邊框
+    # 邊框色系 (Border Colors) - 深色主題
+    BORDER_DEFAULT = "#373E47"     # 默認邊框
     BORDER_HOVER = "#F59E0B8C"     # 懸停邊框（橙色，透明度 55%）
     BORDER_ACTIVE = "#F59E0B99"    # 激活邊框（橙色，透明度 60%）
     BORDER_FOCUS = "#F59E0B"       # 焦點邊框
 
     # 圖表色系 (Chart Colors)
-    CHART_PRIMARY = "#F59E0B"      # 主要圖表色
-    CHART_SECONDARY = "#0EA5A4"    # 次要圖表色
-    CHART_TERTIARY = "#4B5563"     # 第三圖表色
-    CHART_QUATERNARY = "#3B82F6"   # 第四圖表色
+    CHART_PRIMARY = "#F59E0B"      # 主要圖表色（橙色）
+    CHART_SECONDARY = "#22C55E"    # 次要圖表色（綠色）
+    CHART_TERTIARY = "#8B949E"     # 第三圖表色（灰色）
+    CHART_QUATERNARY = "#3B82F6"   # 第四圖表色（藍色）
 
-    # 漸變色 (Gradients)
-    GRADIENT_CARD_START = "#FFFFFF"
-    GRADIENT_CARD_MID = "#F8FAFC"
-    GRADIENT_CARD_END = "#EEF2F7"
+    # 漸變色 (Gradients) - 深色主題
+    GRADIENT_CARD_START = "#21262D"
+    GRADIENT_CARD_MID = "#1E2329"
+    GRADIENT_CARD_END = "#1A1D23"
 
-    GRADIENT_BG_START = "#F8FAFC"
-    GRADIENT_BG_MID = "#F1F5F9"
-    GRADIENT_BG_END = "#E8EEF5"
+    GRADIENT_BG_START = "#1A1D23"
+    GRADIENT_BG_MID = "#1E2329"
+    GRADIENT_BG_END = "#21262D"
 
     # 半透明色 (Transparent Colors)
-    OVERLAY_DARK = "rgba(17, 24, 39, 0.55)"
-    OVERLAY_LIGHT = "rgba(255, 255, 255, 0.75)"
-    SELECTION_BG = "rgba(245, 158, 11, 0.3)"  # 選擇背景
-    SLIDER_FILLED = "rgba(245, 158, 11, 0.35)"  # 滑塊已填充部分
+    OVERLAY_DARK = "rgba(0, 0, 0, 0.60)"
+    OVERLAY_LIGHT = "rgba(255, 255, 255, 0.08)"
+    SELECTION_BG = "rgba(245, 158, 11, 0.25)"  # 選擇背景
+    SLIDER_FILLED = "rgba(245, 158, 11, 0.40)"  # 滑塊已填充部分
 
 
 # ============================================================================
@@ -177,17 +178,17 @@ class Sizing:
 # ============================================================================
 
 class Shadows:
-    """陰影效果常量"""
+    """陰影效果常量 - 深色主題使用更強的陰影"""
 
     NONE = "none"
-    SM = "0 1px 2px 0 rgba(0, 0, 0, 0.05)"
-    DEFAULT = "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
-    MD = "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
-    LG = "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)"
-    XL = "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)"
-    INNER = "inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)"
+    SM = "0 1px 2px 0 rgba(0, 0, 0, 0.15)"
+    DEFAULT = "0 1px 3px 0 rgba(0, 0, 0, 0.25), 0 1px 2px 0 rgba(0, 0, 0, 0.15)"
+    MD = "0 4px 6px -1px rgba(0, 0, 0, 0.25), 0 2px 4px -1px rgba(0, 0, 0, 0.15)"
+    LG = "0 10px 15px -3px rgba(0, 0, 0, 0.25), 0 4px 6px -2px rgba(0, 0, 0, 0.15)"
+    XL = "0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.15)"
+    INNER = "inset 0 2px 4px 0 rgba(0, 0, 0, 0.15)"
     GLOW_PRIMARY = f"0 0 20px {Colors.BRAND_PRIMARY_GLOW}"
-    GLOW_SUCCESS = "0 0 20px rgba(14, 165, 164, 0.28)"
+    GLOW_SUCCESS = "0 0 20px rgba(34, 197, 94, 0.28)"
 
 
 # ============================================================================
