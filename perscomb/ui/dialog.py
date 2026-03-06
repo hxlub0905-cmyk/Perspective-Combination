@@ -38,21 +38,22 @@ from .design_tokens import Colors, Typography, Spacing, BorderRadius
 
 BRAND_PRIMARY = Colors.BRAND_PRIMARY          # #F59E0B
 BRAND_PRIMARY_SOFT = Colors.BRAND_PRIMARY_SOFT  # #FBBF24
-BRAND_ACCENT = Colors.SUCCESS                 # #26D7AE
-BRAND_DARK = Colors.BG_WINDOW                 # #0F141A
-BRAND_PANEL = Colors.BG_PANEL                 # #171D25
-BRAND_CARD = Colors.BG_CARD                   # #141A22
-BRAND_ALT = Colors.BG_ALT                     # #1E2734
-BRAND_BORDER = Colors.BORDER_DEFAULT          # #202633
-BRAND_TEXT = Colors.TEXT_PRIMARY               # #EAEAEA
-BRAND_TEXT_SEC = Colors.TEXT_SECONDARY         # #A0A7AF
-BRAND_TEXT_MUTED = Colors.TEXT_MUTED           # #6B7280
-BRAND_TEXT_INVERSE = Colors.TEXT_INVERSE       # #0F141A
+BRAND_ACCENT = Colors.SUCCESS
+BRAND_DARK = Colors.BG_WINDOW
+BRAND_PANEL = Colors.BG_PANEL
+BRAND_CARD = Colors.BG_CARD
+BRAND_ALT = Colors.BG_ALT
+BRAND_BORDER = Colors.BORDER_DEFAULT
+BRAND_TEXT = Colors.TEXT_PRIMARY
+BRAND_TEXT_SEC = Colors.TEXT_SECONDARY
+BRAND_TEXT_MUTED = Colors.TEXT_MUTED
+BRAND_TEXT_INVERSE = Colors.TEXT_INVERSE
 BRAND_TEXT_ON_PRIMARY = "#FFFFFF"
-BRAND_HOVER = "#EEF3F8"
+BRAND_HOVER = "#FFF7ED"
 BRAND_SUCCESS = Colors.SUCCESS                # #26D7AE
 BRAND_WARN = Colors.BRAND_PRIMARY_SOFT        # #FBBF24
 BRAND_WARNING = Colors.WARNING                # #EF4444
+VIEWER_CANVAS_BG = "#050505"
 
 
 def _hex_to_bgr(color: str) -> Tuple[int, int, int]:
@@ -359,7 +360,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         self.setMouseTracking(True)
         self.setStyleSheet(f"""
             QWidget {{
-                background-color: {BRAND_CARD};
+                background-color: {VIEWER_CANVAS_BG};
                 border: 1px solid {BRAND_BORDER};
                 border-radius: 12px;
             }}
@@ -1561,10 +1562,43 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     
     def _setup_ui(self):
         """Build the dialog UI."""
-        main_layout = QtWidgets.QHBoxLayout(self)
+        main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(12)
-        
+        main_layout.setSpacing(10)
+
+        app_toolbar = QtWidgets.QFrame()
+        app_toolbar.setObjectName("TopToolbar")
+        app_toolbar_layout = QtWidgets.QHBoxLayout(app_toolbar)
+        app_toolbar_layout.setContentsMargins(10, 8, 10, 8)
+        app_toolbar_layout.setSpacing(8)
+
+        self.btn_load_folder = QtWidgets.QPushButton("📁 Load Folder")
+        self.btn_load_folder.setProperty("variant", "secondary")
+        app_toolbar_layout.addWidget(self.btn_load_folder)
+
+        self.chk_auto_pair = QtWidgets.QCheckBox("Auto Pair")
+        self.chk_auto_pair.setToolTip("Generate all unique pairs from selected images")
+        app_toolbar_layout.addWidget(self.chk_auto_pair)
+
+        self.btn_compute = QtWidgets.QPushButton("Compute")
+        self.btn_compute.setProperty("variant", "primary")
+        app_toolbar_layout.addWidget(self.btn_compute)
+
+        self.btn_export = QtWidgets.QPushButton("Export")
+        self.btn_export.setEnabled(False)
+        app_toolbar_layout.addWidget(self.btn_export)
+
+        self.btn_settings = QtWidgets.QPushButton("⚙ Settings")
+        self.btn_settings.setEnabled(False)
+        app_toolbar_layout.addWidget(self.btn_settings)
+        app_toolbar_layout.addStretch()
+        main_layout.addWidget(app_toolbar)
+
+        content_widget = QtWidgets.QWidget()
+        content_layout = QtWidgets.QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(12)
+
         # === LEFT PANEL: Controls ===
         left_panel = QtWidgets.QWidget()
         left_panel.setFixedWidth(320)
@@ -1572,7 +1606,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
-        self.grp_basic_controls = QtWidgets.QGroupBox("Basic Workflow")
+        self.grp_basic_controls = QtWidgets.QGroupBox("Image Manager + Parameters")
         self.grp_basic_controls.setObjectName("BasicSettings")
         basic_layout = QtWidgets.QVBoxLayout(self.grp_basic_controls)
         basic_layout.setContentsMargins(8, 12, 8, 8)
@@ -1598,14 +1632,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         adv_controls_layout.addWidget(self.wgt_left_advanced)
         
         # Image Selection Group
-        grp_select = QtWidgets.QGroupBox("Image Selection")
+        grp_select = QtWidgets.QGroupBox("Image Manager")
         select_layout = QtWidgets.QVBoxLayout(grp_select)
         
-        # Load image folder button
-        self.btn_load_folder = QtWidgets.QPushButton("📁 Load Image Folder")
-        self.btn_load_folder.setProperty("variant", "primary")
-        select_layout.addWidget(self.btn_load_folder)
-
         # ── Input Mode selector ──────────────────────────────────────────────
         mode_row = QtWidgets.QHBoxLayout()
         mode_row.addWidget(QtWidgets.QLabel("Input Mode:"))
@@ -1661,11 +1690,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         quick_row.addWidget(self.btn_select_none)
         quick_row.addStretch()
         std_layout.addLayout(quick_row)
-
-        # Auto pair checkbox
-        self.chk_auto_pair = QtWidgets.QCheckBox("Auto Pair")
-        self.chk_auto_pair.setToolTip("Generate all unique pairs from selected images")
-        std_layout.addWidget(self.chk_auto_pair)
 
         select_layout.addWidget(self.wgt_standard_select)
 
@@ -1984,7 +2008,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.grp_advanced.setVisible(False)
         op_layout.addWidget(self.grp_advanced)
 
-        self.left_advanced_layout.addWidget(grp_op)
+        basic_layout.addWidget(grp_op)
 
         # Alignment Settings Group (Standard mode only)
         self.grp_align = grp_align = QtWidgets.QGroupBox("Alignment")
@@ -2015,18 +2039,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         snr_win_row.addStretch()
         align_layout.addLayout(snr_win_row)
 
-        self.left_advanced_layout.addWidget(grp_align)
+        basic_layout.addWidget(grp_align)
         
-        # Action buttons
-        btn_row = QtWidgets.QHBoxLayout()
-        self.btn_compute = QtWidgets.QPushButton("▶ Compute")
-        self.btn_compute.setProperty("variant", "primary")
-        self.btn_export = QtWidgets.QPushButton("📥 Export")
-        self.btn_export.setEnabled(False)
-        btn_row.addWidget(self.btn_compute)
-        btn_row.addWidget(self.btn_export)
-        basic_layout.addLayout(btn_row)
-
         left_layout.addWidget(self.grp_basic_controls)
         left_divider = QtWidgets.QFrame()
         left_divider.setFrameShape(QtWidgets.QFrame.HLine)
@@ -2035,7 +2049,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addWidget(self.grp_advanced_controls)
         left_layout.addStretch()
         
-        main_layout.addWidget(left_panel)
+        content_layout.addWidget(left_panel)
         
         # === RIGHT PANEL: Results ===
         right_panel = QtWidgets.QWidget()
@@ -2068,23 +2082,26 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         
         control_row.addSpacing(30)
         
-        # Right: Diff controls
-        lbl_display = QtWidgets.QLabel("Display")
+        # Right: Display mode segmented controls
+        lbl_display = QtWidgets.QLabel("Display Mode")
         lbl_display.setProperty("toolbarLabel", True)
         control_row.addWidget(lbl_display)
-        self.btn_mode_diff = QtWidgets.QPushButton("Diff")
-        self.btn_mode_diff.setCheckable(True)
-        self.btn_mode_diff.setChecked(True)
-        self.btn_mode_diff.setFixedWidth(55)
-        self.btn_mode_zmap = QtWidgets.QPushButton("Z-Map")
-        self.btn_mode_zmap.setCheckable(True)
-        self.btn_mode_zmap.setFixedWidth(55)
-        
-        self.btn_mode_diff.setProperty("toolbarToggle", True)
-        self.btn_mode_zmap.setProperty("toolbarToggle", True)
-        
-        control_row.addWidget(self.btn_mode_diff)
-        control_row.addWidget(self.btn_mode_zmap)
+
+        self._display_mode_buttons: Dict[str, QtWidgets.QPushButton] = {}
+        for mode_key, mode_label in [
+            ("base", "Base"),
+            ("compare", "Compare"),
+            ("diff", "Diff"),
+            ("blend", "Blend"),
+            ("topo", "Topo"),
+        ]:
+            btn = QtWidgets.QPushButton(mode_label)
+            btn.setCheckable(True)
+            btn.setProperty("toolbarToggle", True)
+            btn.setMinimumWidth(66)
+            btn.clicked.connect(lambda _=False, m=mode_key: self._set_display_mode(m))
+            control_row.addWidget(btn)
+            self._display_mode_buttons[mode_key] = btn
         
         control_row.addSpacing(15)
         lbl_range = QtWidgets.QLabel("Range")
@@ -2116,13 +2133,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         control_row.addStretch()
         right_layout.addWidget(top_toolbar)
+        self._set_display_mode("diff")
         
         # === IMAGE COMPARISON ROW ===
         image_row = QtWidgets.QHBoxLayout()
 
         # Toggle row: checkbox sits ABOVE both GroupBoxes so both image areas stay equal height
         split_toggle_row = QtWidgets.QHBoxLayout()
-        self.chk_split_view = QtWidgets.QCheckBox("Split View  (Base | Aligned Compare)")
+        self.chk_split_view = QtWidgets.QCheckBox("Sync Zoom")
         self.chk_split_view.setChecked(False)
         self.chk_split_view.setToolTip(
             "OFF: Magnifier mode — synchronized with Difference Map\n"
@@ -2246,17 +2264,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_clear_hist_range.setEnabled(False)
         hist_ctrl_row.addWidget(self.btn_clear_hist_range)
         hist_layout.addLayout(hist_ctrl_row)
-        bottom_row.addWidget(hist_group, 1)
+        bottom_row.addWidget(hist_group, 2)
         
-        # RIGHT: Alignment + Statistics (under Difference Map)
-        right_stats_widget = QtWidgets.QWidget()
-        right_stats_layout = QtWidgets.QHBoxLayout(right_stats_widget)
-        right_stats_layout.setContentsMargins(0, 0, 0, 0)
+        # CENTER / RIGHT: Alignment + Statistics cards
         self.align_score_widget = AlignmentScoreWidget()
         self.stats_widget = StatisticsWidget()
-        right_stats_layout.addWidget(self.align_score_widget)
-        right_stats_layout.addWidget(self.stats_widget)
-        bottom_row.addWidget(right_stats_widget, 1)
+        bottom_row.addWidget(self.align_score_widget, 0)
+        bottom_row.addWidget(self.stats_widget, 0)
         
         right_layout.addLayout(bottom_row)
 
@@ -2447,7 +2461,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.addWidget(qf_right_panel)    # index 1 = Quadrant Fusion
         self.stk_right_panel.setCurrentIndex(0)
 
-        main_layout.addWidget(self.stk_right_panel, stretch=1)
+        content_layout.addWidget(self.stk_right_panel, stretch=1)
+        main_layout.addWidget(content_widget, 1)
     
     def _connect_signals(self):
         """Connect UI signals."""
@@ -2482,10 +2497,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_operation.currentIndexChanged.connect(self._on_operation_changed)
         self.btn_prev_result.clicked.connect(self._on_prev_result)
         self.btn_next_result.clicked.connect(self._on_next_result)
-
-        # Display mode toggle (Diff / Z-Map)
-        self.btn_mode_diff.clicked.connect(lambda: self._on_display_mode('diff'))
-        self.btn_mode_zmap.clicked.connect(lambda: self._on_display_mode('zmap'))
 
         # Dynamic range control
         self.cmb_range.currentIndexChanged.connect(self._on_range_changed)
@@ -2638,23 +2649,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_blend_preview()
 
     def _on_split_view_toggle(self, checked: bool):
-        """Switch left panel between magnifier (off) and split-view (on)."""
-        if checked:
-            self.stk_blend.setCurrentIndex(1)        # show SplitViewWidget
-            self.blend_slider_widget.setVisible(True)
-        else:
-            self.stk_blend.setCurrentIndex(0)        # show magnifier
-            self.blend_slider_widget.setVisible(False)
-        self._update_blend_preview()
+        """Enable/disable synchronized zoom between comparison and result viewers."""
+        self._sync_zoom_enabled = checked
 
     def _on_diff_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay Difference Map cursor position to left-panel magnifier."""
-        if not self.chk_split_view.isChecked():
+        if self.chk_split_view.isChecked():
             self.img_base_mag.setCursorPos(norm_x, norm_y)
 
     def _on_diff_cursor_left(self):
         """Clear left-panel magnifier when cursor leaves Difference Map."""
-        if not self.chk_split_view.isChecked():
+        if self.chk_split_view.isChecked():
             self.img_base_mag.clearCursor()
 
     def _on_operation_changed(self, index):
@@ -2736,16 +2741,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         for chk in self._compare_checkboxes:
             chk.setChecked(False)
     
-    def _on_display_mode(self, mode: str):
-        """Switch between Diff and Z-Map display modes."""
+    def _set_display_mode(self, mode: str):
+        """Set viewer display mode and update segmented button states."""
         self._display_mode = mode
-        
-        # Update button states
-        self.btn_mode_diff.setChecked(mode == 'diff')
-        self.btn_mode_zmap.setChecked(mode == 'zmap')
-        
-        # Refresh display
+        if hasattr(self, "_display_mode_buttons"):
+            for key, btn in self._display_mode_buttons.items():
+                btn.setChecked(key == mode)
         self._refresh_diff_display()
+
+    def _on_display_mode(self, mode: str):
+        """Backward-compatible display mode API."""
+        mapping = {"zmap": "topo", "diff": "diff"}
+        self._set_display_mode(mapping.get(mode, mode))
     
     def _on_range_changed(self, index: int):
         """Handle range control change."""
@@ -2773,7 +2780,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         result = self._results[self._current_result_idx]
 
-        if self._display_mode == 'zmap':
+        base_img = self._images.get(result.base_label)
+        compare_img = result.aligned_compare if result.aligned_compare is not None else self._images.get(result.compare_label)
+
+        mode = self._display_mode
+        if mode == 'base' and base_img is not None:
+            display_img = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR) if base_img.ndim == 2 else base_img.copy()
+        elif mode == 'compare' and compare_img is not None:
+            display_img = cv2.cvtColor(compare_img, cv2.COLOR_GRAY2BGR) if compare_img.ndim == 2 else compare_img.copy()
+        elif mode == 'blend' and base_img is not None and compare_img is not None:
+            bgr_base = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR) if base_img.ndim == 2 else base_img
+            bgr_cmp = cv2.cvtColor(compare_img, cv2.COLOR_GRAY2BGR) if compare_img.ndim == 2 else compare_img
+            alpha = self.slider_blend.value() / 100.0
+            display_img = cv2.addWeighted(bgr_base, 1.0 - alpha, bgr_cmp, alpha, 0.0)
+        elif mode == 'topo':
             display_img = colorize_snr_map(result.snr_map)
         else:
             scaled_img = self._apply_range_scaling(result.result_image)
@@ -2783,7 +2803,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 display_img = scaled_img.copy()
 
         # ── Gray-level range highlight ─────────────────────────────────────
-        if self._hist_range is not None:
+        if self._hist_range is not None and mode in {"diff", "topo"}:
             lo, hi = self._hist_range
             # Get source gray values (use original result_image, not scaled display)
             src_gray = result.result_image  # uint8
@@ -3555,12 +3575,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     
     def _on_base_mag_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay left-panel magnifier cursor position to Difference Map (bidirectional zoom)."""
-        if not self.chk_split_view.isChecked():
+        if self.chk_split_view.isChecked():
             self.img_diff.setCursorPos(norm_x, norm_y)
 
     def _on_base_mag_cursor_left(self):
         """Clear Difference Map magnifier when cursor leaves left-panel magnifier."""
-        if not self.chk_split_view.isChecked():
+        if self.chk_split_view.isChecked():
             self.img_diff.clearCursor()
 
     # ── ROI-Match (EPI Nulling) handlers ─────────────────────────────────
@@ -3572,9 +3592,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 self, "ROI-Match", "Please load images first."
             )
             return
-        # Ensure magnifier page is visible so the user can draw on Base
-        if self.chk_split_view.isChecked():
-            self.chk_split_view.setChecked(False)
         self.img_base_mag.set_roi_mode(True)
         self.lbl_roi_info.setText("ROI: draw on Base image...")
 
