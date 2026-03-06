@@ -1488,7 +1488,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     
     def __init__(self, parent=None, conditions: List[EbeamCondition] = None):
         super().__init__(parent)
-        self.setWindowTitle("🔬 Perspective Combination")
+        self.setWindowTitle("SEM Perspective Combination Tool")
         self.setMinimumSize(1500, 900)  # Larger dialog size
         self.resize(1600, 950)  # Default size
 
@@ -1559,19 +1559,347 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         
         super().keyPressEvent(event)
     
-    def _setup_ui(self):
-        """Build the dialog UI."""
-        main_layout = QtWidgets.QHBoxLayout(self)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(12)
-        
-        # === LEFT PANEL: Controls ===
-        left_panel = QtWidgets.QWidget()
-        left_panel.setFixedWidth(320)
-        left_layout = QtWidgets.QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
+    # ── helper: style an operation checkbox ───────────────────────────────
+    def _style_op_checkbox(self, chk: QtWidgets.QCheckBox, active: bool) -> None:
+        """Apply active (orange) or inactive style to an operation checkbox."""
+        if active:
+            chk.setStyleSheet(f"""
+                QCheckBox {{
+                    color: {BRAND_TEXT};
+                    font-weight: 600;
+                    font-size: 12px;
+                    border: none;
+                    background: transparent;
+                    spacing: 6px;
+                }}
+                QCheckBox::indicator {{
+                    width: 16px; height: 16px;
+                    border-radius: 4px;
+                    background-color: {BRAND_PRIMARY};
+                    border: none;
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {BRAND_PRIMARY};
+                    image: none;
+                }}
+            """)
+        else:
+            chk.setStyleSheet(f"""
+                QCheckBox {{
+                    color: {BRAND_TEXT_SEC};
+                    font-size: 12px;
+                    border: none;
+                    background: transparent;
+                    spacing: 6px;
+                }}
+                QCheckBox::indicator {{
+                    width: 16px; height: 16px;
+                    border-radius: 4px;
+                    background-color: transparent;
+                    border: 1px solid {BRAND_BORDER};
+                }}
+            """)
 
+    def _on_op_checkbox_clicked(self, clicked_idx: int) -> None:
+        """Handle operation checkbox click (mutually exclusive selection)."""
+        _OP_MAP = ["subtract", "blend", "subtract", "blend"]
+        for i, chk in enumerate(self._op_checkboxes):
+            is_active = (i == clicked_idx)
+            chk.setChecked(is_active)
+            self._style_op_checkbox(chk, active=is_active)
+        # Sync hidden legacy combobox
+        legacy_idx = 0 if _OP_MAP[clicked_idx] == "subtract" else 1
+        self.cmb_operation.setCurrentIndex(legacy_idx)
+
+    def _on_viewer_tab_clicked(self, idx: int) -> None:
+        """Handle Viewer tab selection."""
+        for i, tab in enumerate(self._viewer_tabs):
+            tab.setChecked(i == idx)
+        _names = ["Base", "Compare", "Diff", "Blend", "Topo", "Topography"]
+        name = _names[idx]
+        if name == "Diff":
+            self._on_display_mode("diff")
+            if self.chk_split_view.isChecked():
+                self.chk_split_view.setChecked(False)
+        elif name in ("Topo", "Topography"):
+            self._on_display_mode("zmap")
+            if self.chk_split_view.isChecked():
+                self.chk_split_view.setChecked(False)
+        elif name == "Blend":
+            if not self.chk_split_view.isChecked():
+                self.chk_split_view.setChecked(True)
+        else:
+            if self.chk_split_view.isChecked():
+                self.chk_split_view.setChecked(False)
+
+    def _setup_ui(self):
+        """Build the SEM Perspective Combination Tool UI (redesigned)."""
+        # ── Outer layout: top toolbar + content area ──────────────────────
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── 1. GLOBAL TOP TOOLBAR ─────────────────────────────────────────
+        top_bar = QtWidgets.QFrame()
+        top_bar.setObjectName("GlobalTopBar")
+        top_bar.setFixedHeight(52)
+        top_bar.setStyleSheet(f"""
+            QFrame#GlobalTopBar {{
+                background-color: {BRAND_PANEL};
+                border-bottom: 1px solid {BRAND_BORDER};
+            }}
+        """)
+        tbl = QtWidgets.QHBoxLayout(top_bar)
+        tbl.setContentsMargins(12, 8, 12, 8)
+        tbl.setSpacing(8)
+
+        _mini_style = (
+            f"background-color: {BRAND_CARD}; border: 1px solid {BRAND_BORDER};"
+            f" border-radius: 6px; color: {BRAND_TEXT};"
+        )
+        mini_load = QtWidgets.QPushButton("📁  Load Folder")
+        mini_load.setFixedHeight(30)
+        mini_load.setStyleSheet(_mini_style + " padding: 0 10px; font-size: 12px;")
+        mini_load.clicked.connect(self._on_load_image_folder)
+        tbl.addWidget(mini_load)
+
+        self._btn_nav_prev = QtWidgets.QPushButton("◀")
+        self._btn_nav_prev.setFixedSize(30, 30)
+        self._btn_nav_prev.setStyleSheet(_mini_style)
+        self._btn_nav_prev.clicked.connect(self._on_prev_result)
+        tbl.addWidget(self._btn_nav_prev)
+
+        self._btn_nav_next = QtWidgets.QPushButton("▶")
+        self._btn_nav_next.setFixedSize(30, 30)
+        self._btn_nav_next.setStyleSheet(_mini_style)
+        self._btn_nav_next.clicked.connect(self._on_next_result)
+        tbl.addWidget(self._btn_nav_next)
+
+        _sep_v = QtWidgets.QFrame()
+        _sep_v.setFrameShape(QtWidgets.QFrame.VLine)
+        _sep_v.setStyleSheet(f"color: {BRAND_BORDER};")
+        tbl.addWidget(_sep_v)
+
+        self.btn_load_folder = QtWidgets.QPushButton("📁  Load Folder")
+        self.btn_load_folder.setProperty("variant", "primary")
+        self.btn_load_folder.setFixedHeight(34)
+        tbl.addWidget(self.btn_load_folder)
+
+        self._btn_auto_pair = QtWidgets.QPushButton("✔  Auto Pair")
+        self._btn_auto_pair.setCheckable(True)
+        self._btn_auto_pair.setProperty("variant", "primary")
+        self._btn_auto_pair.setFixedHeight(34)
+        tbl.addWidget(self._btn_auto_pair)
+
+        self.btn_compute = QtWidgets.QPushButton("⚙  Compute")
+        self.btn_compute.setFixedHeight(34)
+        tbl.addWidget(self.btn_compute)
+
+        self.btn_export = QtWidgets.QPushButton("📥  Export")
+        self.btn_export.setFixedHeight(34)
+        self.btn_export.setEnabled(False)
+        tbl.addWidget(self.btn_export)
+
+        tbl.addStretch()
+
+        _btn_settings = QtWidgets.QPushButton("⚙  Settings")
+        _btn_settings.setFixedHeight(30)
+        _btn_settings.setStyleSheet(_mini_style + " padding: 0 10px; font-size: 12px;")
+        tbl.addWidget(_btn_settings)
+
+        _btn_more = QtWidgets.QPushButton("•••")
+        _btn_more.setFixedSize(30, 30)
+        _btn_more.setStyleSheet(_mini_style)
+        tbl.addWidget(_btn_more)
+
+        outer.addWidget(top_bar)
+
+        # ── 2. CONTENT AREA ───────────────────────────────────────────────
+        content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QHBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        outer.addWidget(content, stretch=1)
+
+        # ── 2a. LEFT PANEL (Image Manager) ───────────────────────────────
+        left_panel = QtWidgets.QWidget()
+        left_panel.setFixedWidth(260)
+        left_panel.setObjectName("LeftPanel")
+        left_panel.setStyleSheet(f"""
+            QWidget#LeftPanel {{
+                background-color: {BRAND_PANEL};
+                border-right: 1px solid {BRAND_BORDER};
+            }}
+        """)
+        left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(12, 14, 12, 12)
+        left_layout.setSpacing(0)
+
+        # "Image Manager" header
+        lbl_mgr = QtWidgets.QLabel("Image Manager")
+        lbl_mgr.setStyleSheet(
+            f"color: {BRAND_TEXT}; font-size: 15px; font-weight: 700; border: none; padding: 0;"
+        )
+        left_layout.addWidget(lbl_mgr)
+        left_layout.addSpacing(10)
+
+        # Auto Pair selector row
+        ap_row_widget = QtWidgets.QWidget()
+        ap_row_widget.setStyleSheet(
+            f"background-color: {BRAND_CARD}; border: 1px solid {BRAND_BORDER}; border-radius: 8px;"
+        )
+        ap_row_layout = QtWidgets.QHBoxLayout(ap_row_widget)
+        ap_row_layout.setContentsMargins(10, 6, 10, 6)
+        ap_row_layout.setSpacing(6)
+        lbl_ap_icon = QtWidgets.QLabel("📁")
+        lbl_ap_icon.setStyleSheet("border: none; background: transparent; font-size: 13px;")
+        lbl_ap_icon.setFixedWidth(18)
+        ap_row_layout.addWidget(lbl_ap_icon)
+        lbl_ap_text = QtWidgets.QLabel("Auto Pair")
+        lbl_ap_text.setStyleSheet(
+            f"color: {BRAND_TEXT}; font-size: 12px; font-weight: 500;"
+            f" border: none; background: transparent;"
+        )
+        ap_row_layout.addWidget(lbl_ap_text, 1)
+        lbl_ap_arrow = QtWidgets.QLabel("▼")
+        lbl_ap_arrow.setStyleSheet(
+            f"color: {BRAND_TEXT_SEC}; font-size: 10px; border: none; background: transparent;"
+        )
+        ap_row_layout.addWidget(lbl_ap_arrow)
+        left_layout.addWidget(ap_row_widget)
+        left_layout.addSpacing(12)
+
+        # Separator
+        _sep1 = QtWidgets.QFrame()
+        _sep1.setFrameShape(QtWidgets.QFrame.HLine)
+        _sep1.setStyleSheet(f"border: none; background-color: {BRAND_BORDER}; max-height: 1px;")
+        left_layout.addWidget(_sep1)
+        left_layout.addSpacing(10)
+
+        # "Base Image" section header
+        lbl_base_hdr = QtWidgets.QLabel("Base Image")
+        lbl_base_hdr.setStyleSheet(
+            f"color: {BRAND_TEXT_SEC}; font-size: 11px; font-weight: 600;"
+            f" letter-spacing: 0.05em; border: none;"
+        )
+        left_layout.addWidget(lbl_base_hdr)
+        left_layout.addSpacing(6)
+
+        # Scrollable visual image list
+        self._img_list_scroll = QtWidgets.QScrollArea()
+        self._img_list_scroll.setWidgetResizable(True)
+        self._img_list_scroll.setMaximumHeight(200)
+        self._img_list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._img_list_scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
+                background: transparent; width: 5px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BRAND_BORDER}; border-radius: 2px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        """)
+        self._img_list_inner = QtWidgets.QWidget()
+        self._img_list_inner.setStyleSheet("background: transparent;")
+        self._img_list_inner_layout = QtWidgets.QVBoxLayout(self._img_list_inner)
+        self._img_list_inner_layout.setContentsMargins(0, 0, 0, 0)
+        self._img_list_inner_layout.setSpacing(2)
+        self._img_list_scroll.setWidget(self._img_list_inner)
+        left_layout.addWidget(self._img_list_scroll)
+        left_layout.addSpacing(6)
+
+        # "▶ Swap Base" button
+        self.btn_swap_base = QtWidgets.QPushButton("▶  Swap Base")
+        self.btn_swap_base.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {BRAND_TEXT_SEC};
+                border: none; font-size: 11px; padding: 2px 0; text-align: left;
+            }}
+            QPushButton:hover {{ color: {BRAND_PRIMARY}; }}
+        """)
+        left_layout.addWidget(self.btn_swap_base)
+        left_layout.addSpacing(12)
+
+        # Separator
+        _sep2 = QtWidgets.QFrame()
+        _sep2.setFrameShape(QtWidgets.QFrame.HLine)
+        _sep2.setStyleSheet(f"border: none; background-color: {BRAND_BORDER}; max-height: 1px;")
+        left_layout.addWidget(_sep2)
+        left_layout.addSpacing(10)
+
+        # "Parameters" header + orange underline
+        lbl_params = QtWidgets.QLabel("Parameters")
+        lbl_params.setStyleSheet(
+            f"color: {BRAND_TEXT}; font-size: 13px; font-weight: 700; border: none;"
+        )
+        left_layout.addWidget(lbl_params)
+        _params_line = QtWidgets.QFrame()
+        _params_line.setFrameShape(QtWidgets.QFrame.HLine)
+        _params_line.setFixedHeight(2)
+        _params_line.setStyleSheet(f"border: none; background-color: {BRAND_PRIMARY}; margin-top: 2px;")
+        left_layout.addWidget(_params_line)
+        left_layout.addSpacing(8)
+
+        # "Operation" sub-header
+        lbl_op_hdr = QtWidgets.QLabel("Operation")
+        lbl_op_hdr.setStyleSheet(
+            f"color: {BRAND_TEXT_SEC}; font-size: 11px; font-weight: 500; border: none;"
+        )
+        left_layout.addWidget(lbl_op_hdr)
+        left_layout.addSpacing(4)
+
+        # Operation checkboxes (mutually exclusive, radio-style)
+        _OP_LABELS = ["Subtract", "Illumination Fusion", "Topography Remove", "Weighted Combine"]
+        self._op_checkboxes: List[QtWidgets.QCheckBox] = []
+        op_group_widget = QtWidgets.QWidget()
+        op_group_widget.setStyleSheet("background: transparent;")
+        op_group_layout = QtWidgets.QVBoxLayout(op_group_widget)
+        op_group_layout.setContentsMargins(0, 0, 0, 0)
+        op_group_layout.setSpacing(4)
+        for i, name in enumerate(_OP_LABELS):
+            chk = QtWidgets.QCheckBox(name)
+            chk.setChecked(i == 0)
+            self._style_op_checkbox(chk, active=(i == 0))
+            chk.clicked.connect(lambda _checked, idx=i: self._on_op_checkbox_clicked(idx))
+            op_group_layout.addWidget(chk)
+            self._op_checkboxes.append(chk)
+        left_layout.addWidget(op_group_widget)
+        left_layout.addSpacing(10)
+
+        # Separator
+        _sep3 = QtWidgets.QFrame()
+        _sep3.setFrameShape(QtWidgets.QFrame.HLine)
+        _sep3.setStyleSheet(f"border: none; background-color: {BRAND_BORDER}; max-height: 1px;")
+        left_layout.addWidget(_sep3)
+        left_layout.addSpacing(8)
+
+        # Enable ROI checkbox
+        self.chk_enable_roi_vis = QtWidgets.QCheckBox("Enable ROI")
+        self.chk_enable_roi_vis.setStyleSheet(f"""
+            QCheckBox {{
+                color: {BRAND_TEXT}; font-size: 12px;
+                border: none; background: transparent; spacing: 6px;
+            }}
+            QCheckBox::indicator {{
+                width: 15px; height: 15px;
+                border: 1px solid {BRAND_BORDER};
+                border-radius: 3px; background: transparent;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {BRAND_PRIMARY}; border: none;
+            }}
+        """)
+        left_layout.addWidget(self.chk_enable_roi_vis)
+        left_layout.addStretch()
+
+        # ── Hidden legacy section (needed by business logic) ──────────────
+        _hidden = QtWidgets.QWidget()
+        _hidden.setVisible(False)
+        _hidden_layout = QtWidgets.QVBoxLayout(_hidden)
+        _hidden_layout.setContentsMargins(0, 0, 0, 0)
+
+        # grp_basic_controls (legacy)
         self.grp_basic_controls = QtWidgets.QGroupBox("Basic Workflow")
         self.grp_basic_controls.setObjectName("BasicSettings")
         basic_layout = QtWidgets.QVBoxLayout(self.grp_basic_controls)
@@ -1600,11 +1928,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Image Selection Group
         grp_select = QtWidgets.QGroupBox("Image Selection")
         select_layout = QtWidgets.QVBoxLayout(grp_select)
-        
-        # Load image folder button
-        self.btn_load_folder = QtWidgets.QPushButton("📁 Load Image Folder")
-        self.btn_load_folder.setProperty("variant", "primary")
-        select_layout.addWidget(self.btn_load_folder)
 
         # ── Input Mode selector ──────────────────────────────────────────────
         mode_row = QtWidgets.QHBoxLayout()
@@ -2016,194 +2339,188 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         align_layout.addLayout(snr_win_row)
 
         self.left_advanced_layout.addWidget(grp_align)
-        
-        # Action buttons
-        btn_row = QtWidgets.QHBoxLayout()
-        self.btn_compute = QtWidgets.QPushButton("▶ Compute")
-        self.btn_compute.setProperty("variant", "primary")
-        self.btn_export = QtWidgets.QPushButton("📥 Export")
-        self.btn_export.setEnabled(False)
-        btn_row.addWidget(self.btn_compute)
-        btn_row.addWidget(self.btn_export)
-        basic_layout.addLayout(btn_row)
 
-        left_layout.addWidget(self.grp_basic_controls)
-        left_divider = QtWidgets.QFrame()
-        left_divider.setFrameShape(QtWidgets.QFrame.HLine)
-        left_divider.setStyleSheet(f"color: {BRAND_BORDER};")
-        left_layout.addWidget(left_divider)
-        left_layout.addWidget(self.grp_advanced_controls)
-        left_layout.addStretch()
-        
-        main_layout.addWidget(left_panel)
-        
-        # === RIGHT PANEL: Results ===
+        _hidden_layout.addWidget(self.grp_basic_controls)
+        _hidden_layout.addWidget(self.grp_advanced_controls)
+        left_layout.addWidget(_hidden)
+
+        content_layout.addWidget(left_panel)
+
+        # ── 2b. RIGHT AREA ────────────────────────────────────────────────
+        right_area = QtWidgets.QWidget()
+        right_area_layout = QtWidgets.QVBoxLayout(right_area)
+        right_area_layout.setContentsMargins(0, 0, 0, 0)
+        right_area_layout.setSpacing(0)
+        content_layout.addWidget(right_area, stretch=1)
+
+        # Standard right panel
         right_panel = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(8)
-        
-        # === TOP CONTROL BAR (above images) ===
-        top_toolbar = QtWidgets.QFrame()
-        top_toolbar.setObjectName("TopToolbar")
-        control_row = QtWidgets.QHBoxLayout(top_toolbar)
-        control_row.setContentsMargins(10, 8, 10, 8)
-        control_row.setSpacing(8)
-        
-        # Left: Visual preview info
-        lbl_preview = QtWidgets.QLabel("Preview")
-        lbl_preview.setProperty("toolbarLabel", True)
-        control_row.addWidget(lbl_preview)
-        self.lbl_blend_info = QtWidgets.QLabel("Visual cross-fade (drag slider below)")
-        self.lbl_blend_info.setStyleSheet(f"color: {BRAND_TEXT_SEC}; font-size: {Typography.FONT_SIZE_SMALL};")
-        control_row.addWidget(self.lbl_blend_info)
-        
-        control_row.addSpacing(30)
-        
-        # Separator
-        sep = QtWidgets.QFrame()
-        sep.setFrameShape(QtWidgets.QFrame.VLine)
-        sep.setStyleSheet(f"color: {BRAND_BORDER};")
-        control_row.addWidget(sep)
-        
-        control_row.addSpacing(30)
-        
-        # Right: Diff controls
-        lbl_display = QtWidgets.QLabel("Display")
-        lbl_display.setProperty("toolbarLabel", True)
-        control_row.addWidget(lbl_display)
+        right_layout.setSpacing(0)
+
+        # ── Viewer header with tab bar ────────────────────────────────────
+        viewer_header = QtWidgets.QFrame()
+        viewer_header.setObjectName("ViewerHeader")
+        viewer_header.setFixedHeight(42)
+        viewer_header.setStyleSheet(f"""
+            QFrame#ViewerHeader {{
+                background-color: {BRAND_PANEL};
+                border-bottom: 1px solid {BRAND_BORDER};
+            }}
+        """)
+        vh_layout = QtWidgets.QHBoxLayout(viewer_header)
+        vh_layout.setContentsMargins(12, 6, 12, 6)
+        vh_layout.setSpacing(4)
+
+        lbl_viewer = QtWidgets.QLabel("Viewer")
+        lbl_viewer.setStyleSheet(
+            f"color: {BRAND_TEXT}; font-size: 13px; font-weight: 700; border: none;"
+        )
+        vh_layout.addWidget(lbl_viewer)
+        vh_layout.addSpacing(12)
+
+        _TAB_NAMES = ["Base", "Compare", "Diff", "Blend", "Topo", "Topography"]
+        self._viewer_tabs: List[QtWidgets.QPushButton] = []
+        _tab_style = f"""
+            QPushButton {{
+                background-color: transparent; color: {BRAND_TEXT_SEC};
+                border: none; border-radius: {BorderRadius.SM};
+                padding: 4px 12px; font-size: {Typography.FONT_SIZE_SMALL};
+            }}
+            QPushButton:hover {{
+                background-color: {BRAND_ALT}; color: {BRAND_TEXT};
+            }}
+            QPushButton:checked {{
+                background-color: {BRAND_PRIMARY}; color: #FFFFFF;
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+            }}
+        """
+        for i, tab_name in enumerate(_TAB_NAMES):
+            btn = QtWidgets.QPushButton(tab_name)
+            btn.setCheckable(True)
+            btn.setStyleSheet(_tab_style)
+            btn.setFixedHeight(28)
+            btn.clicked.connect(lambda _c, idx=i: self._on_viewer_tab_clicked(idx))
+            vh_layout.addWidget(btn)
+            self._viewer_tabs.append(btn)
+        self._viewer_tabs[2].setChecked(True)  # Diff tab active by default
+
+        vh_layout.addStretch()
+
+        _btn_refresh = QtWidgets.QPushButton("↺")
+        _btn_refresh.setFixedSize(28, 28)
+        _btn_refresh.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                color: {BRAND_TEXT_SEC}; font-size: 14px;
+            }}
+            QPushButton:hover {{ color: {BRAND_PRIMARY}; }}
+        """)
+        _btn_refresh.clicked.connect(self._refresh_diff_display)
+        vh_layout.addWidget(_btn_refresh)
+
+        right_layout.addWidget(viewer_header)
+
+        # ── Hidden legacy controls (display mode, range, colormap) ────────
+        _hidden_ctrl = QtWidgets.QWidget()
+        _hidden_ctrl.setVisible(False)
+        _hc_lay = QtWidgets.QHBoxLayout(_hidden_ctrl)
+        _hc_lay.setContentsMargins(0, 0, 0, 0)
+
+        self.lbl_blend_info = QtWidgets.QLabel("")
+        _hc_lay.addWidget(self.lbl_blend_info)
         self.btn_mode_diff = QtWidgets.QPushButton("Diff")
         self.btn_mode_diff.setCheckable(True)
         self.btn_mode_diff.setChecked(True)
-        self.btn_mode_diff.setFixedWidth(55)
+        self.btn_mode_diff.setProperty("toolbarToggle", True)
         self.btn_mode_zmap = QtWidgets.QPushButton("Z-Map")
         self.btn_mode_zmap.setCheckable(True)
-        self.btn_mode_zmap.setFixedWidth(55)
-        
-        self.btn_mode_diff.setProperty("toolbarToggle", True)
         self.btn_mode_zmap.setProperty("toolbarToggle", True)
-        
-        control_row.addWidget(self.btn_mode_diff)
-        control_row.addWidget(self.btn_mode_zmap)
-        
-        control_row.addSpacing(15)
-        lbl_range = QtWidgets.QLabel("Range")
-        lbl_range.setProperty("toolbarLabel", True)
-        control_row.addWidget(lbl_range)
+        _hc_lay.addWidget(self.btn_mode_diff)
+        _hc_lay.addWidget(self.btn_mode_zmap)
         self.cmb_range = QtWidgets.QComboBox()
         self.cmb_range.addItems(["Auto", "Zero-centered", "P1-P99", "P0.5-P99.5"])
-        self.cmb_range.setFixedWidth(100)
-        self.cmb_range.setToolTip("Control how difference values are scaled for display")
-        control_row.addWidget(self.cmb_range)
-
-        control_row.addSpacing(10)
+        _hc_lay.addWidget(self.cmb_range)
         self.btn_show_norm_compare = QtWidgets.QPushButton("Normalize Preview")
-        self.btn_show_norm_compare.setFixedWidth(130)
-        self.btn_show_norm_compare.setToolTip(
-            "Preview normalization effect: show Aligned Compare (before) / After Normalize / Base (target)"
-        )
-        control_row.addWidget(self.btn_show_norm_compare)
-
-        control_row.addSpacing(10)
-        lbl_colormap = QtWidgets.QLabel("Colormap")
-        lbl_colormap.setProperty("toolbarLabel", True)
-        control_row.addWidget(lbl_colormap)
+        _hc_lay.addWidget(self.btn_show_norm_compare)
         self.cmb_colormap = QtWidgets.QComboBox()
         self.cmb_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
-        self.cmb_colormap.setFixedWidth(90)
-        self.cmb_colormap.setToolTip("Colormap applied to the Difference Map display")
-        control_row.addWidget(self.cmb_colormap)
+        _hc_lay.addWidget(self.cmb_colormap)
+        right_layout.addWidget(_hidden_ctrl)
 
-        control_row.addStretch()
-        right_layout.addWidget(top_toolbar)
-        
-        # === IMAGE COMPARISON ROW ===
-        image_row = QtWidgets.QHBoxLayout()
+        # ── Main image area ───────────────────────────────────────────────
+        image_area = QtWidgets.QWidget()
+        image_area.setStyleSheet(f"background-color: {BRAND_DARK};")
+        image_area_layout = QtWidgets.QHBoxLayout(image_area)
+        image_area_layout.setContentsMargins(4, 4, 4, 4)
+        image_area_layout.setSpacing(4)
 
-        # Toggle row: checkbox sits ABOVE both GroupBoxes so both image areas stay equal height
-        split_toggle_row = QtWidgets.QHBoxLayout()
-        self.chk_split_view = QtWidgets.QCheckBox("Split View  (Base | Aligned Compare)")
-        self.chk_split_view.setChecked(False)
-        self.chk_split_view.setToolTip(
-            "OFF: Magnifier mode — synchronized with Difference Map\n"
-            "ON:  Split-view Base vs Aligned Compare (drag divider or use slider)"
-        )
-        split_toggle_row.addWidget(self.chk_split_view)
-        split_toggle_row.addStretch()
-        right_layout.addLayout(split_toggle_row)
-
-        # Left panel: togglable between Magnifier (synced with Diff) and Split View
-        blend_group = QtWidgets.QGroupBox("Comparison View")
-        blend_group.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-        )
-        blend_layout = QtWidgets.QVBoxLayout(blend_group)
-        blend_layout.setContentsMargins(6, 12, 6, 6)
-
-        # Stacked widget: page 0 = magnifier, page 1 = split view
+        # Left: stacked (magnifier / split-view)
         self.stk_blend = QtWidgets.QStackedWidget()
         self.stk_blend.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
-
-        # Page 0 – Magnifier (Base image, zoom synced with Difference Map)
         self.img_base_mag = SyncZoomImageWidget("Base")
         self.img_base_mag.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
-        self.stk_blend.addWidget(self.img_base_mag)   # index 0
+        self.stk_blend.addWidget(self.img_base_mag)  # index 0
 
-        # Page 1 – Split View
         self.img_blend = SplitViewWidget()
         self.img_blend.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
-        self.stk_blend.addWidget(self.img_blend)       # index 1
+        self.stk_blend.addWidget(self.img_blend)  # index 1
+        self.stk_blend.setCurrentIndex(0)
+        image_area_layout.addWidget(self.stk_blend, 1)
 
-        self.stk_blend.setCurrentIndex(0)  # start in magnifier mode
-        blend_layout.addWidget(self.stk_blend)
-        image_row.addWidget(blend_group, 1)
-
-        # Difference Map
-        diff_group = QtWidgets.QGroupBox("Difference Map")
-        diff_group.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-        )
-        diff_layout = QtWidgets.QVBoxLayout(diff_group)
-        diff_layout.setContentsMargins(6, 12, 6, 6)
+        # Right: difference map
         self.img_diff = SyncZoomImageWidget("Difference Map")
         self.img_diff.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
-        diff_layout.addWidget(self.img_diff)
-        image_row.addWidget(diff_group, 1)
+        image_area_layout.addWidget(self.img_diff, 1)
 
-        right_layout.addLayout(image_row, stretch=4)  # Maximum stretch for images
+        right_layout.addWidget(image_area, stretch=4)
 
-        # Split-view divider slider — wrapped in a widget so it can be hidden in magnifier mode
-        self.blend_slider_widget = QtWidgets.QWidget()
-        blend_row = QtWidgets.QHBoxLayout(self.blend_slider_widget)
-        blend_row.setContentsMargins(0, 0, 0, 0)
-        lbl_crossfade = QtWidgets.QLabel("◀ Base  |  Aligned Compare ▶")
-        lbl_crossfade.setToolTip("拖曳分隔線或滑桿比對 Base 與 Aligned Compare（僅視覺預覽，不影響計算結果）")
-        blend_row.addWidget(lbl_crossfade)
-        self.slider_blend = QtWidgets.QSlider(Qt.Horizontal)
-        self.slider_blend.setRange(0, 100)
-        self.slider_blend.setValue(50)
-        self.slider_blend.setToolTip("0 = Base only, 100 = Aligned Compare only (visual preview — does not affect computation)")
-        blend_row.addWidget(self.slider_blend, 1)
-        self.lbl_blend_value = QtWidgets.QLabel("50%")
-        self.lbl_blend_value.setStyleSheet(f"font-family: {Typography.FONT_FAMILY_MONO}; font-size: {Typography.FONT_SIZE_BODY};")
-        blend_row.addWidget(self.lbl_blend_value)
-        self.blend_slider_widget.setVisible(False)  # hidden until Split View is enabled
-        right_layout.addWidget(self.blend_slider_widget)
-        
-        
-        # Result Navigation Row
-        nav_row = QtWidgets.QHBoxLayout()
+        # ── Bottom control bar (Sync Zoom + navigation) ──────────────────
+        bottom_ctrl = QtWidgets.QFrame()
+        bottom_ctrl.setObjectName("BottomCtrl")
+        bottom_ctrl.setFixedHeight(42)
+        bottom_ctrl.setStyleSheet(f"""
+            QFrame#BottomCtrl {{
+                background-color: {BRAND_PANEL};
+                border-top: 1px solid {BRAND_BORDER};
+                border-bottom: 1px solid {BRAND_BORDER};
+            }}
+        """)
+        bc_layout = QtWidgets.QHBoxLayout(bottom_ctrl)
+        bc_layout.setContentsMargins(10, 4, 10, 4)
+        bc_layout.setSpacing(8)
+
+        self.chk_split_view = QtWidgets.QCheckBox("Sync Zoom")
+        self.chk_split_view.setChecked(False)
+        self.chk_split_view.setStyleSheet(f"""
+            QCheckBox {{
+                color: {BRAND_TEXT}; font-size: 11px;
+                border: 1px solid {BRAND_BORDER}; border-radius: 5px;
+                padding: 2px 8px; background-color: {BRAND_CARD};
+                spacing: 0px;
+            }}
+            QCheckBox::indicator {{ width: 0; height: 0; }}
+            QCheckBox:checked {{
+                background-color: {BRAND_ALT}; border-color: {BRAND_PRIMARY};
+            }}
+        """)
+        bc_layout.addWidget(self.chk_split_view)
+        bc_layout.addSpacing(16)
+
         self.btn_prev_result = QtWidgets.QPushButton("◀ Prev")
-        self.btn_prev_result.setFixedWidth(90)
+        self.btn_prev_result.setFixedWidth(80)
         self.btn_prev_result.setEnabled(False)
+        bc_layout.addWidget(self.btn_prev_result)
+
         self.lbl_result_info = QtWidgets.QLabel("No results")
         self.lbl_result_info.setAlignment(Qt.AlignCenter)
         self.lbl_result_info.setStyleSheet(f"""
@@ -2216,49 +2533,90 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 font-size: {Typography.FONT_SIZE_BODY};
             }}
         """)
+        bc_layout.addWidget(self.lbl_result_info, 1)
+
         self.btn_next_result = QtWidgets.QPushButton("Next ▶")
-        self.btn_next_result.setFixedWidth(90)
+        self.btn_next_result.setFixedWidth(80)
         self.btn_next_result.setEnabled(False)
-        nav_row.addWidget(self.btn_prev_result)
-        nav_row.addWidget(self.lbl_result_info, 1)
-        nav_row.addWidget(self.btn_next_result)
-        right_layout.addLayout(nav_row)
-        
-        # === BOTTOM: Two-column layout (Histogram | Alignment+Stats) ===
-        bottom_row = QtWidgets.QHBoxLayout()
-        
-        # LEFT: Histogram (under Blend Preview)
-        hist_group = QtWidgets.QGroupBox("Difference Histogram  —  click once: set low, click again: set high")
-        hist_layout = QtWidgets.QVBoxLayout(hist_group)
+        bc_layout.addWidget(self.btn_next_result)
+
+        right_layout.addWidget(bottom_ctrl)
+
+        # Hidden blend slider (for _on_blend_change compatibility)
+        self.blend_slider_widget = QtWidgets.QWidget()
+        self.blend_slider_widget.setVisible(False)
+        _bs_layout = QtWidgets.QHBoxLayout(self.blend_slider_widget)
+        _bs_layout.setContentsMargins(0, 0, 0, 0)
+        self.slider_blend = QtWidgets.QSlider(Qt.Horizontal)
+        self.slider_blend.setRange(0, 100)
+        self.slider_blend.setValue(50)
+        _bs_layout.addWidget(self.slider_blend, 1)
+        self.lbl_blend_value = QtWidgets.QLabel("50%")
+        _bs_layout.addWidget(self.lbl_blend_value)
+        right_layout.addWidget(self.blend_slider_widget)
+
+        # ── Bottom stats: 3-column (Histogram | Alignment Quality | Analysis)
+        bottom_stats = QtWidgets.QWidget()
+        bottom_stats.setFixedHeight(220)
+        bottom_stats_layout = QtWidgets.QHBoxLayout(bottom_stats)
+        bottom_stats_layout.setContentsMargins(8, 8, 8, 8)
+        bottom_stats_layout.setSpacing(8)
+
+        # Histogram panel
+        hist_panel = QtWidgets.QFrame()
+        hist_panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BRAND_CARD};
+                border: 1px solid {BRAND_BORDER};
+                border-radius: {BorderRadius.MD};
+            }}
+        """)
+        hist_layout = QtWidgets.QVBoxLayout(hist_panel)
+        hist_layout.setContentsMargins(12, 10, 12, 8)
         hist_layout.setSpacing(4)
+
+        lbl_hist_title = QtWidgets.QLabel("Histogram")
+        lbl_hist_title.setStyleSheet(
+            f"color: {BRAND_TEXT}; font-size: 13px; font-weight: 700; border: none;"
+        )
+        hist_layout.addWidget(lbl_hist_title)
+
+        lbl_hist_sub = QtWidgets.QLabel("Click once to set low, click again to set high")
+        lbl_hist_sub.setStyleSheet(
+            f"color: {BRAND_TEXT_SEC}; font-size: 10px; border: none;"
+        )
+        hist_layout.addWidget(lbl_hist_sub)
+
         self.histogram_canvas = HistogramCanvas()
-        self.histogram_canvas.setFixedHeight(160)
-        hist_layout.addWidget(self.histogram_canvas)
-        hist_ctrl_row = QtWidgets.QHBoxLayout()
-        self.lbl_hist_range = QtWidgets.QLabel("Range: -")
+        self.histogram_canvas.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+        hist_layout.addWidget(self.histogram_canvas, 1)
+
+        hist_bottom = QtWidgets.QHBoxLayout()
+        self.lbl_hist_range = QtWidgets.QLabel("Range: —")
         self.lbl_hist_range.setStyleSheet(
             f"color: {BRAND_TEXT_SEC}; font-family: {Typography.FONT_FAMILY_MONO};"
-            f" font-size: {Typography.FONT_SIZE_SMALL};"
+            f" font-size: {Typography.FONT_SIZE_SMALL}; border: none;"
         )
-        hist_ctrl_row.addWidget(self.lbl_hist_range, 1)
-        self.btn_clear_hist_range = QtWidgets.QPushButton("✕ Clear Range")
-        self.btn_clear_hist_range.setFixedWidth(100)
+        hist_bottom.addWidget(self.lbl_hist_range, 1)
+        self.btn_clear_hist_range = QtWidgets.QPushButton("Clear Range")
+        self.btn_clear_hist_range.setFixedWidth(90)
         self.btn_clear_hist_range.setEnabled(False)
-        hist_ctrl_row.addWidget(self.btn_clear_hist_range)
-        hist_layout.addLayout(hist_ctrl_row)
-        bottom_row.addWidget(hist_group, 1)
-        
-        # RIGHT: Alignment + Statistics (under Difference Map)
-        right_stats_widget = QtWidgets.QWidget()
-        right_stats_layout = QtWidgets.QHBoxLayout(right_stats_widget)
-        right_stats_layout.setContentsMargins(0, 0, 0, 0)
+        hist_bottom.addWidget(self.btn_clear_hist_range)
+        hist_layout.addLayout(hist_bottom)
+
+        bottom_stats_layout.addWidget(hist_panel, 1)
+
+        # Alignment Quality panel
         self.align_score_widget = AlignmentScoreWidget()
+        bottom_stats_layout.addWidget(self.align_score_widget, 1)
+
+        # Analysis (Statistics) panel
         self.stats_widget = StatisticsWidget()
-        right_stats_layout.addWidget(self.align_score_widget)
-        right_stats_layout.addWidget(self.stats_widget)
-        bottom_row.addWidget(right_stats_widget, 1)
-        
-        right_layout.addLayout(bottom_row)
+        bottom_stats_layout.addWidget(self.stats_widget, 1)
+
+        right_layout.addWidget(bottom_stats)
 
         # === QUADRANT FUSION RIGHT PANEL (Page 1) ===
         qf_right_panel = QtWidgets.QWidget()
@@ -2447,7 +2805,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.addWidget(qf_right_panel)    # index 1 = Quadrant Fusion
         self.stk_right_panel.setCurrentIndex(0)
 
-        main_layout.addWidget(self.stk_right_panel, stretch=1)
+        right_area_layout.addWidget(self.stk_right_panel, stretch=1)
+
+        # Wire toolbar Auto Pair button ↔ hidden chk_auto_pair
+        self._btn_auto_pair.toggled.connect(lambda c: self.chk_auto_pair.setChecked(c))
     
     def _connect_signals(self):
         """Connect UI signals."""
@@ -2587,9 +2948,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
         # Window title
         if is_qf:
-            self.setWindowTitle("🔬 Perspective Combination — Quadrant Fusion")
+            self.setWindowTitle("SEM Perspective Combination Tool — Quadrant Fusion")
         else:
-            self.setWindowTitle("🔬 Perspective Combination")
+            self.setWindowTitle("SEM Perspective Combination Tool")
 
     def _on_qf_auto_detect(self):
         """Auto-detect Quadrant Fusion detector assignments from filenames."""
@@ -3508,7 +3869,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             f"{idx + 1}/{n}: {result.base_label} → {result.compare_label} ({op_name})"
         )
         self.setWindowTitle(
-            f"🔬 Perspective Combination - {result.base_label} → {result.compare_label}"
+            f"SEM Perspective Combination Tool - {result.base_label} → {result.compare_label}"
         )
         
         # Enable/disable buttons
