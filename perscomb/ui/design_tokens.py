@@ -15,56 +15,60 @@ class Colors:
     """顏色常量"""
 
     # 品牌色系 (Brand Colors)
-    # 主要橙色：降低飽和度，更柔和舒適
-    BRAND_PRIMARY = "#F59E0B"      # 主要橙色（優化後）
-    BRAND_PRIMARY_SOFT = "#FBBF24"  # 柔和橙色
-    BRAND_PRIMARY_GLOW = "#F59E0B44"  # 橙色光暈（透明度 27%）
+    BRAND_PRIMARY = "#F59E0B"
+    BRAND_PRIMARY_HOVER = "#FBBF24"
+    BRAND_PRIMARY_PRESSED = "#D97706"
+    BRAND_PRIMARY_SOFT = "#FEF3C7"
+    BRAND_PRIMARY_GLOW = "#F59E0B44"
 
     # 語義色系 (Semantic Colors)
-    SUCCESS = "#0EA5A4"            # 成功/正面色（青綠色）
-    WARNING = "#EF4444"            # 警告/錯誤色（紅色）
-    INFO = "#3B82F6"               # 資訊色（藍色）
+    SUCCESS = "#16A34A"
+    WARNING = "#DC2626"
+    INFO = "#2563EB"
 
     # 背景色系 (Background Colors)
-    BG_WINDOW = "#F6F7F9"          # 主窗口背景
-    BG_PANEL = "#FFFFFF"           # 面板背景
-    BG_CARD = "#FCFCFD"            # 卡片背景
-    BG_ALT = "#EEF1F5"             # 替代背景
-    BG_HEADER = "#E9EDF2"          # 標題欄背景
-    BG_INPUT = "#FFFFFF"           # 輸入框背景
+    BG_WINDOW = "#F5F6F8"
+    BG_PANEL = "#FFFFFF"
+    BG_CARD = "#FBFCFE"
+    BG_SUBTLE = "#F3F4F6"
+    BG_ALT = BG_SUBTLE
+    BG_HEADER = "#FFFFFF"
+    BG_INPUT = "#FFFFFF"
+    BG_VIEWER = "#000000"
 
     # 文字色系 (Text Colors)
-    TEXT_PRIMARY = "#1F2937"       # 主要文字
-    TEXT_SECONDARY = "#4B5563"     # 次要文字
-    TEXT_MUTED = "#9CA3AF"         # 禁用/弱化文字
-    TEXT_INVERSE = "#111827"       # 反色文字（用於亮色背景）
+    TEXT_PRIMARY = "#1F2937"
+    TEXT_SECONDARY = "#4B5563"
+    TEXT_MUTED = "#9CA3AF"
+    TEXT_INVERSE = "#111827"
+    TEXT_ON_PRIMARY = "#FFFFFF"
 
     # 邊框色系 (Border Colors)
-    BORDER_DEFAULT = "#D5DBE3"     # 默認邊框
-    BORDER_HOVER = "#F59E0B8C"     # 懸停邊框（橙色，透明度 55%）
-    BORDER_ACTIVE = "#F59E0B99"    # 激活邊框（橙色，透明度 60%）
-    BORDER_FOCUS = "#F59E0B"       # 焦點邊框
+    BORDER_DEFAULT = "#E5E7EB"
+    BORDER_HOVER = "#F6AD2B"
+    BORDER_ACTIVE = "#F59E0B"
+    BORDER_FOCUS = "#F59E0B"
 
     # 圖表色系 (Chart Colors)
-    CHART_PRIMARY = "#F59E0B"      # 主要圖表色
-    CHART_SECONDARY = "#0EA5A4"    # 次要圖表色
-    CHART_TERTIARY = "#4B5563"     # 第三圖表色
-    CHART_QUATERNARY = "#3B82F6"   # 第四圖表色
+    CHART_PRIMARY = "#F59E0B"
+    CHART_SECONDARY = "#16A34A"
+    CHART_TERTIARY = "#4B5563"
+    CHART_QUATERNARY = "#2563EB"
 
     # 漸變色 (Gradients)
     GRADIENT_CARD_START = "#FFFFFF"
-    GRADIENT_CARD_MID = "#F8FAFC"
-    GRADIENT_CARD_END = "#EEF2F7"
+    GRADIENT_CARD_MID = "#FBFCFE"
+    GRADIENT_CARD_END = "#F3F4F6"
 
     GRADIENT_BG_START = "#F8FAFC"
-    GRADIENT_BG_MID = "#F1F5F9"
-    GRADIENT_BG_END = "#E8EEF5"
+    GRADIENT_BG_MID = "#F5F6F8"
+    GRADIENT_BG_END = "#EEF2F7"
 
     # 半透明色 (Transparent Colors)
     OVERLAY_DARK = "rgba(17, 24, 39, 0.55)"
     OVERLAY_LIGHT = "rgba(255, 255, 255, 0.75)"
-    SELECTION_BG = "rgba(245, 158, 11, 0.3)"  # 選擇背景
-    SLIDER_FILLED = "rgba(245, 158, 11, 0.35)"  # 滑塊已填充部分
+    SELECTION_BG = "rgba(245, 158, 11, 0.2)"
+    SLIDER_FILLED = "rgba(245, 158, 11, 0.35)"
 
 
 # ============================================================================
