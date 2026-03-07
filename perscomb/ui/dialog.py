@@ -263,21 +263,56 @@ DIALOG_STYLE = f"""
         border-color: {UI_BORDER};
     }}
     QPushButton#LeftAdvancedToggle {{
-        background-color: transparent;
+        background-color: {UI_BG_SUBTLE};
         color: {UI_TEXT_SECONDARY};
-        border: 1px solid transparent;
-        border-bottom: 1px solid {UI_BORDER};
-        border-radius: 0px;
+        border: 1px solid {UI_BORDER};
+        border-radius: {BorderRadius.SM};
         text-align: left;
-        padding: 4px 2px 6px 2px;
-        min-height: 24px;
+        padding: 5px 8px;
+        min-height: 28px;
         font-weight: {Typography.FONT_WEIGHT_MEDIUM};
     }}
     QPushButton#LeftAdvancedToggle:hover,
     QPushButton#LeftAdvancedToggle:checked {{
         color: {UI_PRIMARY};
-        border-bottom: 1px solid {UI_PRIMARY};
-        background-color: transparent;
+        border-color: {UI_PRIMARY};
+        background-color: #FFF8ED;
+    }}
+    QPushButton#ViewerToolToggle {{
+        background-color: {UI_BG_PANEL};
+        color: {UI_TEXT_SECONDARY};
+        border: 1px solid {UI_BORDER};
+        border-radius: {BorderRadius.SM};
+        padding: 6px 12px;
+        min-height: 30px;
+        min-width: 96px;
+        font-size: {Typography.FONT_SIZE_SMALL};
+        font-weight: {Typography.FONT_WEIGHT_MEDIUM};
+    }}
+    QPushButton#ViewerToolToggle:hover {{
+        background-color: #FFF8ED;
+        border-color: {UI_PRIMARY};
+    }}
+    QPushButton#ViewerToolToggle:checked {{
+        background-color: {UI_PRIMARY};
+        color: {UI_TEXT_ON_PRIMARY};
+        border-color: {UI_PRIMARY};
+        font-weight: {Typography.FONT_WEIGHT_BOLD};
+    }}
+    QLabel[toolbarGroupLabel="true"] {{
+        color: {UI_TEXT_MUTED};
+        font-size: {Typography.FONT_SIZE_CAPTION};
+        font-weight: {Typography.FONT_WEIGHT_BOLD};
+        letter-spacing: 0.35px;
+    }}
+    QLabel#SharedViewerControl {{
+        background-color: {UI_BG_SUBTLE};
+        color: {UI_TEXT_SECONDARY};
+        border: 1px solid {UI_BORDER};
+        border-radius: {BorderRadius.SM};
+        padding: 3px 8px;
+        font-size: {Typography.FONT_SIZE_CAPTION};
+        font-weight: {Typography.FONT_WEIGHT_BOLD};
     }}
     QPushButton[toolbarToggle="true"] {{
         background-color: {UI_BG_SUBTLE};
@@ -1524,6 +1559,7 @@ class StatisticsWidget(QtWidgets.QFrame):
             self.stats_labels[key] = lbl_value
 
         layout.addStretch(1)
+        self.reset()
 
     def update_stats(self, result: CombineResult):
         if not result or not result.stats:
@@ -1548,10 +1584,24 @@ class StatisticsWidget(QtWidgets.QFrame):
         self.align_labels["residual"].setText(residual)
         self.align_labels["final"].setText(final)
         self.align_labels["shift"].setText(shift)
-        self.lbl_align_status.setText(status)
+        self.lbl_align_status.setText(f" {status} ")
         self.lbl_align_status.setStyleSheet(
-            f"color: {status_color}; font-size: {Typography.FONT_SIZE_BODY};"
-            f" font-weight: {Typography.FONT_WEIGHT_BOLD}; border: none;"
+            f"color: #FFFFFF; background-color: {status_color}; border: 1px solid {status_color};"
+            f" border-radius: {BorderRadius.SM}; padding: 1px 8px;"
+            f" font-size: {Typography.FONT_SIZE_SMALL}; font-weight: {Typography.FONT_WEIGHT_BOLD};"
+        )
+
+    def reset(self):
+        """Reset Analysis card to default empty-state values."""
+        for lbl in self.align_labels.values():
+            lbl.setText("--")
+        for lbl in self.stats_labels.values():
+            lbl.setText("--")
+        self.lbl_align_status.setText(" -- ")
+        self.lbl_align_status.setStyleSheet(
+            f"color: {UI_TEXT_MUTED}; background-color: {UI_BG_SUBTLE}; border: 1px solid {UI_BORDER};"
+            f" border-radius: {BorderRadius.SM}; padding: 1px 8px;"
+            f" font-size: {Typography.FONT_SIZE_SMALL}; font-weight: {Typography.FONT_WEIGHT_BOLD};"
         )
 
 
@@ -2118,20 +2168,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 background-color: #FDE7C2;
             }}
             QWidget#LeftPanel QPushButton#LeftAdvancedToggle {{
-                background-color: transparent;
+                background-color: {UI_BG_SUBTLE};
                 color: {UI_TEXT_SECONDARY};
-                border: none;
-                border-bottom: 1px solid {UI_BORDER};
-                border-radius: 0px;
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
                 text-align: left;
-                padding: 4px 2px 6px 2px;
-                min-height: 24px;
+                padding: 5px 8px;
+                min-height: 28px;
                 font-weight: {Typography.FONT_WEIGHT_MEDIUM};
             }}
             QWidget#LeftPanel QPushButton#LeftAdvancedToggle:hover,
             QWidget#LeftPanel QPushButton#LeftAdvancedToggle:checked {{
                 color: {UI_PRIMARY};
-                border-bottom: 1px solid {UI_PRIMARY};
+                border-color: {UI_PRIMARY};
+                background-color: #FFF8ED;
             }}
             QWidget#LeftPanel QLabel {{
                 color: {UI_TEXT};
@@ -2140,18 +2190,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: none;
             }}
             QWidget#LeftPanel QLabel#SectionTitle {{
-                color: {UI_TEXT_SECONDARY};
-                font-size: {Typography.FONT_SIZE_CAPTION};
+                color: {UI_TEXT};
+                font-size: {Typography.FONT_SIZE_SMALL};
                 font-weight: {Typography.FONT_WEIGHT_BOLD};
                 text-transform: uppercase;
                 padding: 0px;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.6px;
             }}
             QWidget#LeftPanel QLabel#SectionSeparator {{
                 background-color: {UI_BORDER};
                 min-height: 1px;
                 max-height: 1px;
                 border: none;
+                margin-top: 2px;
+                margin-bottom: 2px;
             }}
             QWidget#LeftPanel QScrollArea {{
                 border: none;
@@ -2160,7 +2212,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
         left_layout.setContentsMargins(12, 12, 12, 12)
-        left_layout.setSpacing(4)
+        left_layout.setSpacing(5)
 
         # --- INPUT section ---
         lbl_img_mgr = QtWidgets.QLabel("INPUT")
@@ -2169,7 +2221,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         sep1 = QtWidgets.QLabel()
         sep1.setObjectName("SectionSeparator")
         left_layout.addWidget(sep1)
-        left_layout.addSpacing(4)
+        left_layout.addSpacing(6)
 
         # Hidden containers for backward compat
         self.grp_basic_controls = QtWidgets.QWidget()
@@ -2575,14 +2627,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addWidget(self.grp_op)
 
         # --- ALIGNMENT section ---
-        left_layout.addSpacing(8)
+        left_layout.addSpacing(10)
         lbl_align_section = QtWidgets.QLabel("ALIGNMENT")
         lbl_align_section.setObjectName("SectionTitle")
         left_layout.addWidget(lbl_align_section)
         sep_align = QtWidgets.QLabel()
         sep_align.setObjectName("SectionSeparator")
         left_layout.addWidget(sep_align)
-        left_layout.addSpacing(4)
+        left_layout.addSpacing(6)
 
         self.grp_align = QtWidgets.QWidget()
         align_layout = QtWidgets.QVBoxLayout(self.grp_align)
@@ -2614,14 +2666,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addWidget(self.grp_align)
 
         # --- OPTIONS section ---
-        left_layout.addSpacing(8)
+        left_layout.addSpacing(10)
         lbl_options = QtWidgets.QLabel("OPTIONS")
         lbl_options.setObjectName("SectionTitle")
         left_layout.addWidget(lbl_options)
         sep3 = QtWidgets.QLabel()
         sep3.setObjectName("SectionSeparator")
         left_layout.addWidget(sep3)
-        left_layout.addSpacing(4)
+        left_layout.addSpacing(6)
 
         # Advanced toggle
         self.btn_left_adv_toggle_2 = QtWidgets.QPushButton("Show Advanced \u25b8")
@@ -2678,13 +2730,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_ctrl_layout.addSpacing(12)
 
         # Split View toggle placed in left control bar (only affects left viewer)
-        self.chk_split_view = QtWidgets.QCheckBox("Split View")
-        self.chk_split_view.setChecked(False)
-        self.chk_split_view.setToolTip(
+        self.btn_split_view = QtWidgets.QPushButton("Split View")
+        self.btn_split_view.setObjectName("ViewerToolToggle")
+        self.btn_split_view.setCheckable(True)
+        self.btn_split_view.setChecked(False)
+        self.btn_split_view.setToolTip(
             "OFF: Magnifier mode \u2014 synchronized with Difference Map\n"
             "ON:  Split-view Base vs Aligned Compare (drag divider or use slider)"
         )
-        left_ctrl_layout.addWidget(self.chk_split_view)
+        left_ctrl_layout.addWidget(self.btn_split_view)
 
         # Slider for split view divider
         self.blend_slider_widget = QtWidgets.QWidget()
@@ -2703,10 +2757,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         left_ctrl_layout.addStretch(1)
 
-        # Sync Zoom toggle in left bar
+        # Sync Zoom shared toggle between both viewers
+        self.lbl_sync_zoom = QtWidgets.QLabel("Shared")
+        self.lbl_sync_zoom.setObjectName("SharedViewerControl")
+        left_ctrl_layout.addWidget(self.lbl_sync_zoom)
+
         self.chk_sync_zoom = QtWidgets.QCheckBox("Sync Zoom")
         self.chk_sync_zoom.setChecked(True)
-        self.chk_sync_zoom.setToolTip("Synchronize zoom between Comparison and Difference views")
+        self.chk_sync_zoom.setToolTip("Synchronize zoom between left and right viewers")
         left_ctrl_layout.addWidget(self.chk_sync_zoom)
 
         left_section.addWidget(left_ctrl_bar)
@@ -2758,24 +2816,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             btn.setFixedHeight(30)
             right_ctrl_layout.addWidget(btn)
 
-        right_ctrl_layout.addStretch(1)
+        right_ctrl_layout.addSpacing(10)
 
         _sep_v = QtWidgets.QFrame()
         _sep_v.setFrameShape(QtWidgets.QFrame.VLine)
         _sep_v.setStyleSheet(f"color: {UI_BORDER}; max-width: 1px; margin: 2px 8px;")
         right_ctrl_layout.addWidget(_sep_v)
 
-        lbl_range = QtWidgets.QLabel("Range")
-        lbl_range.setProperty("toolbarLabel", True)
-        right_ctrl_layout.addWidget(lbl_range)
-        right_ctrl_layout.addSpacing(4)
-        self.cmb_range = QtWidgets.QComboBox()
-        self.cmb_range.addItems(["Auto", "Zero-centered", "P1-P99", "P0.5-P99.5"])
-        self.cmb_range.setFixedWidth(120)
-        self.cmb_range.setToolTip("Control how difference values are scaled for display")
-        right_ctrl_layout.addWidget(self.cmb_range)
-
+        lbl_display_group = QtWidgets.QLabel("DISPLAY")
+        lbl_display_group.setProperty("toolbarGroupLabel", True)
+        right_ctrl_layout.addWidget(lbl_display_group)
         right_ctrl_layout.addSpacing(8)
+
         self.btn_show_norm_compare = QtWidgets.QPushButton("Normalize")
         self.btn_show_norm_compare.setFixedWidth(100)
         self.btn_show_norm_compare.setToolTip("Preview normalization effect")
@@ -2788,8 +2840,21 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_ctrl_layout.addSpacing(4)
         self.cmb_colormap = QtWidgets.QComboBox()
         self.cmb_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
-        self.cmb_colormap.setFixedWidth(100)
+        self.cmb_colormap.setFixedWidth(104)
         right_ctrl_layout.addWidget(self.cmb_colormap)
+
+        right_ctrl_layout.addSpacing(8)
+        lbl_range = QtWidgets.QLabel("Range")
+        lbl_range.setProperty("toolbarLabel", True)
+        right_ctrl_layout.addWidget(lbl_range)
+        right_ctrl_layout.addSpacing(4)
+        self.cmb_range = QtWidgets.QComboBox()
+        self.cmb_range.addItems(["Auto", "Zero-centered", "P1-P99", "P0.5-P99.5"])
+        self.cmb_range.setFixedWidth(128)
+        self.cmb_range.setToolTip("Control how difference values are scaled for display")
+        right_ctrl_layout.addWidget(self.cmb_range)
+
+        right_ctrl_layout.addStretch(1)
 
         right_section.addWidget(right_ctrl_bar)
 
@@ -2828,8 +2893,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         hist_card = QtWidgets.QFrame()
         hist_card.setObjectName("BottomCard")
         hist_layout = QtWidgets.QVBoxLayout(hist_card)
-        hist_layout.setContentsMargins(14, 12, 14, 10)
-        hist_layout.setSpacing(4)
+        hist_layout.setContentsMargins(12, 10, 12, 8)
+        hist_layout.setSpacing(3)
         lbl_hist_title = QtWidgets.QLabel("Histogram")
         lbl_hist_title.setStyleSheet(
             f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_BODY};"
@@ -2843,7 +2908,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         hist_layout.addWidget(hist_hint)
         self.histogram_canvas = HistogramCanvas()
-        self.histogram_canvas.setFixedHeight(160)
+        self.histogram_canvas.setFixedHeight(186)
         hist_layout.addWidget(self.histogram_canvas)
         hist_ctrl_row = QtWidgets.QHBoxLayout()
         self.lbl_hist_range = QtWidgets.QLabel("Range: \u2014")
@@ -3119,7 +3184,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_clear_roi.clicked.connect(self._on_clear_roi)
 
         # Split View toggle + bidirectional cursor sync
-        self.chk_split_view.toggled.connect(self._on_split_view_toggle)
+        self.btn_split_view.toggled.connect(self._on_split_view_toggle)
         # Diff map → left magnifier
         self.img_diff.cursor_moved.connect(self._on_diff_cursor_moved)
         self.img_diff.cursor_left.connect(self._on_diff_cursor_left)
@@ -3202,24 +3267,40 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.grp_advanced_controls.setVisible(not is_qf)
         if is_qf and self.btn_left_adv_toggle.isChecked():
             self.btn_left_adv_toggle.setChecked(False)
-        # Right panel: swap entire display
-        self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
-        # Window title
-        if is_qf:
-            self.setWindowTitle("Fusi\u00b3 \u2014 Quadrant Fusion")
-        else:
-            self.setWindowTitle("Fusi\u00b3 \u2014 SEM Perspective Combination Tool")
 
-        # Fix: refresh all Standard viewers after mode switch so they never remain blank
-        if not is_qf:
-            if self._results:
-                self._update_blend_preview()
-                self._refresh_diff_display()
-                result = self._results[self._current_result_idx]
-                counts, edges = result.histogram
-                self.histogram_canvas.plot_histogram(counts, edges)
-                self._update_alignment_display(result)
-                self._update_stats_display(result)
+        # Keep using the existing embedded pages; never create/detach viewers here.
+        self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
+
+        if is_qf:
+            self.setWindowTitle("Fusi³ — Quadrant Fusion")
+        else:
+            self.setWindowTitle("Fusi³ — SEM Perspective Combination Tool")
+            self._refresh_standard_mode_views()
+
+    def _refresh_standard_mode_views(self):
+        """Refresh existing embedded Standard-mode viewers after mode switching."""
+        if self._results:
+            self._update_current_result()
+        else:
+            self._show_standard_empty_state()
+
+    def _show_standard_empty_state(self):
+        """Show an embedded empty state for Standard mode without extra windows."""
+        self._display_mode = 'diff'
+        self.btn_mode_diff.setChecked(True)
+        self.btn_mode_topo.setChecked(False)
+        self.btn_mode_base.setChecked(True)
+        self.btn_mode_compare.setChecked(False)
+        if self.btn_split_view.isChecked():
+            self.btn_split_view.setChecked(False)
+        self.img_base_mag.setImage(None)
+        self.img_blend.set_images(None, None)
+        self.img_diff.setImage(None)
+        self.histogram_canvas.plot_histogram(None, None)
+        self._hist_range = None
+        self.lbl_hist_range.setText("Range: —")
+        self.btn_clear_hist_range.setEnabled(False)
+        self.stats_widget.reset()
 
     def _on_qf_auto_detect(self):
         """Auto-detect Quadrant Fusion detector assignments from filenames."""
@@ -3279,12 +3360,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_diff_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay Difference Map cursor position to left-panel magnifier."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_base_mag.setCursorPos(norm_x, norm_y)
 
     def _on_diff_cursor_left(self):
         """Clear left-panel magnifier when cursor leaves Difference Map."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_base_mag.clearCursor()
 
     def _on_operation_changed(self, index):
@@ -3379,8 +3460,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Handle special modes
         if mode in ('base', 'compare'):
             # Show magnifier mode with base or compare image
-            if self.chk_split_view.isChecked():
-                self.chk_split_view.setChecked(False)
+            if self.btn_split_view.isChecked():
+                self.btn_split_view.setChecked(False)
             self._refresh_base_compare_display(mode)
 
         # Refresh display
@@ -3920,6 +4001,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_qf_compute_finished(self, result: QuadrantFusionResult):
         """Handle Quadrant Fusion result — display in QF-specific viewers."""
         self._qf_last_result = result
+        self._result = None
         self._qf_current_view = "bse_clean"  # default main view
 
         # Display Illuminator in left viewer
@@ -4245,12 +4327,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_base_mag_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay left-panel magnifier cursor position to Difference Map (bidirectional zoom)."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_diff.setCursorPos(norm_x, norm_y)
 
     def _on_base_mag_cursor_left(self):
         """Clear Difference Map magnifier when cursor leaves left-panel magnifier."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_diff.clearCursor()
 
     # ── ROI-Match (EPI Nulling) handlers ─────────────────────────────────
@@ -4263,8 +4345,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             )
             return
         # Ensure magnifier page is visible so the user can draw on Base
-        if self.chk_split_view.isChecked():
-            self.chk_split_view.setChecked(False)
+        if self.btn_split_view.isChecked():
+            self.btn_split_view.setChecked(False)
         self.img_base_mag.set_roi_mode(True)
         self.lbl_roi_info.setText("ROI: draw on Base image...")
 
