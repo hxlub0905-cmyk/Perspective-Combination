@@ -450,6 +450,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
     cursor_moved = Signal(float, float)  # Normalized position (0-1)
     cursor_left = Signal()
     roi_selected = Signal(float, float, float, float)  # norm x, y, w, h
+    clicked = Signal()
 
     ZOOM_FACTOR = 2.0  # Magnification factor (lower = more FOV)
     ZOOM_SIZE = 220  # Larger circular FOV for easier inspection
@@ -564,6 +565,8 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
 
     def mousePressEvent(self, event):
         """Start ROI drawing on left click when in roi_mode."""
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
         if self._roi_mode and event.button() == Qt.LeftButton:
             norm = self._widget_to_norm(event.pos())
             if norm:
@@ -778,6 +781,8 @@ class SplitViewWidget(QtWidgets.QWidget):
     The slider_blend value (0-100) also controls the divider position.
     """
 
+    clicked = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._base_image: Optional[np.ndarray] = None
@@ -923,6 +928,8 @@ class SplitViewWidget(QtWidgets.QWidget):
         return abs(pos_x - div_x) <= 14
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
         if event.button() == Qt.LeftButton and self._near_divider(event.pos().x()):
             self._dragging = True
             self.setCursor(Qt.SplitHCursor)
@@ -1893,7 +1900,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._last_settings: Dict[str, object] = {}
         self._compute_thread: Optional[QtCore.QThread] = None
         self._compute_worker: Optional[_Worker] = None
-        self._display_mode = 'diff'  # 'diff' or 'zmap'
+        self._display_mode = 'diff'  # right viewer: 'diff' or 'zmap'
+        self._left_non_split_mode = 'base'
+        self._left_view_mode = 'base'
         self._norm_compare_dialog: Optional[NormalizedCompareDialog] = None
         self._hist_range: Optional[tuple] = None  # (lo, hi) gray-level range for highlight, or None
 
@@ -2164,10 +2173,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             }}
             QWidget#LeftPanel QLabel#SectionTitle {{
                 color: {UI_TEXT};
-                font-size: {Typography.FONT_SIZE_SMALL};
-                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                font-size: {Typography.FONT_SIZE_BODY};
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
                 text-transform: uppercase;
-                padding: 0px;
+                padding: 2px 0px;
                 letter-spacing: 0.6px;
             }}
             QWidget#LeftPanel QLabel#SectionSeparator {{
@@ -2196,6 +2205,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addWidget(sep1)
         left_layout.addSpacing(6)
 
+        self.lbl_input_empty_hint = QtWidgets.QLabel("No images loaded.\nLoad a folder to begin.")
+        self.lbl_input_empty_hint.setProperty("secondary", True)
+        self.lbl_input_empty_hint.setWordWrap(True)
+        left_layout.addWidget(self.lbl_input_empty_hint)
+
         # Auto Pair dropdown (input mode)
         self.cmb_input_mode = QtWidgets.QComboBox()
         self.cmb_input_mode.addItems([
@@ -2222,6 +2236,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self.cmb_base = QtWidgets.QComboBox()
         std_layout.addWidget(self.cmb_base)
+
+        self.lbl_base_empty_hint = QtWidgets.QLabel("Select a base image after loading a folder.")
+        self.lbl_base_empty_hint.setProperty("secondary", True)
+        self.lbl_base_empty_hint.setWordWrap(True)
+        std_layout.addWidget(self.lbl_base_empty_hint)
 
         # Compare images (scrollable checkbox list)
         self.scroll_compare = QtWidgets.QScrollArea()
@@ -3126,6 +3145,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_base_mag.cursor_moved.connect(self._on_base_mag_cursor_moved)
         self.img_base_mag.cursor_left.connect(self._on_base_mag_cursor_left)
 
+        self.img_base_mag.clicked.connect(self._on_left_viewer_clicked)
+        self.img_blend.clicked.connect(self._on_split_viewer_clicked)
+        self.img_diff.clicked.connect(self._on_right_viewer_clicked)
+
+        self._update_sidebar_empty_state(False)
+        self._sync_viewer_mode_buttons()
+
     def _on_load_image_folder(self):
         """Select an image folder and load all supported images."""
         import os
@@ -3217,10 +3243,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _show_standard_empty_state(self):
         """Show an embedded empty state for Standard mode without extra windows."""
         self._display_mode = 'diff'
-        self.btn_mode_diff.setChecked(True)
-        self.btn_mode_topo.setChecked(False)
-        self.btn_mode_base.setChecked(True)
-        self.btn_mode_compare.setChecked(False)
+        self._left_non_split_mode = 'base'
+        self._left_view_mode = 'base'
         if self.btn_split_view.isChecked():
             self.btn_split_view.setChecked(False)
         self.img_base_mag.setImage(None)
@@ -3231,6 +3255,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.lbl_hist_range.setText("Range: —")
         self.btn_clear_hist_range.setEnabled(False)
         self.stats_widget.reset()
+        self._sync_viewer_mode_buttons()
 
     def _on_qf_auto_detect(self):
         """Auto-detect Quadrant Fusion detector assignments from filenames."""
@@ -3281,11 +3306,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_split_view_toggle(self, checked: bool):
         """Switch left panel between magnifier (off) and split-view (on)."""
         if checked:
+            self._left_view_mode = 'split'
             self.stk_blend.setCurrentIndex(1)  # show SplitViewWidget
             self.blend_slider_widget.setVisible(True)
         else:
+            self._left_view_mode = self._left_non_split_mode
             self.stk_blend.setCurrentIndex(0)  # show magnifier
             self.blend_slider_widget.setVisible(False)
+            self._refresh_base_compare_display(self._left_non_split_mode)
+        self._sync_viewer_mode_buttons()
         self._update_blend_preview()
 
     def _on_diff_cursor_moved(self, norm_x: float, norm_y: float):
@@ -3321,6 +3350,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             cmb.clear()
 
         if not self._conditions:
+            self._update_sidebar_empty_state(False)
             return
 
         # Load each image
@@ -3350,10 +3380,24 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self.compare_layout.addStretch()
 
+        has_images = self.cmb_base.count() > 0
+        self._update_sidebar_empty_state(has_images)
+
         # Select first image as base
-        if self.cmb_base.count() > 0:
+        if has_images:
             self.cmb_base.setCurrentIndex(0)
             self._on_base_changed()
+
+    def _update_sidebar_empty_state(self, has_images: bool):
+        """Update sidebar placeholders and enablement when image set is empty/non-empty."""
+        self.lbl_input_empty_hint.setVisible(not has_images)
+        self.lbl_base_empty_hint.setVisible(not has_images)
+
+        self.cmb_base.setEnabled(has_images)
+        self.scroll_compare.setEnabled(has_images)
+        self.btn_swap_base.setEnabled(has_images)
+        self.btn_select_all.setEnabled(has_images)
+        self.btn_select_none.setEnabled(has_images)
 
     def _on_base_changed(self):
         """Update compare checkboxes when base changes."""
@@ -3378,24 +3422,45 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             chk.setChecked(False)
 
     def _on_display_mode(self, mode: str):
-        """Switch between display modes: base, compare, diff, zmap."""
-        self._display_mode = mode
-
-        # Update segmented button states
-        self.btn_mode_base.setChecked(mode == 'base')
-        self.btn_mode_compare.setChecked(mode == 'compare')
-        self.btn_mode_diff.setChecked(mode == 'diff')
-        self.btn_mode_topo.setChecked(mode == 'zmap')
-
-        # Handle special modes
+        """Switch left or right viewer display mode and keep button highlights in sync."""
         if mode in ('base', 'compare'):
-            # Show magnifier mode with base or compare image
+            self._left_non_split_mode = mode
             if self.btn_split_view.isChecked():
                 self.btn_split_view.setChecked(False)
-            self._refresh_base_compare_display(mode)
+            else:
+                self._left_view_mode = mode
+                self._refresh_base_compare_display(mode)
+            self._sync_viewer_mode_buttons()
+            return
 
-        # Refresh display
-        self._refresh_diff_display()
+        if mode in ('diff', 'zmap'):
+            self._display_mode = mode
+            self._sync_viewer_mode_buttons()
+            self._refresh_diff_display()
+
+    def _sync_viewer_mode_buttons(self):
+        """Synchronize viewer mode button highlight states with active view."""
+        is_split = self._left_view_mode == 'split'
+        self.btn_split_view.setChecked(is_split)
+        self.btn_mode_base.setChecked((not is_split) and self._left_non_split_mode == 'base')
+        self.btn_mode_compare.setChecked((not is_split) and self._left_non_split_mode == 'compare')
+        self.btn_mode_diff.setChecked(self._display_mode == 'diff')
+        self.btn_mode_topo.setChecked(self._display_mode == 'zmap')
+
+    def _on_left_viewer_clicked(self):
+        """Keep left mode button highlight synced when clicking in the left magnifier."""
+        if self._left_view_mode != 'split':
+            self._left_view_mode = self._left_non_split_mode
+        self._sync_viewer_mode_buttons()
+
+    def _on_split_viewer_clicked(self):
+        """Keep split button highlighted when user interacts in split view."""
+        self._left_view_mode = 'split'
+        self._sync_viewer_mode_buttons()
+
+    def _on_right_viewer_clicked(self):
+        """Keep right mode button highlight synced when clicking in the right viewer."""
+        self._sync_viewer_mode_buttons()
 
     def _refresh_base_compare_display(self, mode: str):
         """Show base or compare image in the magnifier view."""
@@ -4090,6 +4155,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # Blend preview
         self._update_blend_preview()
+        if self._left_view_mode != 'split':
+            self._refresh_base_compare_display(self._left_non_split_mode)
+        self._sync_viewer_mode_buttons()
 
         # Histogram
         counts, edges = result.histogram
