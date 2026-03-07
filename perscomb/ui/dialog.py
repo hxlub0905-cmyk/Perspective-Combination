@@ -640,7 +640,14 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
     def _update_display(self):
         """Update the displayed pixmap."""
         if self._image is None:
-            self._label.setText(f"{self._title}\n\nNo image")
+            self._label.setText(
+                f"{self._title}\n\nNo image loaded\n"
+                f"Load a folder and select images to begin."
+            )
+            self._label.setStyleSheet(
+                f"border: none; background: {UI_BG_VIEWER}; border-radius: 8px;"
+                f" color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_SMALL};"
+            )
             return
 
         h, w = self._image.shape[:2]
@@ -1201,30 +1208,45 @@ class AlignmentScoreWidget(QtWidgets.QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("AnalysisCard")
+        self.setObjectName("AlignCard")
         self.setMinimumWidth(248)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.setStyleSheet(f"""
-            QFrame#AnalysisCard {{
+            QFrame#AlignCard {{
                 background-color: {UI_BG_CARD};
                 border: 1px solid {UI_BORDER};
-                border-radius: 14px;
+                border-radius: {BorderRadius.MD};
             }}
-            QLabel {{
+            QFrame#AlignCard QLabel {{
                 border: none;
                 background: transparent;
             }}
-            QLabel[cardTitle="true"] {{
+            QFrame#AlignCard QLabel[cardTitle="true"] {{
                 color: {UI_TEXT};
                 font-size: {Typography.FONT_SIZE_BODY};
                 font-weight: {Typography.FONT_WEIGHT_BOLD};
             }}
-            QLabel[cardSubTitle="true"] {{
+            QFrame#AlignCard QLabel[cardSubTitle="true"] {{
                 color: {UI_TEXT_MUTED};
                 font-size: {Typography.FONT_SIZE_CAPTION};
-                font-weight: {Typography.FONT_WEIGHT_MEDIUM};
             }}
-            QFrame[divider="true"] {{
+            QFrame#AlignCard QLabel[statLabel="true"] {{
+                color: {UI_TEXT_MUTED};
+                font-size: {Typography.FONT_SIZE_SMALL};
+            }}
+            QFrame#AlignCard QLabel[statValue="true"] {{
+                color: {UI_TEXT};
+                font-size: {Typography.FONT_SIZE_BODY};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                font-family: {Typography.FONT_FAMILY_MONO};
+            }}
+            QFrame#AlignCard QLabel[statValueLong="true"] {{
+                color: {UI_TEXT_SECONDARY};
+                font-size: {Typography.FONT_SIZE_SMALL};
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+                font-family: {Typography.FONT_FAMILY_MONO};
+            }}
+            QFrame#AlignCard QFrame[divider="true"] {{
                 background-color: {UI_BORDER};
                 min-height: 1px;
                 max-height: 1px;
@@ -1357,30 +1379,45 @@ class StatisticsWidget(QtWidgets.QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("AnalysisCard")
+        self.setObjectName("StatsCard")
         self.setMinimumWidth(248)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.setStyleSheet(f"""
-            QFrame#AnalysisCard {{
+            QFrame#StatsCard {{
                 background-color: {UI_BG_CARD};
                 border: 1px solid {UI_BORDER};
-                border-radius: 14px;
+                border-radius: {BorderRadius.MD};
             }}
-            QLabel {{
+            QFrame#StatsCard QLabel {{
                 border: none;
                 background: transparent;
             }}
-            QLabel[cardTitle="true"] {{
+            QFrame#StatsCard QLabel[cardTitle="true"] {{
                 color: {UI_TEXT};
                 font-size: {Typography.FONT_SIZE_BODY};
                 font-weight: {Typography.FONT_WEIGHT_BOLD};
             }}
-            QLabel[cardSubTitle="true"] {{
+            QFrame#StatsCard QLabel[cardSubTitle="true"] {{
                 color: {UI_TEXT_MUTED};
                 font-size: {Typography.FONT_SIZE_CAPTION};
-                font-weight: {Typography.FONT_WEIGHT_MEDIUM};
             }}
-            QFrame[divider="true"] {{
+            QFrame#StatsCard QLabel[statLabel="true"] {{
+                color: {UI_TEXT_MUTED};
+                font-size: {Typography.FONT_SIZE_SMALL};
+            }}
+            QFrame#StatsCard QLabel[statValue="true"] {{
+                color: {UI_TEXT};
+                font-size: {Typography.FONT_SIZE_BODY};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                font-family: {Typography.FONT_FAMILY_MONO};
+            }}
+            QFrame#StatsCard QLabel[statValueLong="true"] {{
+                color: {UI_TEXT_SECONDARY};
+                font-size: {Typography.FONT_SIZE_SMALL};
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+                font-family: {Typography.FONT_FAMILY_MONO};
+            }}
+            QFrame#StatsCard QFrame[divider="true"] {{
                 background-color: {UI_BORDER};
                 min-height: 1px;
                 max-height: 1px;
@@ -1919,25 +1956,164 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # === LEFT SIDEBAR ===
         left_panel = QtWidgets.QWidget()
-        left_panel.setFixedWidth(240)
+        left_panel.setObjectName("LeftPanel")
+        left_panel.setFixedWidth(260)
         left_panel.setStyleSheet(f"""
-            QWidget {{
+            QWidget#LeftPanel {{
                 background-color: {UI_BG_PANEL};
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.MD};
             }}
+            QWidget#LeftPanel > QWidget,
+            QWidget#LeftPanel QWidget {{
+                background-color: transparent;
+                border: none;
+            }}
+            QWidget#LeftPanel QComboBox {{
+                background-color: {UI_BG_INPUT};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
+                padding: {Spacing.INPUT_PADDING};
+                font-size: {Typography.FONT_SIZE_SMALL};
+                min-height: 28px;
+            }}
+            QWidget#LeftPanel QComboBox:hover,
+            QWidget#LeftPanel QComboBox:focus {{
+                border-color: {UI_PRIMARY};
+            }}
+            QWidget#LeftPanel QComboBox::drop-down {{
+                border: none;
+                padding-right: 8px;
+            }}
+            QWidget#LeftPanel QComboBox QAbstractItemView {{
+                background-color: {UI_BG_PANEL};
+                color: {UI_TEXT};
+                selection-background-color: {UI_PRIMARY};
+                selection-color: {UI_TEXT_ON_PRIMARY};
+                border: 1px solid {UI_BORDER};
+            }}
+            QWidget#LeftPanel QCheckBox {{
+                color: {UI_TEXT};
+                spacing: {Spacing.SM};
+                font-size: {Typography.FONT_SIZE_SMALL};
+                background: transparent;
+                border: none;
+            }}
+            QWidget#LeftPanel QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 2px solid #D1D5DB;
+                border-radius: 3px;
+                background-color: {UI_BG_INPUT};
+            }}
+            QWidget#LeftPanel QCheckBox::indicator:checked {{
+                background-color: {UI_PRIMARY};
+                border-color: {UI_PRIMARY};
+            }}
+            QWidget#LeftPanel QSpinBox,
+            QWidget#LeftPanel QDoubleSpinBox {{
+                background-color: {UI_BG_INPUT};
+                color: {UI_TEXT};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
+                padding: 4px 22px 4px 8px;
+                min-height: 24px;
+                font-size: {Typography.FONT_SIZE_SMALL};
+            }}
+            QWidget#LeftPanel QSpinBox:hover,
+            QWidget#LeftPanel QDoubleSpinBox:hover {{
+                border-color: {UI_PRIMARY};
+            }}
+            QWidget#LeftPanel QSpinBox::up-button,
+            QWidget#LeftPanel QDoubleSpinBox::up-button,
+            QWidget#LeftPanel QSpinBox::down-button,
+            QWidget#LeftPanel QDoubleSpinBox::down-button {{
+                subcontrol-origin: border;
+                width: 14px;
+                border-left: 1px solid {UI_BORDER};
+                background-color: {UI_BG_CARD};
+            }}
+            QWidget#LeftPanel QSpinBox::up-button,
+            QWidget#LeftPanel QDoubleSpinBox::up-button {{
+                subcontrol-position: top right;
+                border-top-right-radius: {BorderRadius.SM};
+            }}
+            QWidget#LeftPanel QSpinBox::down-button,
+            QWidget#LeftPanel QDoubleSpinBox::down-button {{
+                subcontrol-position: bottom right;
+                border-bottom-right-radius: {BorderRadius.SM};
+                border-top: 1px solid {UI_BORDER};
+            }}
+            QWidget#LeftPanel QPushButton {{
+                background-color: {UI_BG_PANEL};
+                color: {UI_TEXT};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
+                padding: 4px 10px;
+                min-height: 26px;
+                font-size: {Typography.FONT_SIZE_SMALL};
+                font-weight: {Typography.FONT_WEIGHT_MEDIUM};
+            }}
+            QWidget#LeftPanel QPushButton:hover {{
+                background-color: #FFF8ED;
+                border-color: {UI_PRIMARY};
+            }}
+            QWidget#LeftPanel QPushButton:pressed {{
+                background-color: #FDE7C2;
+            }}
+            QWidget#LeftPanel QPushButton#LeftAdvancedToggle {{
+                background-color: transparent;
+                color: {UI_TEXT_SECONDARY};
+                border: none;
+                border-bottom: 1px solid {UI_BORDER};
+                border-radius: 0px;
+                text-align: left;
+                padding: 4px 2px 6px 2px;
+                min-height: 24px;
+                font-weight: {Typography.FONT_WEIGHT_MEDIUM};
+            }}
+            QWidget#LeftPanel QPushButton#LeftAdvancedToggle:hover,
+            QWidget#LeftPanel QPushButton#LeftAdvancedToggle:checked {{
+                color: {UI_PRIMARY};
+                border-bottom: 1px solid {UI_PRIMARY};
+            }}
+            QWidget#LeftPanel QLabel {{
+                color: {UI_TEXT};
+                font-size: {Typography.FONT_SIZE_SMALL};
+                background: transparent;
+                border: none;
+            }}
+            QWidget#LeftPanel QLabel#SectionTitle {{
+                color: {UI_TEXT_SECONDARY};
+                font-size: {Typography.FONT_SIZE_CAPTION};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                text-transform: uppercase;
+                padding: 0px;
+                letter-spacing: 0.5px;
+            }}
+            QWidget#LeftPanel QLabel#SectionSeparator {{
+                background-color: {UI_BORDER};
+                min-height: 1px;
+                max-height: 1px;
+                border: none;
+            }}
+            QWidget#LeftPanel QScrollArea {{
+                border: none;
+                background: transparent;
+            }}
         """)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(10, 10, 10, 10)
-        left_layout.setSpacing(6)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(4)
 
-        # --- Image Manager section ---
-        lbl_img_mgr = QtWidgets.QLabel("Image Manager")
+        # --- INPUT section ---
+        lbl_img_mgr = QtWidgets.QLabel("INPUT")
         lbl_img_mgr.setObjectName("SectionTitle")
         left_layout.addWidget(lbl_img_mgr)
         sep1 = QtWidgets.QLabel()
         sep1.setObjectName("SectionSeparator")
         left_layout.addWidget(sep1)
+        left_layout.addSpacing(4)
 
         # Hidden containers for backward compat
         self.grp_basic_controls = QtWidgets.QWidget()
@@ -1974,7 +2150,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # Base Image label
         lbl_base = QtWidgets.QLabel("Base Image")
-        lbl_base.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; font-size: {Typography.FONT_SIZE_SMALL}; border: none; background: transparent;")
+        lbl_base.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};")
         std_layout.addWidget(lbl_base)
 
         self.cmb_base = QtWidgets.QComboBox()
@@ -2124,30 +2300,30 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._qf_roi_rect: Optional[tuple] = None  # (norm_x, norm_y, norm_w, norm_h)
         self._qf_last_result: Optional[QuadrantFusionResult] = None
 
-        # --- Parameters section ---
-        left_layout.addSpacing(6)
-        lbl_params = QtWidgets.QLabel("Parameters")
+        # --- OPERATION section ---
+        left_layout.addSpacing(8)
+        lbl_params = QtWidgets.QLabel("OPERATION")
         lbl_params.setObjectName("SectionTitle")
         left_layout.addWidget(lbl_params)
         sep2 = QtWidgets.QLabel()
         sep2.setObjectName("SectionSeparator")
         left_layout.addWidget(sep2)
+        left_layout.addSpacing(4)
 
         # Operation Settings (Standard mode only)
         self.grp_op = QtWidgets.QWidget()
-        self.grp_op.setStyleSheet("border: none; background: transparent;")
         op_layout = QtWidgets.QVBoxLayout(self.grp_op)
         op_layout.setContentsMargins(0, 4, 0, 0)
         op_layout.setSpacing(4)
 
         lbl_op = QtWidgets.QLabel("Operation")
-        lbl_op.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; font-size: {Typography.FONT_SIZE_SMALL}; border: none; background: transparent;")
+        lbl_op.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};")
         op_layout.addWidget(lbl_op)
 
         # Operation as radio-button-style checkboxes
         self.cmb_operation = QtWidgets.QComboBox()
         self.cmb_operation.addItems(["Subtract (|Base \u2212 Compare|)", "Blend (\u03b1\u00d7Base + \u03b2\u00d7Compare)"])
-        self.cmb_operation.setStyleSheet("border: none;")
+        # Combobox styled by sidebar stylesheet
         op_layout.addWidget(self.cmb_operation)
 
         # Blend coefficients (only visible in Blend mode)
@@ -2342,9 +2518,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         left_layout.addWidget(self.grp_op)
 
-        # Alignment Settings (Standard mode only)
+        # --- ALIGNMENT section ---
+        left_layout.addSpacing(8)
+        lbl_align_section = QtWidgets.QLabel("ALIGNMENT")
+        lbl_align_section.setObjectName("SectionTitle")
+        left_layout.addWidget(lbl_align_section)
+        sep_align = QtWidgets.QLabel()
+        sep_align.setObjectName("SectionSeparator")
+        left_layout.addWidget(sep_align)
+        left_layout.addSpacing(4)
+
         self.grp_align = QtWidgets.QWidget()
-        self.grp_align.setStyleSheet("border: none; background: transparent;")
         align_layout = QtWidgets.QVBoxLayout(self.grp_align)
         align_layout.setContentsMargins(0, 4, 0, 0)
         align_layout.setSpacing(4)
@@ -2373,14 +2557,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         align_layout.addLayout(snr_win_row)
         left_layout.addWidget(self.grp_align)
 
-        # --- Options section ---
-        left_layout.addSpacing(6)
-        lbl_options = QtWidgets.QLabel("Options")
+        # --- OPTIONS section ---
+        left_layout.addSpacing(8)
+        lbl_options = QtWidgets.QLabel("OPTIONS")
         lbl_options.setObjectName("SectionTitle")
         left_layout.addWidget(lbl_options)
         sep3 = QtWidgets.QLabel()
         sep3.setObjectName("SectionSeparator")
         left_layout.addWidget(sep3)
+        left_layout.addSpacing(4)
 
         # Enable ROI checkbox
         self.chk_enable_roi = QtWidgets.QCheckBox("Enable ROI")
@@ -2406,13 +2591,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
 
-        # --- Viewer section label ---
-        viewer_header = QtWidgets.QHBoxLayout()
-        lbl_viewer = QtWidgets.QLabel("Viewer")
-        lbl_viewer.setObjectName("SectionTitle")
-        lbl_viewer.setStyleSheet(f"font-size: {Typography.FONT_SIZE_H3}; font-weight: {Typography.FONT_WEIGHT_BOLD}; color: {UI_TEXT}; background: transparent; border: none;")
-        viewer_header.addWidget(lbl_viewer)
-        viewer_header.addSpacing(16)
+        # --- Viewer control bar ---
+        viewer_bar = QtWidgets.QFrame()
+        viewer_bar.setObjectName("ViewerControlBar")
+        viewer_bar.setStyleSheet(f"""
+            QFrame#ViewerControlBar {{
+                background-color: {UI_BG_PANEL};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
+                padding: 4px 8px;
+            }}
+        """)
+        viewer_header = QtWidgets.QHBoxLayout(viewer_bar)
+        viewer_header.setContentsMargins(8, 4, 8, 4)
+        viewer_header.setSpacing(0)
 
         # Segmented display mode selector: Base | Compare | Diff | Blend | Topo
         self.btn_mode_base = QtWidgets.QPushButton("Base")
@@ -2439,36 +2631,45 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         for btn in (self.btn_mode_base, self.btn_mode_compare, self.btn_mode_diff,
                      self.btn_mode_blend, self.btn_mode_topo):
-            btn.setFixedHeight(30)
+            btn.setFixedHeight(32)
             viewer_header.addWidget(btn)
 
-        viewer_header.addStretch()
+        viewer_header.addStretch(1)
+
+        # Display settings group — right-aligned with a visual separator
+        _sep_v = QtWidgets.QFrame()
+        _sep_v.setFrameShape(QtWidgets.QFrame.VLine)
+        _sep_v.setStyleSheet(f"color: {UI_BORDER}; max-width: 1px; margin: 2px 8px;")
+        viewer_header.addWidget(_sep_v)
 
         # Range selector
         lbl_range = QtWidgets.QLabel("Range")
         lbl_range.setProperty("toolbarLabel", True)
         viewer_header.addWidget(lbl_range)
+        viewer_header.addSpacing(4)
         self.cmb_range = QtWidgets.QComboBox()
         self.cmb_range.addItems(["Auto", "Zero-centered", "P1-P99", "P0.5-P99.5"])
         self.cmb_range.setFixedWidth(120)
         self.cmb_range.setToolTip("Control how difference values are scaled for display")
         viewer_header.addWidget(self.cmb_range)
 
-        viewer_header.addSpacing(8)
+        viewer_header.addSpacing(12)
         self.btn_show_norm_compare = QtWidgets.QPushButton("Normalize")
         self.btn_show_norm_compare.setFixedWidth(100)
         self.btn_show_norm_compare.setToolTip("Preview normalization effect")
         viewer_header.addWidget(self.btn_show_norm_compare)
 
+        viewer_header.addSpacing(12)
         lbl_colormap = QtWidgets.QLabel("Colormap")
         lbl_colormap.setProperty("toolbarLabel", True)
         viewer_header.addWidget(lbl_colormap)
+        viewer_header.addSpacing(4)
         self.cmb_colormap = QtWidgets.QComboBox()
         self.cmb_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
         self.cmb_colormap.setFixedWidth(100)
         viewer_header.addWidget(self.cmb_colormap)
 
-        right_layout.addLayout(viewer_header)
+        right_layout.addWidget(viewer_bar)
 
         # Hidden blend info for backward compat
         self.lbl_blend_info = QtWidgets.QLabel("")
@@ -2547,17 +2748,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         hist_card = QtWidgets.QFrame()
         hist_card.setObjectName("BottomCard")
         hist_layout = QtWidgets.QVBoxLayout(hist_card)
-        hist_layout.setContentsMargins(12, 10, 12, 10)
+        hist_layout.setContentsMargins(14, 12, 14, 10)
         hist_layout.setSpacing(4)
         lbl_hist_title = QtWidgets.QLabel("Histogram")
-        lbl_hist_title.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_BODY}; color: {UI_TEXT}; border: none;")
+        lbl_hist_title.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_BODY}; color: {UI_TEXT}; border: none; background: transparent;")
         hist_layout.addWidget(lbl_hist_title)
         hist_hint = QtWidgets.QLabel("Click once to set low, click again to set high")
         hist_hint.setProperty("secondary", True)
-        hist_hint.setStyleSheet(f"color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_CAPTION}; border: none;")
+        hist_hint.setStyleSheet(f"color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_CAPTION}; border: none; background: transparent;")
         hist_layout.addWidget(hist_hint)
         self.histogram_canvas = HistogramCanvas()
-        self.histogram_canvas.setFixedHeight(140)
+        self.histogram_canvas.setFixedHeight(160)
         hist_layout.addWidget(self.histogram_canvas)
         hist_ctrl_row = QtWidgets.QHBoxLayout()
         self.lbl_hist_range = QtWidgets.QLabel("Range: \u2014")
