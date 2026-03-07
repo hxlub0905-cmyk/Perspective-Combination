@@ -765,7 +765,7 @@ class SplitViewWidget(QtWidgets.QWidget):
 
     Left side shows the Base image, right side shows the Compare image.
     The vertical divider can be dragged to reveal more/less of each side.
-    The slider_blend value (0-100) also controls the divider position.
+    The divider can also be dragged directly for interactive comparison.
     """
 
     def __init__(self, parent=None):
@@ -1442,7 +1442,7 @@ class StatisticsWidget(QtWidgets.QFrame):
         top_row.addWidget(title)
         top_row.addStretch()
         header.addLayout(top_row)
-        sub = QtWidgets.QLabel("Difference and normalize summary")
+        sub = QtWidgets.QLabel("Alignment and difference summary")
         sub.setProperty("cardSubTitle", True)
         header.addWidget(sub)
         layout.addLayout(header)
@@ -1452,6 +1452,38 @@ class StatisticsWidget(QtWidgets.QFrame):
         layout.addWidget(divider)
 
         self.stats_labels: Dict[str, QtWidgets.QLabel] = {}
+
+        section_align = QtWidgets.QLabel("Alignment")
+        section_align.setProperty("statLabel", True)
+        section_align.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_BOLD};")
+        layout.addWidget(section_align)
+        for key, label in [
+            ("phase", "Phase Shift"),
+            ("ncc", "NCC"),
+            ("residual", "Residual"),
+            ("final", "Final Score"),
+        ]:
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(8)
+            lbl_name = QtWidgets.QLabel(label)
+            lbl_name.setProperty("statLabel", True)
+            lbl_value = QtWidgets.QLabel("--")
+            lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl_value.setProperty("statValue", True)
+            row.addWidget(lbl_name)
+            row.addStretch()
+            row.addWidget(lbl_value)
+            layout.addLayout(row)
+            self.stats_labels[key] = lbl_value
+
+        divider2 = QtWidgets.QFrame()
+        divider2.setProperty("divider", True)
+        layout.addWidget(divider2)
+
+        section_diff = QtWidgets.QLabel("Difference")
+        section_diff.setProperty("statLabel", True)
+        section_diff.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_BOLD};")
+        layout.addWidget(section_diff)
         for key, label in [
             ("diff_mean", "Diff Mean"),
             ("diff_std", "Diff Std"),
@@ -1792,7 +1824,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._last_settings: Dict[str, object] = {}
         self._compute_thread: Optional[QtCore.QThread] = None
         self._compute_worker: Optional[_Worker] = None
-        self._display_mode = 'diff'  # 'diff' or 'zmap'
+        self._left_display_mode = 'base'  # 'base' or 'compare'
+        self._right_display_mode = 'diff'  # 'diff' or 'zmap'
         self._norm_compare_dialog: Optional[NormalizedCompareDialog] = None
         self._hist_range: Optional[tuple] = None  # (lo, hi) gray-level range for highlight, or None
 
@@ -1819,7 +1852,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._set_button_icon(self.btn_load_folder, QtWidgets.QStyle.SP_DirOpenIcon, "Load Folder")
         self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
         self._set_button_icon(self.btn_export, QtWidgets.QStyle.SP_DialogSaveButton, "Export")
-        self._set_button_icon(self.btn_settings, QtWidgets.QStyle.SP_FileDialogDetailedView, "Settings")
         self._set_button_icon(self.btn_clear_hist_range, QtWidgets.QStyle.SP_DialogResetButton, "Clear Range")
         self._set_button_icon(self.btn_show_norm_compare, QtWidgets.QStyle.SP_FileDialogContentsView, "Normalize")
         self._set_button_icon(self.btn_qf_auto_detect, QtWidgets.QStyle.SP_FileDialogDetailedView, "Auto Detect")
@@ -1917,17 +1949,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         toolbar_layout.addWidget(self.btn_export)
 
         toolbar_layout.addStretch(1)
-
-        # Right: settings, about
-        self.btn_settings = QtWidgets.QPushButton("Settings")
-        self.btn_settings.setObjectName("ToolbarAction")
-        toolbar_layout.addWidget(self.btn_settings)
-
-        self.btn_about = QtWidgets.QPushButton("\u2026")
-        self.btn_about.setObjectName("ToolbarAction")
-        self.btn_about.setFixedWidth(36)
-        self.btn_about.setToolTip("About Fusi\u00b3")
-        toolbar_layout.addWidget(self.btn_about)
 
         outer_layout.addWidget(toolbar)
 
@@ -2567,11 +2588,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addWidget(sep3)
         left_layout.addSpacing(4)
 
-        # Enable ROI checkbox
-        self.chk_enable_roi = QtWidgets.QCheckBox("Enable ROI")
-        self.chk_enable_roi.setToolTip("Enable region-of-interest selection for analysis")
-        left_layout.addWidget(self.chk_enable_roi)
-
         # Advanced toggle
         self.btn_left_adv_toggle_2 = QtWidgets.QPushButton("Show Advanced \u25b8")
         self.btn_left_adv_toggle_2.setObjectName("LeftAdvancedToggle")
@@ -2591,7 +2607,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
 
-        # --- Viewer control bar ---
+        # --- Viewer control bars (left/right responsibility) ---
         viewer_bar = QtWidgets.QFrame()
         viewer_bar.setObjectName("ViewerControlBar")
         viewer_bar.setStyleSheet(f"""
@@ -2604,70 +2620,68 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """)
         viewer_header = QtWidgets.QHBoxLayout(viewer_bar)
         viewer_header.setContentsMargins(8, 4, 8, 4)
-        viewer_header.setSpacing(0)
+        viewer_header.setSpacing(12)
 
-        # Segmented display mode selector: Base | Compare | Diff | Blend | Topo
+        # Left image controls: Base | Compare | Split View
+        left_controls = QtWidgets.QHBoxLayout()
+        left_controls.setSpacing(0)
         self.btn_mode_base = QtWidgets.QPushButton("Base")
         self.btn_mode_base.setCheckable(True)
+        self.btn_mode_base.setChecked(True)
         self.btn_mode_base.setProperty("viewerMode", True)
         self.btn_mode_base.setObjectName("ViewerModeFirst")
+
         self.btn_mode_compare = QtWidgets.QPushButton("Compare")
         self.btn_mode_compare.setCheckable(True)
         self.btn_mode_compare.setProperty("viewerMode", True)
+
+        self.btn_split_view = QtWidgets.QPushButton("Split View")
+        self.btn_split_view.setCheckable(True)
+        self.btn_split_view.setProperty("viewerMode", True)
+        self.btn_split_view.setObjectName("ViewerModeLast")
+
+        for btn in (self.btn_mode_base, self.btn_mode_compare, self.btn_split_view):
+            btn.setFixedHeight(32)
+            left_controls.addWidget(btn)
+        viewer_header.addLayout(left_controls)
+
+        viewer_header.addStretch(1)
+
+        # Right image controls: Diff | Z-Map | Normalize | Colormap
+        right_controls = QtWidgets.QHBoxLayout()
+        right_controls.setSpacing(0)
         self.btn_mode_diff = QtWidgets.QPushButton("Diff")
         self.btn_mode_diff.setCheckable(True)
         self.btn_mode_diff.setChecked(True)
         self.btn_mode_diff.setProperty("viewerMode", True)
-        self.btn_mode_blend = QtWidgets.QPushButton("Blend")
-        self.btn_mode_blend.setCheckable(True)
-        self.btn_mode_blend.setProperty("viewerMode", True)
-        self.btn_mode_topo = QtWidgets.QPushButton("Topography")
-        self.btn_mode_topo.setCheckable(True)
-        self.btn_mode_topo.setProperty("viewerMode", True)
-        self.btn_mode_topo.setObjectName("ViewerModeLast")
+        self.btn_mode_diff.setObjectName("ViewerModeFirst")
 
-        # Also keep btn_mode_zmap as alias to topo for backward compat
-        self.btn_mode_zmap = self.btn_mode_topo
+        self.btn_mode_zmap = QtWidgets.QPushButton("Z-Map")
+        self.btn_mode_zmap.setCheckable(True)
+        self.btn_mode_zmap.setProperty("viewerMode", True)
+        self.btn_mode_zmap.setObjectName("ViewerModeLast")
 
-        for btn in (self.btn_mode_base, self.btn_mode_compare, self.btn_mode_diff,
-                     self.btn_mode_blend, self.btn_mode_topo):
+        for btn in (self.btn_mode_diff, self.btn_mode_zmap):
             btn.setFixedHeight(32)
-            viewer_header.addWidget(btn)
+            right_controls.addWidget(btn)
 
-        viewer_header.addStretch(1)
-
-        # Display settings group — right-aligned with a visual separator
-        _sep_v = QtWidgets.QFrame()
-        _sep_v.setFrameShape(QtWidgets.QFrame.VLine)
-        _sep_v.setStyleSheet(f"color: {UI_BORDER}; max-width: 1px; margin: 2px 8px;")
-        viewer_header.addWidget(_sep_v)
-
-        # Range selector
-        lbl_range = QtWidgets.QLabel("Range")
-        lbl_range.setProperty("toolbarLabel", True)
-        viewer_header.addWidget(lbl_range)
-        viewer_header.addSpacing(4)
-        self.cmb_range = QtWidgets.QComboBox()
-        self.cmb_range.addItems(["Auto", "Zero-centered", "P1-P99", "P0.5-P99.5"])
-        self.cmb_range.setFixedWidth(120)
-        self.cmb_range.setToolTip("Control how difference values are scaled for display")
-        viewer_header.addWidget(self.cmb_range)
-
-        viewer_header.addSpacing(12)
+        right_controls.addSpacing(12)
         self.btn_show_norm_compare = QtWidgets.QPushButton("Normalize")
         self.btn_show_norm_compare.setFixedWidth(100)
         self.btn_show_norm_compare.setToolTip("Preview normalization effect")
-        viewer_header.addWidget(self.btn_show_norm_compare)
+        right_controls.addWidget(self.btn_show_norm_compare)
 
-        viewer_header.addSpacing(12)
+        right_controls.addSpacing(12)
         lbl_colormap = QtWidgets.QLabel("Colormap")
         lbl_colormap.setProperty("toolbarLabel", True)
-        viewer_header.addWidget(lbl_colormap)
-        viewer_header.addSpacing(4)
+        right_controls.addWidget(lbl_colormap)
+        right_controls.addSpacing(4)
         self.cmb_colormap = QtWidgets.QComboBox()
         self.cmb_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
         self.cmb_colormap.setFixedWidth(100)
-        viewer_header.addWidget(self.cmb_colormap)
+        right_controls.addWidget(self.cmb_colormap)
+
+        viewer_header.addLayout(right_controls)
 
         right_layout.addWidget(viewer_bar)
 
@@ -2678,7 +2692,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # === IMAGE AREA ===
         image_row = QtWidgets.QHBoxLayout()
 
-        # Left: Comparison View / Magnifier / Split View (stacked)
+        # Left: Comparison View / Split View (stacked)
         self.stk_blend = QtWidgets.QStackedWidget()
         self.stk_blend.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
@@ -2687,7 +2701,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_base_mag.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
-        self.stk_blend.addWidget(self.img_base_mag)  # index 0 magnifier
+        self.stk_blend.addWidget(self.img_base_mag)  # index 0 standard preview
 
         self.img_blend = SplitViewWidget()
         self.img_blend.setSizePolicy(
@@ -2697,7 +2711,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_blend.setCurrentIndex(0)
         image_row.addWidget(self.stk_blend, 1)
 
-        # Right: Difference Map
+        # Right: Difference / Z-Map
         self.img_diff = SyncZoomImageWidget("Difference Map")
         self.img_diff.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
@@ -2705,46 +2719,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         image_row.addWidget(self.img_diff, 1)
         right_layout.addLayout(image_row, stretch=4)
 
-        # Viewer controls row
-        viewer_ctrl_row = QtWidgets.QHBoxLayout()
-        self.chk_split_view = QtWidgets.QCheckBox("Split View  (Base | Aligned Compare)")
-        self.chk_split_view.setChecked(False)
-        self.chk_split_view.setToolTip(
-            "OFF: Magnifier mode \u2014 synchronized with Difference Map\n"
-            "ON:  Split-view Base vs Aligned Compare (drag divider or use slider)"
-        )
-        viewer_ctrl_row.addWidget(self.chk_split_view)
-
-        # Hidden slider for split view
-        self.blend_slider_widget = QtWidgets.QWidget()
-        blend_slider_layout = QtWidgets.QHBoxLayout(self.blend_slider_widget)
-        blend_slider_layout.setContentsMargins(0, 0, 0, 0)
-        self.slider_blend = QtWidgets.QSlider(Qt.Horizontal)
-        self.slider_blend.setRange(0, 100)
-        self.slider_blend.setValue(50)
-        blend_slider_layout.addWidget(self.slider_blend, 1)
-        self.lbl_blend_value = QtWidgets.QLabel("50%")
-        self.lbl_blend_value.setStyleSheet(
-            f"font-family: {Typography.FONT_FAMILY_MONO}; font-size: {Typography.FONT_SIZE_SMALL};")
-        blend_slider_layout.addWidget(self.lbl_blend_value)
-        self.blend_slider_widget.setVisible(False)
-        viewer_ctrl_row.addWidget(self.blend_slider_widget, 1)
-
-        viewer_ctrl_row.addStretch()
-        # Sync Zoom label (informational)
-        self.chk_sync_zoom = QtWidgets.QCheckBox("Sync Zoom")
-        self.chk_sync_zoom.setChecked(True)
-        self.chk_sync_zoom.setToolTip("Synchronize zoom between Comparison and Difference views")
-        viewer_ctrl_row.addWidget(self.chk_sync_zoom)
-        right_layout.addLayout(viewer_ctrl_row)
-
-        right_layout.addSpacing(4)
-
-        # === BOTTOM: Three-card layout (Histogram | Alignment Quality | Analysis) ===
+        # === BOTTOM: Analysis (left) | Histogram (right, wider) ===
         bottom_row = QtWidgets.QHBoxLayout()
         bottom_row.setSpacing(8)
 
-        # Card 1: Histogram
+        # Left card: merged analysis metrics
+        self.stats_widget = StatisticsWidget()
+        bottom_row.addWidget(self.stats_widget, 2)
+
+        # Right card: histogram under right-side result view
         hist_card = QtWidgets.QFrame()
         hist_card.setObjectName("BottomCard")
         hist_layout = QtWidgets.QVBoxLayout(hist_card)
@@ -2758,10 +2741,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         hist_hint.setStyleSheet(f"color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_CAPTION}; border: none; background: transparent;")
         hist_layout.addWidget(hist_hint)
         self.histogram_canvas = HistogramCanvas()
-        self.histogram_canvas.setFixedHeight(160)
+        self.histogram_canvas.setFixedHeight(180)
         hist_layout.addWidget(self.histogram_canvas)
         hist_ctrl_row = QtWidgets.QHBoxLayout()
-        self.lbl_hist_range = QtWidgets.QLabel("Range: \u2014")
+        self.lbl_hist_range = QtWidgets.QLabel("Range: —")
         self.lbl_hist_range.setStyleSheet(
             f"color: {UI_TEXT_SECONDARY}; font-family: {Typography.FONT_FAMILY_MONO};"
             f" font-size: {Typography.FONT_SIZE_SMALL}; border: none;"
@@ -2774,14 +2757,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         hist_ctrl_row.addWidget(self.btn_clear_hist_range)
         hist_layout.addLayout(hist_ctrl_row)
         bottom_row.addWidget(hist_card, 3)
-
-        # Card 2: Alignment Quality
-        self.align_score_widget = AlignmentScoreWidget()
-        bottom_row.addWidget(self.align_score_widget, 2)
-
-        # Card 3: Analysis
-        self.stats_widget = StatisticsWidget()
-        bottom_row.addWidget(self.stats_widget, 2)
 
         right_layout.addLayout(bottom_row)
 
@@ -2987,19 +2962,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_adv_toggle.toggled.connect(self._on_adv_toggle)
         self.btn_left_adv_toggle.toggled.connect(self._on_left_adv_toggle)
         self.btn_left_adv_toggle_2.toggled.connect(self._on_left_adv_toggle)
-        self.slider_blend.valueChanged.connect(self._on_blend_change)
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
 
         # Toolbar Auto Pair button -> sync with hidden checkbox
         self.btn_auto_pair_toolbar.toggled.connect(self.chk_auto_pair.setChecked)
         self.btn_auto_pair_toolbar.toggled.connect(self._on_auto_pair_toggle)
-
-        # About button
-        self.btn_about.clicked.connect(self._show_about_dialog)
-
-        # Settings button (shows advanced settings)
-        self.btn_settings.clicked.connect(self._on_settings_clicked)
 
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
@@ -3020,15 +2988,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_prev_result.clicked.connect(self._on_prev_result)
         self.btn_next_result.clicked.connect(self._on_next_result)
 
-        # Segmented display mode buttons
-        self.btn_mode_base.clicked.connect(lambda: self._on_display_mode('base'))
-        self.btn_mode_compare.clicked.connect(lambda: self._on_display_mode('compare'))
-        self.btn_mode_diff.clicked.connect(lambda: self._on_display_mode('diff'))
-        self.btn_mode_blend.clicked.connect(lambda: self._on_display_mode('blend'))
-        self.btn_mode_topo.clicked.connect(lambda: self._on_display_mode('zmap'))
-
-        # Dynamic range control
-        self.cmb_range.currentIndexChanged.connect(self._on_range_changed)
+        # Viewer controls
+        self.btn_mode_base.clicked.connect(lambda: self._on_display_mode('base', side='left'))
+        self.btn_mode_compare.clicked.connect(lambda: self._on_display_mode('compare', side='left'))
+        self.btn_mode_diff.clicked.connect(lambda: self._on_display_mode('diff', side='right'))
+        self.btn_mode_zmap.clicked.connect(lambda: self._on_display_mode('zmap', side='right'))
+        self.btn_split_view.toggled.connect(self._on_split_view_toggle)
         self.btn_show_norm_compare.clicked.connect(self._on_show_normalized_compare)
 
         # Colormap selector
@@ -3041,8 +3006,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_pick_roi.clicked.connect(self._on_pick_roi)
         self.btn_clear_roi.clicked.connect(self._on_clear_roi)
 
-        # Split View toggle + bidirectional cursor sync
-        self.chk_split_view.toggled.connect(self._on_split_view_toggle)
+        # Bidirectional cursor sync (active only when Split View is off)
         # Diff map → left magnifier
         self.img_diff.cursor_moved.connect(self._on_diff_cursor_moved)
         self.img_diff.cursor_left.connect(self._on_diff_cursor_left)
@@ -3129,9 +3093,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
         # Window title
         if is_qf:
-            self.setWindowTitle("Fusi\u00b3 \u2014 Quadrant Fusion")
+            self.setWindowTitle("Fusi³ — Quadrant Fusion")
         else:
-            self.setWindowTitle("Fusi\u00b3 \u2014 SEM Perspective Combination Tool")
+            self.setWindowTitle("Fusi³ — SEM Perspective Combination Tool")
+
+        # Prevent blank viewers after switching back to Standard mode.
+        if not is_qf:
+            if self._results:
+                self._refresh_base_compare_display(self._left_display_mode)
+                self._refresh_diff_display()
+                self._update_current_result()
+            else:
+                self.img_base_mag.setImage(None)
+                self.img_diff.setImage(None)
+                self.histogram_canvas.clear_range()
 
     def _on_qf_auto_detect(self):
         """Auto-detect Quadrant Fusion detector assignments from filenames."""
@@ -3175,28 +3150,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_qf_clear_roi.setEnabled(False)
         self.lbl_qf_roi_info.setText("ROI: not set")
 
-    def _on_blend_change(self, value):
-        self.lbl_blend_value.setText(f"{value}%")
-        self._update_blend_preview()
 
     def _on_split_view_toggle(self, checked: bool):
-        """Switch left panel between magnifier (off) and split-view (on)."""
-        if checked:
-            self.stk_blend.setCurrentIndex(1)  # show SplitViewWidget
-            self.blend_slider_widget.setVisible(True)
-        else:
-            self.stk_blend.setCurrentIndex(0)  # show magnifier
-            self.blend_slider_widget.setVisible(False)
+        """Switch left panel between single-image preview and split-view."""
+        self.stk_blend.setCurrentIndex(1 if checked else 0)
         self._update_blend_preview()
 
     def _on_diff_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay Difference Map cursor position to left-panel magnifier."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_base_mag.setCursorPos(norm_x, norm_y)
 
     def _on_diff_cursor_left(self):
         """Clear left-panel magnifier when cursor leaves Difference Map."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_base_mag.clearCursor()
 
     def _on_operation_changed(self, index):
@@ -3278,34 +3245,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         for chk in self._compare_checkboxes:
             chk.setChecked(False)
 
-    def _on_display_mode(self, mode: str):
-        """Switch between display modes: base, compare, diff, blend, zmap."""
-        self._display_mode = mode
-
-        # Update segmented button states
-        self.btn_mode_base.setChecked(mode == 'base')
-        self.btn_mode_compare.setChecked(mode == 'compare')
-        self.btn_mode_diff.setChecked(mode == 'diff')
-        self.btn_mode_blend.setChecked(mode == 'blend')
-        self.btn_mode_topo.setChecked(mode == 'zmap')
-
-        # Handle special modes
-        if mode == 'blend':
-            # Show split view
-            if not self.chk_split_view.isChecked():
-                self.chk_split_view.setChecked(True)
-        elif mode in ('base', 'compare'):
-            # Show magnifier mode with base or compare image
-            if self.chk_split_view.isChecked():
-                self.chk_split_view.setChecked(False)
+    def _on_display_mode(self, mode: str, side: str):
+        """Switch display mode for left input preview or right result view."""
+        if side == 'left':
+            self._left_display_mode = mode
+            self.btn_mode_base.setChecked(mode == 'base')
+            self.btn_mode_compare.setChecked(mode == 'compare')
             self._refresh_base_compare_display(mode)
-
-        # Refresh display
-        self._refresh_diff_display()
+        else:
+            self._right_display_mode = mode
+            self.btn_mode_diff.setChecked(mode == 'diff')
+            self.btn_mode_zmap.setChecked(mode == 'zmap')
+            self._refresh_diff_display()
 
     def _refresh_base_compare_display(self, mode: str):
-        """Show base or compare image in the magnifier view."""
+        """Show base or compare image in the left preview viewer."""
         if not self._results:
+            self.img_base_mag.setImage(None)
             return
         result = self._results[self._current_result_idx]
         if mode == 'base':
@@ -3319,9 +3275,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             if compare_img is not None:
                 self.img_base_mag.setImage(compare_img)
 
-    def _on_range_changed(self, index: int):
-        """Handle range control change."""
-        self._refresh_diff_display()
 
     def _apply_colormap(self, gray_img: np.ndarray) -> np.ndarray:
         """Apply the selected colormap to a grayscale uint8 image → BGR uint8."""
@@ -3339,13 +3292,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         return cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
 
     def _refresh_diff_display(self):
-        """Refresh the difference map display with current mode, threshold, and ROI settings."""
+        """Refresh the right viewer display (Diff / Z-Map)."""
         if not self._results:
+            self.img_diff.setImage(None)
             return
 
         result = self._results[self._current_result_idx]
 
-        if self._display_mode == 'zmap':
+        if self._right_display_mode == 'zmap':
             display_img = colorize_snr_map(result.snr_map)
         else:
             scaled_img = self._apply_range_scaling(result.result_image)
@@ -3391,50 +3345,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_diff.setImage(display_img)
 
     def _apply_range_scaling(self, img: np.ndarray) -> np.ndarray:
-        """Apply dynamic range scaling based on selected mode.
-
-        Modes:
-        - Auto: Use full min-max range
-        - Zero-centered: Center at 128, scale symmetric
-        - P1-P99: Clip to 1st-99th percentile
-        - P0.5-P99.5: Clip to 0.5th-99.5th percentile
-        """
-        if img is None or img.size == 0:
-            return img
-
-        range_mode = self.cmb_range.currentText()
-        img_f = img.astype(np.float32)
-
-        if range_mode == "Zero-centered":
-            # Center at 128, use symmetric range
-            center = 128.0
-            max_dev = max(abs(img_f.max() - center), abs(img_f.min() - center))
-            if max_dev > 0:
-                scaled = (img_f - center) / max_dev * 127 + 128
-            else:
-                scaled = np.full_like(img_f, 128)
-            return np.clip(scaled, 0, 255).astype(np.uint8)
-
-        elif range_mode == "P1-P99":
-            p_low, p_high = np.percentile(img_f, [1, 99])
-            clipped = np.clip(img_f, p_low, p_high)
-            if p_high > p_low:
-                scaled = (clipped - p_low) / (p_high - p_low) * 255
-            else:
-                scaled = np.full_like(img_f, 128)
-            return scaled.astype(np.uint8)
-
-        elif range_mode == "P0.5-P99.5":
-            p_low, p_high = np.percentile(img_f, [0.5, 99.5])
-            clipped = np.clip(img_f, p_low, p_high)
-            if p_high > p_low:
-                scaled = (clipped - p_low) / (p_high - p_low) * 255
-            else:
-                scaled = np.full_like(img_f, 128)
-            return scaled.astype(np.uint8)
-
-        else:  # Auto - use full range
-            return img
+        """Return unchanged image (display scaling controls were removed)."""
+        return img
 
     def _on_compute(self):
         """Run the combination computation for all selected pairs."""
@@ -3961,27 +3873,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_left_adv_toggle.blockSignals(False)
         self.btn_left_adv_toggle_2.blockSignals(False)
 
-    def _show_about_dialog(self):
-        """Show the About Fusi\u00b3 dialog."""
-        dlg = QtWidgets.QMessageBox(self)
-        dlg.setWindowTitle("About Fusi\u00b3")
-        dlg.setIcon(QtWidgets.QMessageBox.Information)
-        dlg.setText(
-            "<h2>Fusi\u00b3</h2>"
-            "<p><b>SEM Image Fusion & Defect Analysis</b></p>"
-        )
-        dlg.setInformativeText(
-            "Fusi\u00b3 is an advanced SEM image analysis tool for alignment, "
-            "fusion, and nanoscale defect detection across multi-detector SEM images.\n\n"
-            "Version 1.1.0"
-        )
-        dlg.setStyleSheet(DIALOG_STYLE)
-        dlg.exec()
-
-    def _on_settings_clicked(self):
-        """Toggle the advanced settings panel in the sidebar."""
-        new_state = not self.wgt_left_advanced.isVisible()
-        self._on_left_adv_toggle(new_state)
 
     def _on_swap_base(self):
         """Swap base image: cycle to next image as base."""
@@ -4015,8 +3906,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Result image - use centralized refresh method
         self._refresh_diff_display()
 
-        # Blend preview
+        # Left preview / split-view data
         self._update_blend_preview()
+        self._refresh_base_compare_display(self._left_display_mode)
 
         # Histogram
         counts, edges = result.histogram
@@ -4039,42 +3931,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                        if result.aligned_compare is not None
                        else self._images.get(result.compare_label))
 
-        # Page 0 – Magnifier: show Base image
-        if base_img is not None:
-            self.img_base_mag.setImage(base_img)
-
         # Page 1 – Split View: Base left, Aligned Compare right
         self.img_blend.set_images(base_img, compare_img)
         # slider 0 → Base only (divider at far right → ratio=1.0)
         # slider 100 → Compare only (divider at far left → ratio=0.0)
-        ratio = 1.0 - self.slider_blend.value() / 100.0
+        ratio = 0.5
         self.img_blend.set_divider(ratio)
 
     def _update_alignment_display(self, result: SinglePairResult):
-        """Update alignment score widget for single result."""
+        """Update alignment metrics in the Analysis card."""
         a = result.alignment
-        self.align_score_widget.lbl_phase.setText(f"Phase: {a.score_phase:.3f}")
-        self.align_score_widget.lbl_ncc.setText(f"NCC: {a.score_ncc:.3f}")
-        self.align_score_widget.lbl_residual.setText(f"Residual: {a.score_residual:.3f}")
-        self.align_score_widget.lbl_final.setText(f"Final: {a.final_score:.1f}")
-
-        # Display shift (dx, dy)
-        self.align_score_widget.lbl_shift.setText(f"Shift: ({a.dx:+d}, {a.dy:+d})")
-
-        # Status
-        if a.final_score >= 75:
-            status_text = "✓ OK"
-            status_color = UI_SUCCESS
-        elif a.final_score >= 55:
-            status_text = "⚠ WARN"
-            status_color = UI_PRIMARY_HOVER
-        else:
-            status_text = "✗ FAIL"
-            status_color = UI_WARNING
-
-        self.align_score_widget.lbl_status.setText(f"Status: {status_text}")
-        self.align_score_widget.lbl_status.setStyleSheet(
-            f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_BODY}; color: {status_color}; border: none;")
+        self.stats_widget.stats_labels["phase"].setText(f"{a.score_phase:.3f}")
+        self.stats_widget.stats_labels["ncc"].setText(f"{a.score_ncc:.3f}")
+        self.stats_widget.stats_labels["residual"].setText(f"{a.score_residual:.3f}")
+        self.stats_widget.stats_labels["final"].setText(f"{a.final_score:.1f}")
 
     def _update_stats_display(self, result: SinglePairResult):
         """Update statistics widget for single result."""
@@ -4160,7 +4030,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_diff.setImage(self._result.diff_image)
         counts, edges = self._result.histogram
         self.histogram_canvas.plot_histogram(counts, edges)
-        self.align_score_widget.update_scores(self._result)
         self.stats_widget.update_stats(self._result)
 
     def _update_hint_overlay(self):
@@ -4169,12 +4038,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_base_mag_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay left-panel magnifier cursor position to Difference Map (bidirectional zoom)."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_diff.setCursorPos(norm_x, norm_y)
 
     def _on_base_mag_cursor_left(self):
         """Clear Difference Map magnifier when cursor leaves left-panel magnifier."""
-        if not self.chk_split_view.isChecked():
+        if not self.btn_split_view.isChecked():
             self.img_diff.clearCursor()
 
     # ── ROI-Match (EPI Nulling) handlers ─────────────────────────────────
@@ -4187,8 +4056,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             )
             return
         # Ensure magnifier page is visible so the user can draw on Base
-        if self.chk_split_view.isChecked():
-            self.chk_split_view.setChecked(False)
+        if self.btn_split_view.isChecked():
+            self.btn_split_view.setChecked(False)
         self.img_base_mag.set_roi_mode(True)
         self.lbl_roi_info.setText("ROI: draw on Base image...")
 
