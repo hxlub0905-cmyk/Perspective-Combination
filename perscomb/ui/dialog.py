@@ -262,22 +262,6 @@ DIALOG_STYLE = f"""
         background-color: #FFF8ED;
         border-color: {UI_BORDER};
     }}
-    QPushButton#LeftAdvancedToggle {{
-        background-color: {UI_BG_SUBTLE};
-        color: {UI_TEXT_SECONDARY};
-        border: 1px solid {UI_BORDER};
-        border-radius: {BorderRadius.SM};
-        text-align: left;
-        padding: 5px 8px;
-        min-height: 28px;
-        font-weight: {Typography.FONT_WEIGHT_MEDIUM};
-    }}
-    QPushButton#LeftAdvancedToggle:hover,
-    QPushButton#LeftAdvancedToggle:checked {{
-        color: {UI_PRIMARY};
-        border-color: {UI_PRIMARY};
-        background-color: #FFF8ED;
-    }}
     QPushButton#ViewerToolToggle {{
         background-color: {UI_BG_PANEL};
         color: {UI_TEXT_SECONDARY};
@@ -304,15 +288,6 @@ DIALOG_STYLE = f"""
         font-size: {Typography.FONT_SIZE_CAPTION};
         font-weight: {Typography.FONT_WEIGHT_BOLD};
         letter-spacing: 0.35px;
-    }}
-    QLabel#SharedViewerControl {{
-        background-color: {UI_BG_SUBTLE};
-        color: {UI_TEXT_SECONDARY};
-        border: 1px solid {UI_BORDER};
-        border-radius: {BorderRadius.SM};
-        padding: 3px 8px;
-        font-size: {Typography.FONT_SIZE_CAPTION};
-        font-weight: {Typography.FONT_WEIGHT_BOLD};
     }}
     QPushButton[toolbarToggle="true"] {{
         background-color: {UI_BG_SUBTLE};
@@ -860,17 +835,29 @@ class SplitViewWidget(QtWidgets.QWidget):
                             QtGui.QImage.Format_RGB888).copy()
         return QtGui.QPixmap.fromImage(qimg)
 
-    def _image_rect(self):
-        """Return (x0, y0, iw, ih) of the usable image area."""
-        m = 8
-        return m, m, self.width() - 2 * m, self.height() - 2 * m
+    def _content_rect(self) -> QtCore.QRect:
+        """Return the inner viewer content rect, matching SyncZoomImageWidget margins."""
+        return self.rect().adjusted(8, 8, -8, -8)
+
+    def _fitted_target_rect(self) -> QtCore.QRect:
+        """Return centered fit-rect using the same KeepAspectRatio logic as standard viewer."""
+        content = self._content_rect()
+        pix = self._base_pix if self._base_pix is not None else self._comp_pix
+        if pix is None or pix.isNull() or content.width() <= 0 or content.height() <= 0:
+            return content
+
+        scaled = pix.size().scaled(content.size(), Qt.KeepAspectRatio)
+        x = content.x() + (content.width() - scaled.width()) // 2
+        y = content.y() + (content.height() - scaled.height()) // 2
+        return QtCore.QRect(x, y, scaled.width(), scaled.height())
 
     # ── Painting ───────────────────────────────────────────────────────────
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
 
-        x0, y0, iw, ih = self._image_rect()
+        target_rect = self._fitted_target_rect()
+        x0, y0, iw, ih = target_rect.x(), target_rect.y(), target_rect.width(), target_rect.height()
         div_x = x0 + int(self._divider_ratio * iw)
 
         # Background fill
@@ -887,7 +874,7 @@ class SplitViewWidget(QtWidgets.QWidget):
         if self._base_pix and left_w > 0:
             p.save()
             p.setClipRect(x0, y0, left_w, ih)
-            p.drawPixmap(QtCore.QRect(x0, y0, iw, ih), self._base_pix)
+            p.drawPixmap(target_rect, self._base_pix)
             p.restore()
 
         # Right half → Compare
@@ -895,7 +882,7 @@ class SplitViewWidget(QtWidgets.QWidget):
         if self._comp_pix and right_w > 0:
             p.save()
             p.setClipRect(div_x, y0, right_w, ih)
-            p.drawPixmap(QtCore.QRect(x0, y0, iw, ih), self._comp_pix)
+            p.drawPixmap(target_rect, self._comp_pix)
             p.restore()
 
         # Divider line
@@ -930,7 +917,8 @@ class SplitViewWidget(QtWidgets.QWidget):
 
     # ── Mouse interaction ──────────────────────────────────────────────────
     def _near_divider(self, pos_x: int) -> bool:
-        x0, _, iw, _ = self._image_rect()
+        target_rect = self._fitted_target_rect()
+        x0, iw = target_rect.x(), target_rect.width()
         div_x = x0 + int(self._divider_ratio * iw)
         return abs(pos_x - div_x) <= 14
 
@@ -943,7 +931,8 @@ class SplitViewWidget(QtWidgets.QWidget):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        x0, _, iw, _ = self._image_rect()
+        target_rect = self._fitted_target_rect()
+        x0, iw = target_rect.x(), target_rect.width()
         if self._dragging:
             ratio = (event.pos().x() - x0) / max(iw, 1)
             self._divider_ratio = max(0.0, min(1.0, ratio))
@@ -2167,22 +2156,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             QWidget#LeftPanel QPushButton:pressed {{
                 background-color: #FDE7C2;
             }}
-            QWidget#LeftPanel QPushButton#LeftAdvancedToggle {{
-                background-color: {UI_BG_SUBTLE};
-                color: {UI_TEXT_SECONDARY};
-                border: 1px solid {UI_BORDER};
-                border-radius: {BorderRadius.SM};
-                text-align: left;
-                padding: 5px 8px;
-                min-height: 28px;
-                font-weight: {Typography.FONT_WEIGHT_MEDIUM};
-            }}
-            QWidget#LeftPanel QPushButton#LeftAdvancedToggle:hover,
-            QWidget#LeftPanel QPushButton#LeftAdvancedToggle:checked {{
-                color: {UI_PRIMARY};
-                border-color: {UI_PRIMARY};
-                background-color: #FFF8ED;
-            }}
             QWidget#LeftPanel QLabel {{
                 color: {UI_TEXT};
                 font-size: {Typography.FONT_SIZE_SMALL};
@@ -2222,20 +2195,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         sep1.setObjectName("SectionSeparator")
         left_layout.addWidget(sep1)
         left_layout.addSpacing(6)
-
-        # Hidden containers for backward compat
-        self.grp_basic_controls = QtWidgets.QWidget()
-        self.grp_advanced_controls = QtWidgets.QWidget()
-        self.grp_advanced_controls.setObjectName("AdvancedSettings")
-        self.btn_left_adv_toggle = QtWidgets.QPushButton("Show Advanced \u25b8")
-        self.btn_left_adv_toggle.setObjectName("LeftAdvancedToggle")
-        self.btn_left_adv_toggle.setCheckable(True)
-        self.btn_left_adv_toggle.setChecked(False)
-        self.wgt_left_advanced = QtWidgets.QWidget()
-        self.left_advanced_layout = QtWidgets.QVBoxLayout(self.wgt_left_advanced)
-        self.left_advanced_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_advanced_layout.setSpacing(4)
-        self.wgt_left_advanced.setVisible(False)
 
         # Auto Pair dropdown (input mode)
         self.cmb_input_mode = QtWidgets.QComboBox()
@@ -2665,24 +2624,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         align_layout.addLayout(snr_win_row)
         left_layout.addWidget(self.grp_align)
 
-        # --- OPTIONS section ---
-        left_layout.addSpacing(10)
-        lbl_options = QtWidgets.QLabel("OPTIONS")
-        lbl_options.setObjectName("SectionTitle")
-        left_layout.addWidget(lbl_options)
-        sep3 = QtWidgets.QLabel()
-        sep3.setObjectName("SectionSeparator")
-        left_layout.addWidget(sep3)
-        left_layout.addSpacing(6)
-
-        # Advanced toggle
-        self.btn_left_adv_toggle_2 = QtWidgets.QPushButton("Show Advanced \u25b8")
-        self.btn_left_adv_toggle_2.setObjectName("LeftAdvancedToggle")
-        self.btn_left_adv_toggle_2.setCheckable(True)
-        self.btn_left_adv_toggle_2.setChecked(False)
-        left_layout.addWidget(self.btn_left_adv_toggle_2)
-        left_layout.addWidget(self.wgt_left_advanced)
-
         left_layout.addStretch()
         content_layout.addWidget(left_panel)
 
@@ -2756,11 +2697,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_ctrl_layout.addWidget(self.blend_slider_widget, 1)
 
         left_ctrl_layout.addStretch(1)
-
-        # Sync Zoom shared toggle between both viewers
-        self.lbl_sync_zoom = QtWidgets.QLabel("Shared")
-        self.lbl_sync_zoom.setObjectName("SharedViewerControl")
-        left_ctrl_layout.addWidget(self.lbl_sync_zoom)
 
         self.chk_sync_zoom = QtWidgets.QCheckBox("Sync Zoom")
         self.chk_sync_zoom.setChecked(True)
@@ -3131,8 +3067,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
         self.chk_auto_pair.stateChanged.connect(self._on_auto_pair_toggle)
         self.btn_adv_toggle.toggled.connect(self._on_adv_toggle)
-        self.btn_left_adv_toggle.toggled.connect(self._on_left_adv_toggle)
-        self.btn_left_adv_toggle_2.toggled.connect(self._on_left_adv_toggle)
         self.slider_blend.valueChanged.connect(self._on_blend_change)
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
@@ -3264,10 +3198,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Left panel: Standard-only groups
         self.grp_op.setVisible(not is_qf)
         self.grp_align.setVisible(not is_qf)
-        self.grp_advanced_controls.setVisible(not is_qf)
-        if is_qf and self.btn_left_adv_toggle.isChecked():
-            self.btn_left_adv_toggle.setChecked(False)
-
         # Keep using the existing embedded pages; never create/detach viewers here.
         self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
 
@@ -4108,23 +4038,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Show/hide Advanced operation options."""
         self.grp_advanced.setVisible(checked)
         self.btn_adv_toggle.setText("Advanced \u25bc" if checked else "Advanced \u25b6")
-
-    def _on_left_adv_toggle(self, checked: bool):
-        """Show/hide the left-panel advanced settings section."""
-        self.wgt_left_advanced.setVisible(checked)
-        self.btn_left_adv_toggle.setText(
-            "Hide Advanced \u25be" if checked else "Show Advanced \u25b8"
-        )
-        self.btn_left_adv_toggle_2.setText(
-            "Hide Advanced \u25be" if checked else "Show Advanced \u25b8"
-        )
-        # Keep both toggles in sync
-        self.btn_left_adv_toggle.blockSignals(True)
-        self.btn_left_adv_toggle_2.blockSignals(True)
-        self.btn_left_adv_toggle.setChecked(checked)
-        self.btn_left_adv_toggle_2.setChecked(checked)
-        self.btn_left_adv_toggle.blockSignals(False)
-        self.btn_left_adv_toggle_2.blockSignals(False)
 
     def _show_about_dialog(self):
         """Show the About Fusi\u00b3 dialog."""
