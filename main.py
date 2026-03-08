@@ -7,6 +7,8 @@ import sys
 
 from PySide6 import QtWidgets, QtCore, QtGui
 
+from perscomb.ui.app_icon import load_app_icon, get_icon_path
+
 
 def _create_splash(app: QtWidgets.QApplication) -> QtWidgets.QSplashScreen:
     """Create a branded splash screen."""
@@ -22,15 +24,28 @@ def _create_splash(app: QtWidgets.QApplication) -> QtWidgets.QSplashScreen:
     # Orange accent bar at top
     painter.fillRect(0, 0, W, 4, QtGui.QColor(Colors.BRAND_PRIMARY))
 
-    # App icon placeholder (orange circle with F)
-    painter.setBrush(QtGui.QBrush(QtGui.QColor(Colors.BRAND_PRIMARY)))
-    painter.setPen(QtCore.Qt.NoPen)
-    painter.drawEllipse(W // 2 - 28, 50, 56, 56)
-    icon_font = QtGui.QFont("Liberation Sans", 26, QtGui.QFont.Bold)
-    painter.setFont(icon_font)
-    painter.setPen(QtGui.QColor("#FFFFFF"))
-    painter.drawText(QtCore.QRect(W // 2 - 28, 50, 56, 56),
-                     QtCore.Qt.AlignCenter, "F")
+    # App icon image
+    icon_path = get_icon_path()
+    icon_rect = QtCore.QRect(W // 2 - 36, 42, 72, 72)
+    if icon_path is not None:
+        icon_pix = QtGui.QPixmap(str(icon_path))
+        if not icon_pix.isNull():
+            scaled = icon_pix.scaled(
+                icon_rect.size(),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+            draw_x = icon_rect.x() + (icon_rect.width() - scaled.width()) // 2
+            draw_y = icon_rect.y() + (icon_rect.height() - scaled.height()) // 2
+            painter.drawPixmap(draw_x, draw_y, scaled)
+        else:
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(Colors.BRAND_PRIMARY)))
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.drawEllipse(icon_rect)
+    else:
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(Colors.BRAND_PRIMARY)))
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawEllipse(icon_rect)
 
     # Title
     title_font = QtGui.QFont("Liberation Sans", 22, QtGui.QFont.Bold)
@@ -75,6 +90,7 @@ def main():
     app.setApplicationName("Fusi\u00b3")
     app.setApplicationVersion("1.1.0")
     app.setOrganizationName("Fusi3")
+    app.setWindowIcon(load_app_icon())
 
     # High-DPI support
     app.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
@@ -93,6 +109,7 @@ def main():
 
     from perscomb.ui.dialog import PerspectiveCombinationDialog
     dialog = PerspectiveCombinationDialog()
+    dialog.setWindowIcon(load_app_icon())
 
     splash.showMessage(
         "Ready",

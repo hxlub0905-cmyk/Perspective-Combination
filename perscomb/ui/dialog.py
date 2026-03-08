@@ -34,6 +34,7 @@ from ..core.perspective_combine import (
 
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
+from .app_icon import load_app_icon, load_toolbar_icon
 
 UI_PRIMARY = Colors.BRAND_PRIMARY
 UI_PRIMARY_HOVER = Colors.BRAND_PRIMARY_HOVER
@@ -1876,6 +1877,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, conditions: List[EbeamCondition] = None):
         super().__init__(parent)
         self.setWindowTitle("Fusi\u00b3 \u2014 SEM Perspective Combination Tool")
+        self.setWindowIcon(load_app_icon())
         self.setMinimumSize(1500, 900)
         self.resize(1600, 950)
 
@@ -1914,7 +1916,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _set_button_icon(self, button: QtWidgets.QPushButton, pixmap_enum, text: str = None, size: int = 16):
         if text is not None:
             button.setText(text)
-        icon = self.style().standardIcon(pixmap_enum)
+        icon = load_toolbar_icon(size)
+        if icon.isNull():
+            icon = self.style().standardIcon(pixmap_enum)
         button.setIcon(icon)
         button.setIconSize(QtCore.QSize(size, size))
 
