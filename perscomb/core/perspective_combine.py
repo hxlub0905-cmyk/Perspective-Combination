@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from .ebeam_snr import calculate_alignment_robust, AlignResult
+from .roi_set import MultiROISet, ROIStats, ROIImageLayer, ROIFullResult, ROISNREntry
 
 
 class OperationType(Enum):
@@ -580,10 +581,11 @@ def compute_single_pair(
         normalize = False
 
     # Step 3: Normalize if requested, capture coefficients for display.
-    # Both images are independently mapped to [0, 1] using their own range,
-    # so intensity/brightness differences between conditions are removed before the
-    # subtract/blend operation.  comp_norm_uint8 is the normalized compare
-    # exposed for visual verification via the "Normalize Preview" button in the UI.
+    # For linear methods (percentile, glv_mask), BASE P2/P98 is used as the common
+    # anchor for both base and compare, so absolute intensity differences across
+    # Landing Energies are preserved for cross-LE ROI analysis.
+    # comp_norm_uint8 is the normalized compare exposed for visual verification
+    # via the "Normalize Preview" button in the UI.
     norm_a, norm_b = 1.0, 0.0  # Default coefficients (identity when normalize=False)
     _norm_nonlinear = False  # True for HEQ/CLAHE (no closed-form a, b)
     effective_method = normalize_method if normalize else 'skip'
@@ -595,17 +597,18 @@ def compute_single_pair(
     elif effective_method == 'glv_mask' and glv_range is not None:
         # GLV-Mask Normalization: compute P2/P98 only from pixels within the
         # specified gray-level range (e.g. MG: 110-145, EPI: 200-255).
+        # Use BASE range to anchor both images so cross-LE intensity is preserved.
         glv_low, glv_high = int(glv_range[0]), int(glv_range[1])
         base_p2, base_p98 = _percentile_range_glv_masked(base_proc, glv_low, glv_high)
-        comp_p2, comp_p98 = _percentile_range_glv_masked(comp_proc, glv_low, glv_high)
         base_norm = _normalize_image_with_range(base_proc, base_p2, base_p98)
-        comp_norm = _normalize_image_with_range(comp_proc, comp_p2, comp_p98)
-        comp_rng = max(comp_p98 - comp_p2, 1e-6)
-        norm_a = (base_p98 - base_p2) / comp_rng
-        norm_b = base_p2 - norm_a * comp_p2
+        # Apply base's range to compare so absolute intensity differences are retained
+        comp_norm = _normalize_image_with_range(comp_proc, base_p2, base_p98)
+        norm_a = 1.0
+        norm_b = 0.0
 
     elif effective_method == 'heq':
-        # Histogram Equalization – non-linear, for visual enhancement only
+        # Histogram Equalization – non-linear, for visual enhancement only.
+        # WARNING: cross-LE ROI stats are not quantitatively comparable with HEQ.
         _norm_nonlinear = True
         base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
         comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
@@ -613,7 +616,8 @@ def compute_single_pair(
         comp_norm = cv2.equalizeHist(comp_u8).astype(np.float32) / 255.0
 
     elif effective_method == 'clahe':
-        # CLAHE – non-linear, for visual enhancement only
+        # CLAHE – non-linear, for visual enhancement only.
+        # WARNING: cross-LE ROI stats are not quantitatively comparable with CLAHE.
         _norm_nonlinear = True
         clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
         base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
@@ -622,14 +626,13 @@ def compute_single_pair(
         comp_norm = clahe_obj.apply(comp_u8).astype(np.float32) / 255.0
 
     else:
-        # 'percentile' (default) – Standard full-image P2/P98 linear normalization
+        # 'percentile' (default) – Use BASE P2/P98 to anchor both images.
+        # Compare is mapped with the same scale so cross-LE intensity is preserved.
         base_p2, base_p98 = _percentile_range(base_proc)
-        comp_p2, comp_p98 = _percentile_range(comp_proc)
         base_norm = _normalize_image_with_range(base_proc, base_p2, base_p98)
-        comp_norm = _normalize_image_with_range(comp_proc, comp_p2, comp_p98)
-        comp_rng = max(comp_p98 - comp_p2, 1e-6)
-        norm_a = (base_p98 - base_p2) / comp_rng
-        norm_b = base_p2 - norm_a * comp_p2
+        comp_norm = _normalize_image_with_range(comp_proc, base_p2, base_p98)
+        norm_a = 1.0
+        norm_b = 0.0
 
     # comp_norm_uint8: normalized compare image for display in "Normalize Preview"
     if _norm_nonlinear:
@@ -847,6 +850,155 @@ def compute_multi_pairs(
         results.append(result)
 
     return results
+
+
+def compute_roi_full_stats(
+    base: np.ndarray,
+    aligned_compares: Dict[str, np.ndarray],
+    roi_set: MultiROISet,
+    normalize_method: str = 'percentile',
+    glv_range: Optional[Tuple[int, int]] = None,
+    clahe_clip_limit: float = 2.0,
+    preserve_positive_diff: bool = False,
+    abs_diff: bool = False,
+) -> ROIFullResult:
+    """Extract ROI statistics from base, aligned compare, and diff images.
+
+    For each LE compare image the function computes:
+      - BASE layer   : ROI stats on the normalised base (computed once).
+      - COMPARE layer: ROI stats on the normalised aligned compare.
+      - DIFF layer   : ROI stats on the difference image (same processing as
+                       the main subtract pipeline so results are consistent).
+
+    SNR is then derived from the DIFF layers using:
+        SNR = (μ_target - μ_ref) / (σ_ref + ε)
+    where μ_ref / σ_ref are computed from all reference ROI pixels pooled.
+
+    Parameters
+    ----------
+    base               : Base image (uint8, H×W).
+    aligned_compares   : {le_label: aligned_compare_uint8}.
+    roi_set            : MultiROISet drawn on the base image coordinate space.
+    normalize_method   : Same method used in compute_single_pair().
+    glv_range          : Required when normalize_method == 'glv_mask'.
+    clahe_clip_limit   : CLAHE clip limit (used when normalize_method == 'clahe').
+    preserve_positive_diff : Clip diff to [0, …] (keep-direction subtraction).
+    abs_diff           : Use |Base − Compare| instead of signed.
+
+    Returns
+    -------
+    ROIFullResult with layers for base + all compares + all diffs, plus SNR.
+    """
+    _EPS = 1e-7
+    nonlinear_warning = normalize_method in ('heq', 'clahe')
+
+    base_proc = base.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Normalise base once (all methods anchor to base)
+    # ------------------------------------------------------------------
+    if normalize_method == 'skip':
+        base_norm = base_proc / 255.0
+    elif normalize_method == 'glv_mask' and glv_range is not None:
+        glv_low, glv_high = int(glv_range[0]), int(glv_range[1])
+        b_p2, b_p98 = _percentile_range_glv_masked(base_proc, glv_low, glv_high)
+        base_norm = _normalize_image_with_range(base_proc, b_p2, b_p98)
+    elif normalize_method == 'heq':
+        base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
+        base_norm = cv2.equalizeHist(base_u8).astype(np.float32) / 255.0
+        b_p2, b_p98 = 0.0, 1.0   # sentinel, not used for HEQ/CLAHE
+    elif normalize_method == 'clahe':
+        clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
+        base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
+        base_norm = clahe_obj.apply(base_u8).astype(np.float32) / 255.0
+        b_p2, b_p98 = 0.0, 1.0
+    else:
+        # percentile (default)
+        b_p2, b_p98 = float(np.percentile(base_proc, 2)), float(np.percentile(base_proc, 98))
+        b_rng = max(b_p98 - b_p2, 1e-6)
+        base_norm = np.clip((base_proc - b_p2) / b_rng, 0.0, 1.0)
+
+    result = ROIFullResult(
+        roi_set=roi_set,
+        normalize_method=normalize_method,
+        nonlinear_warning=nonlinear_warning,
+    )
+
+    # ------------------------------------------------------------------
+    # BASE layer
+    # ------------------------------------------------------------------
+    base_layer = ROIImageLayer(image_label='base', layer_type='base')
+    for roi in roi_set.rois:
+        pixels = roi.crop(base_norm)
+        base_layer.roi_stats[roi.id] = ROIStats.from_pixels(pixels)
+    result.layers.append(base_layer)
+
+    # ------------------------------------------------------------------
+    # For each LE: COMPARE layer + DIFF layer
+    # ------------------------------------------------------------------
+    for le_label, aligned_comp in aligned_compares.items():
+        comp_proc = aligned_comp.astype(np.float32)
+
+        # Normalise compare using the SAME base anchor (method B)
+        if normalize_method == 'skip':
+            comp_norm = comp_proc / 255.0
+        elif normalize_method == 'glv_mask' and glv_range is not None:
+            comp_norm = _normalize_image_with_range(comp_proc, b_p2, b_p98)
+        elif normalize_method == 'heq':
+            comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
+            comp_norm = cv2.equalizeHist(comp_u8).astype(np.float32) / 255.0
+        elif normalize_method == 'clahe':
+            clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
+            comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
+            comp_norm = clahe_obj.apply(comp_u8).astype(np.float32) / 255.0
+        else:
+            comp_norm = _normalize_image_with_range(comp_proc, b_p2, b_p98)
+
+        # COMPARE layer
+        comp_layer = ROIImageLayer(
+            image_label=f"{le_label}_compare", layer_type='compare'
+        )
+        for roi in roi_set.rois:
+            pixels = roi.crop(comp_norm)
+            comp_layer.roi_stats[roi.id] = ROIStats.from_pixels(pixels)
+        result.layers.append(comp_layer)
+
+        # DIFF layer  (consistent with subtract pipeline)
+        diff_f = base_norm - comp_norm
+        if abs_diff:
+            diff_f = np.abs(diff_f)
+        elif preserve_positive_diff:
+            diff_f = np.clip(diff_f, 0.0, None)
+
+        diff_layer = ROIImageLayer(
+            image_label=f"{le_label}_diff", layer_type='diff'
+        )
+        for roi in roi_set.rois:
+            pixels = roi.crop(diff_f)
+            diff_layer.roi_stats[roi.id] = ROIStats.from_pixels(pixels)
+        result.layers.append(diff_layer)
+
+        # SNR from diff layer
+        target_roi = roi_set.get_target()
+        ref_rois = roi_set.get_references()
+        if target_roi is not None and ref_rois:
+            t_stats = diff_layer.roi_stats.get(target_roi.id)
+            ref_pixels = np.concatenate([
+                roi.crop(diff_f).ravel() for roi in ref_rois
+            ]).astype(np.float32)
+            mu_ref = float(np.mean(ref_pixels))
+            sigma_ref = float(np.std(ref_pixels))
+            mu_target = t_stats.mean if t_stats is not None else 0.0
+            snr = (mu_target - mu_ref) / (sigma_ref + _EPS)
+            result.snr_per_diff[le_label] = ROISNREntry(
+                le_label=le_label,
+                snr=snr,
+                mu_target=mu_target,
+                mu_ref=mu_ref,
+                sigma_ref=sigma_ref,
+            )
+
+    return result
 
 
 # Keep legacy function for backward compatibility

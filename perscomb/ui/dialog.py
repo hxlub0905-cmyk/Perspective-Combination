@@ -26,11 +26,13 @@ from ..core.perspective_combine import (
     compute_single_pair,
     compute_multi_pairs,
     compute_quadrant_fusion,
+    compute_roi_full_stats,
     colorize_snr_map,
     CombineResult,
     SinglePairResult,
     QuadrantFusionResult,
 )
+from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
@@ -449,8 +451,11 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
 
     cursor_moved = Signal(float, float)  # Normalized position (0-1)
     cursor_left = Signal()
-    roi_selected = Signal(float, float, float, float)  # norm x, y, w, h
+    roi_selected = Signal(float, float, float, float)  # norm x, y, w, h (legacy single-ROI)
     clicked = Signal()
+    # Multi-ROI signals
+    multi_roi_drawn = Signal(float, float, float, float)  # norm x, y, w, h — drag or single-add
+    multi_roi_anchor = Signal(str, float, float)          # 'tl'/'br', norm cx, cy
 
     ZOOM_FACTOR = 2.0  # Magnification factor (lower = more FOV)
     ZOOM_SIZE = 220  # Larger circular FOV for easier inspection
@@ -465,13 +470,24 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         self._cursor_pos: Optional[tuple] = None  # (norm_x, norm_y)
         self._show_zoom: bool = False
         self._partner: Optional['SyncZoomImageWidget'] = None  # Linked partner
-        # ROI drawing state
+        # Legacy single-ROI drawing state (used by ROI Nulling)
         self._roi_mode: bool = False
         self._roi_start: Optional[tuple] = None  # (norm_x, norm_y)
         self._roi_current: Optional[tuple] = None  # (norm_x, norm_y)
         self._roi_dragging: bool = False
-        # Active ROI overlay (drawn permanently until cleared)
+        # Active ROI overlay (drawn permanently until cleared, legacy single-ROI)
         self._active_roi: Optional[tuple] = None  # (norm_x, norm_y, norm_w, norm_h)
+        # Multi-ROI state
+        self._multi_roi_set: Optional[MultiROISet] = None
+        # Draw mode: 'idle' | 'drag' | 'single_add' | 'multi_add_tl' | 'multi_add_br'
+        self._multi_draw_mode: str = 'idle'
+        self._multi_roi_start: Optional[tuple] = None   # drag start (norm x, y)
+        self._multi_roi_current: Optional[tuple] = None # drag current (norm x, y)
+        self._multi_roi_dragging: bool = False
+        self._add_size_norm: Tuple[float, float] = (0.05, 0.05)  # w, h for single_add
+        self._grid_anchor_tl: Optional[Tuple[float, float]] = None  # norm cx, cy
+        self._grid_anchor_br: Optional[Tuple[float, float]] = None  # norm cx, cy
+        self._grid_preview_rects: List[Tuple] = []   # norm_rects for preview (yellow dashed)
 
         self.setMinimumSize(350, 350)  # Larger minimum for better visibility
         self.setMouseTracking(True)
@@ -534,6 +550,57 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         self._active_roi = norm_rect
         self._update_display()
 
+    # ------------------------------------------------------------------
+    # Multi-ROI public API
+    # ------------------------------------------------------------------
+
+    def set_multi_roi_set(self, roi_set: Optional[MultiROISet]) -> None:
+        """Attach a MultiROISet whose ROIs are drawn on this widget."""
+        self._multi_roi_set = roi_set
+        self._update_display()
+
+    def set_multi_draw_mode(
+        self,
+        mode: str,
+        add_size_norm: Optional[Tuple[float, float]] = None,
+    ) -> None:
+        """Set the active drawing mode.
+
+        Parameters
+        ----------
+        mode : 'idle' | 'drag' | 'single_add' | 'multi_add_tl' | 'multi_add_br'
+        add_size_norm : (norm_w, norm_h) used when mode == 'single_add'.
+        """
+        self._multi_draw_mode = mode
+        if add_size_norm is not None:
+            self._add_size_norm = add_size_norm
+        self._multi_roi_start = None
+        self._multi_roi_current = None
+        self._multi_roi_dragging = False
+        self.setCursor(
+            Qt.CrossCursor if mode != 'idle' else Qt.ArrowCursor
+        )
+        self._update_display()
+
+    def set_grid_preview(self, rects: List[Tuple]) -> None:
+        """Show yellow dashed preview rectangles (norm_rects) for Multi-Add grid."""
+        self._grid_preview_rects = rects
+        self._update_display()
+
+    def clear_grid_preview(self) -> None:
+        self._grid_preview_rects = []
+        self._update_display()
+
+    def set_grid_anchors(
+        self,
+        tl: Optional[Tuple[float, float]],
+        br: Optional[Tuple[float, float]],
+    ) -> None:
+        """Update displayed anchor markers without entering anchor-set mode."""
+        self._grid_anchor_tl = tl
+        self._grid_anchor_br = br
+        self._update_display()
+
     def _widget_to_norm(self, pos) -> Optional[tuple]:
         """Convert widget-space QPoint to normalized image coordinates (0-1)."""
         label_rect = self._label.geometry()
@@ -564,9 +631,11 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         self._update_display()
 
     def mousePressEvent(self, event):
-        """Start ROI drawing on left click when in roi_mode."""
+        """Start ROI drawing on left click when in roi_mode or multi draw mode."""
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
+
+        # Legacy single-ROI drag (ROI Nulling)
         if self._roi_mode and event.button() == Qt.LeftButton:
             norm = self._widget_to_norm(event.pos())
             if norm:
@@ -575,10 +644,48 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
                 self._roi_dragging = True
             event.accept()
             return
+
+        # Multi-ROI modes
+        if self._multi_draw_mode != 'idle' and event.button() == Qt.LeftButton:
+            norm = self._widget_to_norm(event.pos())
+            if norm is None:
+                super().mousePressEvent(event)
+                return
+
+            if self._multi_draw_mode == 'single_add':
+                # Place ROI centered on click point
+                nw, nh = self._add_size_norm
+                nx = max(0.0, min(norm[0] - nw / 2, 1.0 - nw))
+                ny = max(0.0, min(norm[1] - nh / 2, 1.0 - nh))
+                self.multi_roi_drawn.emit(nx, ny, nw, nh)
+                # Stay in single_add mode so user can keep placing
+
+            elif self._multi_draw_mode == 'drag':
+                self._multi_roi_start = norm
+                self._multi_roi_current = norm
+                self._multi_roi_dragging = True
+
+            elif self._multi_draw_mode in ('multi_add_tl', 'multi_add_br'):
+                anchor_type = 'tl' if self._multi_draw_mode == 'multi_add_tl' else 'br'
+                cx, cy = norm
+                if anchor_type == 'tl':
+                    self._grid_anchor_tl = (cx, cy)
+                else:
+                    self._grid_anchor_br = (cx, cy)
+                self.multi_roi_anchor.emit(anchor_type, cx, cy)
+                # Exit anchor-set mode after placement
+                self._multi_draw_mode = 'idle'
+                self.setCursor(Qt.ArrowCursor)
+
+            self._update_display()
+            event.accept()
+            return
+
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Finish ROI drawing on left release."""
+        # Legacy single-ROI
         if self._roi_mode and self._roi_dragging and event.button() == Qt.LeftButton:
             norm = self._widget_to_norm(event.pos())
             if norm:
@@ -597,15 +704,46 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
             self._update_display()
             event.accept()
             return
+
+        # Multi-ROI drag
+        if (self._multi_draw_mode == 'drag' and self._multi_roi_dragging
+                and event.button() == Qt.LeftButton):
+            norm = self._widget_to_norm(event.pos())
+            if norm:
+                self._multi_roi_current = norm
+            if self._multi_roi_start and self._multi_roi_current:
+                x0, y0 = self._multi_roi_start
+                x1, y1 = self._multi_roi_current
+                nx, ny = min(x0, x1), min(y0, y1)
+                nw, nh = abs(x1 - x0), abs(y1 - y0)
+                if nw > 0.01 and nh > 0.01:
+                    self.multi_roi_drawn.emit(nx, ny, nw, nh)
+            self._multi_roi_dragging = False
+            self._multi_roi_start = None
+            self._multi_roi_current = None
+            # Stay in drag mode so user can keep drawing
+            self._update_display()
+            event.accept()
+            return
+
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
         """Track mouse position and emit signal."""
-        # ROI drag mode: update rubber band
+        # Legacy single-ROI drag rubber band
         if self._roi_mode and self._roi_dragging:
             norm = self._widget_to_norm(event.pos())
             if norm:
                 self._roi_current = norm
+            self._update_display()
+            event.accept()
+            return
+
+        # Multi-ROI drag rubber band
+        if self._multi_draw_mode == 'drag' and self._multi_roi_dragging:
+            norm = self._widget_to_norm(event.pos())
+            if norm:
+                self._multi_roi_current = norm
             self._update_display()
             event.accept()
             return
@@ -701,7 +839,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
             cv2.putText(img_rgb, "ROI", (rx + 3, ry + 14),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
 
-        # Draw rubber band while dragging ROI
+        # Draw legacy rubber band while dragging ROI
         if self._roi_mode and self._roi_start and self._roi_current:
             x0n, y0n = self._roi_start
             x1n, y1n = self._roi_current
@@ -710,6 +848,66 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
             rw3 = max(1, int(abs(x1n - x0n) * w))
             rh3 = max(1, int(abs(y1n - y0n) * h))
             cv2.rectangle(img_rgb, (rx, ry), (rx + rw3, ry + rh3), (0, 255, 255), 2)
+
+        # Draw multi-ROI overlays -------------------------------------------
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        # 1. Grid preview (yellow dashed approximated with thin rectangles)
+        for rect in self._grid_preview_rects:
+            nx, ny, nw, nh = rect
+            rx, ry = int(nx * w), int(ny * h)
+            rpw, rph = max(1, int(nw * w)), max(1, int(nh * h))
+            cv2.rectangle(img_rgb, (rx, ry), (rx + rpw, ry + rph), (0, 215, 255), 1)
+
+        # 2. Confirmed multi-ROIs
+        if self._multi_roi_set:
+            for roi in self._multi_roi_set.rois:
+                nx, ny, nw, nh = roi.norm_rect
+                rx, ry = int(nx * w), int(ny * h)
+                rpw, rph = max(1, int(nw * w)), max(1, int(nh * h))
+                color = roi.color_bgr
+                thickness = 2 if roi.roi_type == 'target' else 1
+                cv2.rectangle(img_rgb, (rx, ry), (rx + rpw, ry + rph), color, thickness)
+                # Inner shadow for readability
+                cv2.rectangle(img_rgb, (rx + 1, ry + 1),
+                               (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
+                badge = f"[T] {roi.label}" if roi.roi_type == 'target' else roi.label
+                text_y = max(ry + 13, 14)
+                cv2.putText(img_rgb, badge, (rx + 3, text_y + 1),
+                            font, 0.38, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(img_rgb, badge, (rx + 3, text_y),
+                            font, 0.38, color, 1, cv2.LINE_AA)
+
+        # 3. Multi-Add anchor markers
+        _ANCHOR_COLOR = (0, 215, 255)  # gold
+        for anchor, label in [(self._grid_anchor_tl, 'TL'), (self._grid_anchor_br, 'BR')]:
+            if anchor is not None:
+                cx, cy = int(anchor[0] * w), int(anchor[1] * h)
+                cv2.drawMarker(img_rgb, (cx, cy), _ANCHOR_COLOR,
+                               cv2.MARKER_CROSS, 16, 2, cv2.LINE_AA)
+                cv2.putText(img_rgb, label, (cx + 5, cy - 5),
+                            font, 0.4, _ANCHOR_COLOR, 1, cv2.LINE_AA)
+
+        # 4. Multi-ROI drag rubber band
+        if (self._multi_draw_mode == 'drag' and self._multi_roi_dragging
+                and self._multi_roi_start and self._multi_roi_current):
+            x0n, y0n = self._multi_roi_start
+            x1n, y1n = self._multi_roi_current
+            rx = int(min(x0n, x1n) * w)
+            ry = int(min(y0n, y1n) * h)
+            rw3 = max(1, int(abs(x1n - x0n) * w))
+            rh3 = max(1, int(abs(y1n - y0n) * h))
+            cv2.rectangle(img_rgb, (rx, ry), (rx + rw3, ry + rh3), (0, 255, 0), 2)
+
+        # 5. Single-add cursor preview (ghost rect following mouse)
+        if self._multi_draw_mode == 'single_add' and self._cursor_pos is not None:
+            nw_s, nh_s = self._add_size_norm
+            cx_n, cy_n = self._cursor_pos
+            nx = max(0.0, min(cx_n - nw_s / 2, 1.0 - nw_s))
+            ny = max(0.0, min(cy_n - nh_s / 2, 1.0 - nh_s))
+            rx, ry = int(nx * w), int(ny * h)
+            rpw, rph = max(1, int(nw_s * w)), max(1, int(nh_s * h))
+            cv2.rectangle(img_rgb, (rx, ry), (rx + rpw, ry + rph), (0, 255, 0), 1)
 
         # Draw zoom overlay if cursor is on image
         if self._show_zoom and self._cursor_pos is not None:
@@ -1870,6 +2068,613 @@ class NormalizedCompareDialog(QtWidgets.QDialog):
         canvas.plot_histogram(counts, edges)
 
 
+class ROIIntensityProfileDialog(QtWidgets.QDialog):
+    """Auto-popup dialog showing ROI statistics and SNR across Landing Energies.
+
+    Tabs
+    ----
+    1. SNR across LE    – line chart of SNR per diff image.
+    2. Per-ROI Mean     – selectable ROI; three lines: base / compare / diff mean.
+    3. Raw Table        – all layer × ROI stats in a scrollable table.
+    """
+
+    def __init__(self, result: ROIFullResult, parent=None):
+        super().__init__(parent)
+        self._result = result
+        self.setWindowTitle("ROI Intensity Profiles")
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
+        self.resize(720, 520)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QtWidgets.QVBoxLayout(self)
+        root.setSpacing(Spacing.SM)
+        root.setContentsMargins(Spacing.SM, Spacing.SM, Spacing.SM, Spacing.SM)
+
+        if self._result.nonlinear_warning:
+            warn = QtWidgets.QLabel(
+                "⚠  HEQ / CLAHE normalization is non-linear — "
+                "cross-LE ROI stats are NOT quantitatively comparable."
+            )
+            warn.setStyleSheet("color: #F59E0B; font-weight: bold;")
+            warn.setWordWrap(True)
+            root.addWidget(warn)
+
+        tabs = QtWidgets.QTabWidget()
+        tabs.addTab(self._build_snr_tab(), "SNR across LE")
+        tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
+        tabs.addTab(self._build_table_tab(), "Raw Table")
+        root.addWidget(tabs, stretch=1)
+
+        bottom = QtWidgets.QHBoxLayout()
+        btn_close = QtWidgets.QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        bottom.addStretch()
+        bottom.addWidget(btn_close)
+        root.addLayout(bottom)
+
+    # ------------------------------------------------------------------
+    # Tab 1 — SNR
+    # ------------------------------------------------------------------
+
+    def _build_snr_tab(self) -> QtWidgets.QWidget:
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        fig = Figure(figsize=(5, 3), tight_layout=True)
+        fig.patch.set_facecolor('#1F2937')
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('#111827')
+
+        snr_data = self._result.snr_per_diff
+        if snr_data:
+            labels = list(snr_data.keys())
+            snr_vals = [snr_data[k].snr for k in labels]
+            x = range(len(labels))
+            ax.plot(x, snr_vals, marker='o', color='#F59E0B', linewidth=2)
+            ax.set_xticks(list(x))
+            ax.set_xticklabels(labels, rotation=20, ha='right', color='#D1D5DB', fontsize=9)
+            ax.set_ylabel("SNR", color='#D1D5DB')
+            ax.tick_params(colors='#D1D5DB')
+            ax.spines['bottom'].set_color('#4B5563')
+            ax.spines['left'].set_color('#4B5563')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.grid(True, color='#374151', linewidth=0.5)
+            ax.set_title("SNR = (μ_Target − μ_Ref) / σ_Ref", color='#9CA3AF', fontsize=9)
+        else:
+            ax.text(0.5, 0.5, "No Target ROI defined", ha='center', va='center',
+                    color='#9CA3AF', transform=ax.transAxes)
+
+        canvas = FigureCanvas(fig)
+        lay.addWidget(canvas)
+        return w
+
+    # ------------------------------------------------------------------
+    # Tab 2 — Per-ROI Mean across LE
+    # ------------------------------------------------------------------
+
+    def _build_mean_tab(self) -> QtWidgets.QWidget:
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        ctrl_row = QtWidgets.QHBoxLayout()
+        ctrl_row.addWidget(QtWidgets.QLabel("ROI:"))
+        self._cmb_roi = QtWidgets.QComboBox()
+        for roi in self._result.roi_set.rois:
+            self._cmb_roi.addItem(roi.label, roi.id)
+        ctrl_row.addWidget(self._cmb_roi)
+        ctrl_row.addStretch()
+        lay.addLayout(ctrl_row)
+
+        fig = Figure(figsize=(5, 3), tight_layout=True)
+        fig.patch.set_facecolor('#1F2937')
+        self._mean_ax = fig.add_subplot(111)
+        self._mean_canvas = FigureCanvas(fig)
+        lay.addWidget(self._mean_canvas)
+
+        self._cmb_roi.currentIndexChanged.connect(self._refresh_mean_plot)
+        self._refresh_mean_plot()
+        return w
+
+    def _refresh_mean_plot(self) -> None:
+        ax = self._mean_ax
+        ax.cla()
+        ax.set_facecolor('#111827')
+        ax.spines['bottom'].set_color('#4B5563')
+        ax.spines['left'].set_color('#4B5563')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color='#374151', linewidth=0.5)
+        ax.tick_params(colors='#D1D5DB')
+        ax.set_ylabel("Mean intensity (norm)", color='#D1D5DB')
+
+        roi_id = self._cmb_roi.currentData()
+        if roi_id is None:
+            self._mean_canvas.draw()
+            return
+
+        compare_labels = self._result.compare_labels()
+        diff_labels = self._result.diff_labels()
+        base_layer = self._result.get_base_layer()
+        x = range(len(compare_labels))
+        le_labels = [lbl.replace('_compare', '') for lbl in compare_labels]
+
+        # Base mean (horizontal line)
+        if base_layer and roi_id in base_layer.roi_stats:
+            base_mean = base_layer.roi_stats[roi_id].mean
+            ax.axhline(base_mean, color='#60A5FA', linewidth=1.5,
+                       linestyle='--', label='Base')
+
+        # Compare means
+        comp_means = []
+        for lbl in compare_labels:
+            layer = self._result.get_layer(lbl)
+            if layer and roi_id in layer.roi_stats:
+                comp_means.append(layer.roi_stats[roi_id].mean)
+            else:
+                comp_means.append(None)
+        valid_x = [i for i, v in enumerate(comp_means) if v is not None]
+        valid_y = [v for v in comp_means if v is not None]
+        if valid_x:
+            ax.plot(valid_x, valid_y, marker='s', color='#34D399',
+                    linewidth=1.5, label='Compare')
+
+        # Diff means
+        diff_means = []
+        for lbl in diff_labels:
+            layer = self._result.get_layer(lbl)
+            if layer and roi_id in layer.roi_stats:
+                diff_means.append(layer.roi_stats[roi_id].mean)
+            else:
+                diff_means.append(None)
+        valid_xd = [i for i, v in enumerate(diff_means) if v is not None]
+        valid_yd = [v for v in diff_means if v is not None]
+        if valid_xd:
+            ax.plot(valid_xd, valid_yd, marker='^', color='#F87171',
+                    linewidth=1.5, label='Diff')
+
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(le_labels, rotation=20, ha='right',
+                           color='#D1D5DB', fontsize=9)
+        ax.legend(facecolor='#1F2937', labelcolor='#D1D5DB', fontsize=8)
+        self._mean_canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Tab 3 — Raw Table
+    # ------------------------------------------------------------------
+
+    def _build_table_tab(self) -> QtWidgets.QWidget:
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        headers = ['Layer', 'Image', 'ROI', 'Type', 'Mean', 'Std', 'P2', 'P98', 'Median', 'Pixels']
+        table = QtWidgets.QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.horizontalHeader().setStretchLastSection(False)
+        table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents
+        )
+        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+
+        roi_map = {r.id: r for r in self._result.roi_set.rois}
+        for layer in self._result.layers:
+            for roi_id, stats in layer.roi_stats.items():
+                roi = roi_map.get(roi_id)
+                row = table.rowCount()
+                table.insertRow(row)
+                values = [
+                    layer.layer_type,
+                    layer.image_label,
+                    roi.label if roi else roi_id,
+                    roi.roi_type if roi else '',
+                    f"{stats.mean:.5f}",
+                    f"{stats.std:.5f}",
+                    f"{stats.p2:.5f}",
+                    f"{stats.p98:.5f}",
+                    f"{stats.median:.5f}",
+                    str(stats.pixel_count),
+                ]
+                for col, val in enumerate(values):
+                    table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
+
+        lay.addWidget(table)
+        return w
+
+
+class MultiROIManagerWidget(QtWidgets.QDialog):
+    """Floating dialog for managing multiple named ROIs drawn on the base image.
+
+    Signals
+    -------
+    rois_changed : Emitted whenever the MultiROISet is modified (add / remove / type change).
+    compute_requested : Emitted when user clicks [Compute ROI Profiles].
+    """
+
+    rois_changed = Signal()
+    compute_requested = Signal()
+
+    def __init__(self, roi_set: MultiROISet, base_widget: SyncZoomImageWidget,
+                 parent=None):
+        super().__init__(parent)
+        self._roi_set = roi_set
+        self._base_widget = base_widget
+        self._img_shape: Optional[Tuple[int, int]] = None  # (H, W) of base image
+
+        self.setWindowTitle("ROI Manager")
+        self.setWindowFlags(self.windowFlags() | Qt.Tool)
+        self.resize(380, 520)
+        self._build_ui()
+        self._connect_signals()
+        self._refresh_list()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        root = QtWidgets.QVBoxLayout(self)
+        root.setSpacing(Spacing.SM)
+        root.setContentsMargins(Spacing.SM, Spacing.SM, Spacing.SM, Spacing.SM)
+
+        # ── Add Mode ────────────────────────────────────────────────
+        mode_grp = QtWidgets.QGroupBox("Add Mode")
+        mode_layout = QtWidgets.QVBoxLayout(mode_grp)
+        mode_layout.setSpacing(4)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self._btn_drag = QtWidgets.QPushButton("Drag")
+        self._btn_single = QtWidgets.QPushButton("Single Add")
+        self._btn_multi = QtWidgets.QPushButton("Multi Add")
+        for btn in (self._btn_drag, self._btn_single, self._btn_multi):
+            btn.setCheckable(True)
+            btn.setMinimumHeight(28)
+            btn_row.addWidget(btn)
+        mode_layout.addLayout(btn_row)
+
+        size_row = QtWidgets.QHBoxLayout()
+        size_row.addWidget(QtWidgets.QLabel("ROI Size  W:"))
+        self._spn_w = QtWidgets.QSpinBox()
+        self._spn_w.setRange(4, 2048)
+        self._spn_w.setValue(64)
+        self._spn_w.setSuffix(" px")
+        size_row.addWidget(self._spn_w)
+        size_row.addWidget(QtWidgets.QLabel("H:"))
+        self._spn_h = QtWidgets.QSpinBox()
+        self._spn_h.setRange(4, 2048)
+        self._spn_h.setValue(64)
+        self._spn_h.setSuffix(" px")
+        size_row.addWidget(self._spn_h)
+        mode_layout.addLayout(size_row)
+        root.addWidget(mode_grp)
+
+        # ── Multi-Add settings (collapsible) ────────────────────────
+        self._multi_grp = QtWidgets.QGroupBox("Multi Add Settings")
+        self._multi_grp.setVisible(False)
+        multi_layout = QtWidgets.QVBoxLayout(self._multi_grp)
+        multi_layout.setSpacing(4)
+
+        period_row = QtWidgets.QHBoxLayout()
+        period_row.addWidget(QtWidgets.QLabel("Period X:"))
+        self._spn_px = QtWidgets.QSpinBox()
+        self._spn_px.setRange(1, 4096)
+        self._spn_px.setValue(128)
+        self._spn_px.setSuffix(" px")
+        period_row.addWidget(self._spn_px)
+        period_row.addWidget(QtWidgets.QLabel("Y:"))
+        self._spn_py = QtWidgets.QSpinBox()
+        self._spn_py.setRange(1, 4096)
+        self._spn_py.setValue(128)
+        self._spn_py.setSuffix(" px")
+        period_row.addWidget(self._spn_py)
+        multi_layout.addLayout(period_row)
+
+        anchor_row = QtWidgets.QHBoxLayout()
+        self._btn_set_tl = QtWidgets.QPushButton("Set TL Anchor")
+        self._btn_set_br = QtWidgets.QPushButton("Set BR Anchor")
+        anchor_row.addWidget(self._btn_set_tl)
+        anchor_row.addWidget(self._btn_set_br)
+        multi_layout.addLayout(anchor_row)
+
+        self._lbl_tl = QtWidgets.QLabel("TL: not set")
+        self._lbl_br = QtWidgets.QLabel("BR: not set")
+        multi_layout.addWidget(self._lbl_tl)
+        multi_layout.addWidget(self._lbl_br)
+
+        preview_row = QtWidgets.QHBoxLayout()
+        self._btn_preview_grid = QtWidgets.QPushButton("Preview Grid")
+        self._lbl_grid_count = QtWidgets.QLabel("")
+        preview_row.addWidget(self._btn_preview_grid)
+        preview_row.addWidget(self._lbl_grid_count)
+        multi_layout.addLayout(preview_row)
+
+        confirm_row = QtWidgets.QHBoxLayout()
+        self._btn_confirm_grid = QtWidgets.QPushButton("Confirm Grid")
+        self._btn_reset_anchors = QtWidgets.QPushButton("Reset Anchors")
+        confirm_row.addWidget(self._btn_confirm_grid)
+        confirm_row.addWidget(self._btn_reset_anchors)
+        multi_layout.addLayout(confirm_row)
+        root.addWidget(self._multi_grp)
+
+        # ── ROI List ─────────────────────────────────────────────────
+        list_header = QtWidgets.QHBoxLayout()
+        list_header.addWidget(QtWidgets.QLabel("ROI List"))
+        list_header.addStretch()
+        self._btn_clear_all = QtWidgets.QPushButton("Clear All")
+        self._btn_clear_all.setFixedWidth(80)
+        list_header.addWidget(self._btn_clear_all)
+        root.addLayout(list_header)
+
+        self._list_widget = QtWidgets.QListWidget()
+        self._list_widget.setAlternatingRowColors(True)
+        self._list_widget.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        root.addWidget(self._list_widget, stretch=1)
+
+        self._lbl_summary = QtWidgets.QLabel("Target: 0   Reference: 0")
+        root.addWidget(self._lbl_summary)
+
+        # ── Bottom buttons ────────────────────────────────────────────
+        bottom_row = QtWidgets.QHBoxLayout()
+        self._btn_compute = QtWidgets.QPushButton("Compute ROI Profiles")
+        self._btn_compute.setMinimumHeight(32)
+        self._btn_export = QtWidgets.QPushButton("Export CSV")
+        bottom_row.addWidget(self._btn_compute, stretch=2)
+        bottom_row.addWidget(self._btn_export)
+        root.addLayout(bottom_row)
+
+    # ------------------------------------------------------------------
+    # Signal connections
+    # ------------------------------------------------------------------
+
+    def _connect_signals(self) -> None:
+        self._btn_drag.clicked.connect(lambda: self._activate_mode('drag'))
+        self._btn_single.clicked.connect(lambda: self._activate_mode('single_add'))
+        self._btn_multi.clicked.connect(lambda: self._toggle_multi_mode())
+        self._btn_set_tl.clicked.connect(lambda: self._enter_anchor_mode('tl'))
+        self._btn_set_br.clicked.connect(lambda: self._enter_anchor_mode('br'))
+        self._btn_preview_grid.clicked.connect(self._on_preview_grid)
+        self._btn_confirm_grid.clicked.connect(self._on_confirm_grid)
+        self._btn_reset_anchors.clicked.connect(self._on_reset_anchors)
+        self._btn_clear_all.clicked.connect(self._on_clear_all)
+        self._btn_compute.clicked.connect(self.compute_requested.emit)
+        self._btn_export.clicked.connect(self._on_export_csv)
+        # Signals from base widget
+        self._base_widget.multi_roi_drawn.connect(self._on_roi_drawn)
+        self._base_widget.multi_roi_anchor.connect(self._on_anchor_set)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def set_image_shape(self, shape: Tuple[int, int]) -> None:
+        """Inform the manager of the base image shape (H, W) for pixel→norm conversion."""
+        self._img_shape = shape
+
+    def set_roi_result(self, result: Optional[ROIFullResult]) -> None:
+        """Store latest compute result (used by Export CSV)."""
+        self._roi_result = result
+
+    # ------------------------------------------------------------------
+    # Mode management
+    # ------------------------------------------------------------------
+
+    def _activate_mode(self, mode: str) -> None:
+        """Activate drag or single_add mode on the base widget."""
+        self._btn_drag.setChecked(mode == 'drag')
+        self._btn_single.setChecked(mode == 'single_add')
+        self._btn_multi.setChecked(False)
+        self._multi_grp.setVisible(False)
+        add_size = self._get_add_size_norm()
+        self._base_widget.set_multi_draw_mode(mode, add_size_norm=add_size)
+
+    def _toggle_multi_mode(self) -> None:
+        visible = self._multi_grp.isVisible()
+        self._multi_grp.setVisible(not visible)
+        self._btn_drag.setChecked(False)
+        self._btn_single.setChecked(False)
+        if not visible:
+            self._base_widget.set_multi_draw_mode('idle')
+
+    def _enter_anchor_mode(self, which: str) -> None:
+        mode = 'multi_add_tl' if which == 'tl' else 'multi_add_br'
+        self._base_widget.set_multi_draw_mode(mode)
+
+    def _get_add_size_norm(self) -> Optional[Tuple[float, float]]:
+        if self._img_shape is None:
+            return None
+        h, w = self._img_shape
+        return self._spn_w.value() / max(w, 1), self._spn_h.value() / max(h, 1)
+
+    # ------------------------------------------------------------------
+    # ROI draw handlers (from widget signals)
+    # ------------------------------------------------------------------
+
+    def _on_roi_drawn(self, nx: float, ny: float, nw: float, nh: float) -> None:
+        self._roi_set.add_roi((nx, ny, nw, nh))
+        self._refresh_list()
+        self._base_widget._update_display()
+        self.rois_changed.emit()
+
+    def _on_anchor_set(self, which: str, cx: float, cy: float) -> None:
+        if which == 'tl':
+            self._lbl_tl.setText(f"TL: ({cx:.3f}, {cy:.3f})")
+        else:
+            self._lbl_br.setText(f"BR: ({cx:.3f}, {cy:.3f})")
+        self._base_widget.set_grid_anchors(
+            self._base_widget._grid_anchor_tl,
+            self._base_widget._grid_anchor_br,
+        )
+
+    # ------------------------------------------------------------------
+    # Grid management
+    # ------------------------------------------------------------------
+
+    def _on_preview_grid(self) -> None:
+        rects = self._build_grid_rects()
+        self._base_widget.set_grid_preview(rects)
+        self._lbl_grid_count.setText(f"{len(rects)} ROIs")
+
+    def _on_confirm_grid(self) -> None:
+        rects = self._build_grid_rects()
+        for rect in rects:
+            self._roi_set.add_roi(rect)
+        self._base_widget.clear_grid_preview()
+        self._refresh_list()
+        self._base_widget._update_display()
+        self.rois_changed.emit()
+
+    def _on_reset_anchors(self) -> None:
+        self._base_widget._grid_anchor_tl = None
+        self._base_widget._grid_anchor_br = None
+        self._base_widget.clear_grid_preview()
+        self._lbl_tl.setText("TL: not set")
+        self._lbl_br.setText("BR: not set")
+        self._lbl_grid_count.setText("")
+
+    def _build_grid_rects(self) -> List[Tuple]:
+        if self._img_shape is None:
+            return []
+        tl = self._base_widget._grid_anchor_tl
+        br = self._base_widget._grid_anchor_br
+        if tl is None or br is None:
+            return []
+        return self._roi_set.generate_grid(
+            anchor_tl_norm=tl,
+            anchor_br_norm=br,
+            period_x_px=self._spn_px.value(),
+            period_y_px=self._spn_py.value(),
+            roi_w_px=self._spn_w.value(),
+            roi_h_px=self._spn_h.value(),
+            img_shape=self._img_shape,
+        )
+
+    # ------------------------------------------------------------------
+    # ROI list management
+    # ------------------------------------------------------------------
+
+    def _on_clear_all(self) -> None:
+        self._roi_set.clear()
+        self._base_widget.clear_grid_preview()
+        self._base_widget.set_grid_anchors(None, None)
+        self._base_widget._update_display()
+        self._refresh_list()
+        self.rois_changed.emit()
+
+    def _refresh_list(self) -> None:
+        self._list_widget.clear()
+        for roi in self._roi_set.rois:
+            item = QtWidgets.QListWidgetItem()
+            self._list_widget.addItem(item)
+            row_widget = self._make_roi_row(roi)
+            item.setSizeHint(row_widget.sizeHint())
+            self._list_widget.setItemWidget(item, row_widget)
+        n_t = len(self._roi_set.get_references().__class__ and self._roi_set.get_references())
+        n_target = 1 if self._roi_set.get_target() else 0
+        n_ref = len(self._roi_set.get_references())
+        self._lbl_summary.setText(f"Target: {n_target} ★   Reference: {n_ref}")
+
+    def _make_roi_row(self, roi: NamedROI) -> QtWidgets.QWidget:
+        w = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout(w)
+        row.setContentsMargins(4, 2, 4, 2)
+        row.setSpacing(4)
+
+        # Color swatch
+        swatch = QtWidgets.QLabel()
+        r, g, b = roi.color_bgr[2], roi.color_bgr[1], roi.color_bgr[0]
+        swatch.setFixedSize(14, 14)
+        swatch.setStyleSheet(f"background: rgb({r},{g},{b}); border-radius: 3px;")
+        row.addWidget(swatch)
+
+        # Star for target
+        star = QtWidgets.QLabel("★" if roi.roi_type == 'target' else "  ")
+        star.setFixedWidth(14)
+        row.addWidget(star)
+
+        # Label
+        lbl = QtWidgets.QLabel(roi.label)
+        lbl.setMinimumWidth(70)
+        row.addWidget(lbl, stretch=1)
+
+        # Promote / demote button
+        if roi.roi_type == 'reference':
+            btn_type = QtWidgets.QPushButton("→T")
+            btn_type.setFixedWidth(32)
+            btn_type.setToolTip("Promote to Target")
+            btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_promote(rid))
+        else:
+            btn_type = QtWidgets.QPushButton("→R")
+            btn_type.setFixedWidth(32)
+            btn_type.setToolTip("Demote to Reference")
+            btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_demote(rid))
+        row.addWidget(btn_type)
+
+        # Delete button
+        btn_del = QtWidgets.QPushButton("✕")
+        btn_del.setFixedWidth(26)
+        btn_del.clicked.connect(lambda checked, rid=roi.id: self._on_delete(rid))
+        row.addWidget(btn_del)
+        return w
+
+    def _on_promote(self, roi_id: str) -> None:
+        self._roi_set.set_target(roi_id)
+        self._refresh_list()
+        self._base_widget._update_display()
+        self.rois_changed.emit()
+
+    def _on_demote(self, roi_id: str) -> None:
+        self._roi_set.set_reference(roi_id)
+        self._refresh_list()
+        self._base_widget._update_display()
+        self.rois_changed.emit()
+
+    def _on_delete(self, roi_id: str) -> None:
+        self._roi_set.remove_roi(roi_id)
+        self._refresh_list()
+        self._base_widget._update_display()
+        self.rois_changed.emit()
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _on_export_csv(self) -> None:
+        result: Optional[ROIFullResult] = getattr(self, '_roi_result', None)
+        if result is None:
+            QtWidgets.QMessageBox.information(self, "Export", "No ROI result to export yet.")
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export ROI Stats CSV", "", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        import csv
+        with open(path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['layer_type', 'image_label', 'roi_id', 'roi_label',
+                              'roi_type', 'mean', 'std', 'p2', 'p98', 'median', 'pixel_count'])
+            for layer in result.layers:
+                for roi in result.roi_set.rois:
+                    stats = layer.roi_stats.get(roi.id)
+                    if stats:
+                        writer.writerow([
+                            layer.layer_type, layer.image_label,
+                            roi.id, roi.label, roi.roi_type,
+                            f"{stats.mean:.6f}", f"{stats.std:.6f}",
+                            f"{stats.p2:.6f}", f"{stats.p98:.6f}",
+                            f"{stats.median:.6f}", stats.pixel_count,
+                        ])
+            # SNR rows
+            writer.writerow([])
+            writer.writerow(['le_label', 'snr', 'mu_target', 'mu_ref', 'sigma_ref'])
+            for le_label, entry in result.snr_per_diff.items():
+                writer.writerow([
+                    le_label, f"{entry.snr:.4f}",
+                    f"{entry.mu_target:.6f}", f"{entry.mu_ref:.6f}",
+                    f"{entry.sigma_ref:.6f}",
+                ])
+        QtWidgets.QMessageBox.information(self, "Export", f"Saved to:\n{path}")
+
+
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
     """Dialog for multi-image perspective combination and defect detection."""
 
@@ -1905,6 +2710,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._left_view_mode = 'base'
         self._norm_compare_dialog: Optional[NormalizedCompareDialog] = None
         self._hist_range: Optional[tuple] = None  # (lo, hi) gray-level range for highlight, or None
+        # Multi-ROI state
+        self._multi_roi_set: MultiROISet = MultiROISet()
+        self._roi_manager: Optional[MultiROIManagerWidget] = None
+        self._roi_profile_dialog: Optional[ROIIntensityProfileDialog] = None
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -2026,6 +2835,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         toolbar_layout.addWidget(self.btn_export)
 
         toolbar_layout.addStretch(1)
+
+        self.btn_roi_manager = QtWidgets.QPushButton("ROI Manager")
+        self.btn_roi_manager.setObjectName("ToolbarAction")
+        self.btn_roi_manager.setToolTip("Open Multi-ROI Manager to define bounding-box ROIs")
+        toolbar_layout.addWidget(self.btn_roi_manager)
 
         self.btn_about = QtWidgets.QPushButton("\u2026")
         self.btn_about.setObjectName("ToolbarAction")
@@ -2482,8 +3296,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "Histogram EQ (HEQ)",  # index 2
             "CLAHE",  # index 3
             "Skip (raw ÷ 255)",  # index 4
-            "ROI-Match (EPI Nulling)",  # index 5
+            "ROI-Match (EPI Nulling) [pending]",  # index 5 – disabled until Multi-ROI is ready
         ])
+        # Disable the ROI-Match entry until it is reconnected to Multi-ROI
+        _roi_match_item_model = self.cmb_normalize_mode.model()
+        _roi_match_item_model.item(5).setEnabled(False)
+        _roi_match_item_model.item(5).setToolTip(
+            "ROI-Match will be re-integrated after Multi-ROI is fully set up.\n"
+            "Use the ROI Manager toolbar button to define ROIs."
+        )
         self.cmb_normalize_mode.setToolTip(
             "Percentile: each image independently mapped to [0,1] via its P2–P98 range.\n"
             "GLV-Mask:   P2/P98 computed only from pixels inside the specified GLV range\n"
@@ -3096,6 +3917,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # About button
         self.btn_about.clicked.connect(self._show_about_dialog)
+
+        # ROI Manager button
+        self.btn_roi_manager.clicked.connect(self._on_open_roi_manager)
 
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
@@ -3890,6 +4714,59 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_navigation()
         self.btn_export.setEnabled(bool(self._results))
 
+        # Multi-ROI analysis — run if any ROIs are defined
+        if self._multi_roi_set and results:
+            self._run_roi_analysis(results)
+
+    def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
+        """Compute ROI full stats from the latest compute results and show profile dialog."""
+        base_label = self.cmb_base.currentText()
+        base_img = self._images.get(base_label)
+        if base_img is None:
+            return
+
+        # Build aligned_compares dict from results (aligned compare images)
+        aligned_compares: Dict[str, np.ndarray] = {}
+        for r in results:
+            aligned_compares[r.compare_label] = r.aligned_compare
+
+        norm_mode = self.cmb_normalize_mode.currentIndex()
+        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'heq', 3: 'clahe', 4: 'skip'}
+        normalize_method = _method_map.get(norm_mode, 'percentile')
+        glv_range = None
+        if norm_mode == 1:
+            glv_range = (self.spn_glv_low.value(), self.spn_glv_high.value())
+        clahe_clip = self.spn_clahe_clip.value() if norm_mode == 3 else 2.0
+
+        sub_mode = self.cmb_subtract_mode.currentIndex()
+        preserve_positive = (sub_mode == 0)
+        abs_diff = (sub_mode == 1)
+
+        try:
+            roi_result = compute_roi_full_stats(
+                base=base_img,
+                aligned_compares=aligned_compares,
+                roi_set=self._multi_roi_set,
+                normalize_method=normalize_method,
+                glv_range=glv_range,
+                clahe_clip_limit=clahe_clip,
+                preserve_positive_diff=preserve_positive,
+                abs_diff=abs_diff,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "ROI Analysis", f"ROI analysis failed:\n{exc}")
+            return
+
+        # Pass result to manager for export
+        if self._roi_manager is not None:
+            self._roi_manager.set_roi_result(roi_result)
+
+        # Auto-popup profile dialog
+        if self._roi_profile_dialog is not None:
+            self._roi_profile_dialog.close()
+        self._roi_profile_dialog = ROIIntensityProfileDialog(roi_result, parent=self)
+        self._roi_profile_dialog.show()
+
     def _on_compute_error(self, message: str):
         QtWidgets.QMessageBox.critical(self, "Error", f"Computation failed:\n{message}")
 
@@ -4315,6 +5192,35 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Clear Difference Map magnifier when cursor leaves left-panel magnifier."""
         if not self.btn_split_view.isChecked():
             self.img_diff.clearCursor()
+
+    # ── Multi-ROI Manager ────────────────────────────────────────────────
+
+    def _on_open_roi_manager(self) -> None:
+        """Open (or bring to front) the MultiROIManagerWidget."""
+        if self._roi_manager is None:
+            self._roi_manager = MultiROIManagerWidget(
+                roi_set=self._multi_roi_set,
+                base_widget=self.img_base_mag,
+                parent=self,
+            )
+            self._roi_manager.rois_changed.connect(self._on_multi_rois_changed)
+            self._roi_manager.compute_requested.connect(self._on_compute)
+
+        # Provide current base image shape for pixel→norm conversion
+        base_label = self.cmb_base.currentText()
+        base_img = self._images.get(base_label)
+        if base_img is not None:
+            self._roi_manager.set_image_shape(base_img.shape[:2])
+            self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
+
+        self._roi_manager.show()
+        self._roi_manager.raise_()
+        self._roi_manager.activateWindow()
+
+    def _on_multi_rois_changed(self) -> None:
+        """Refresh all image widgets when ROI set changes."""
+        self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
+        self.img_diff.set_multi_roi_set(self._multi_roi_set)
 
     # ── ROI-Match (EPI Nulling) handlers ─────────────────────────────────
 
