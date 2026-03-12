@@ -544,10 +544,20 @@ def compute_single_pair(
     if roi_match and (roi_set is not None and len(roi_set.rois) > 0 or roi_rect is not None):
         alpha_roi: float
         if roi_set is not None and len(roi_set.rois) > 0:
-            # ROI Manager mode: use bounding-box means from all defined ROIs.
+            # ROI Manager mode: use REFERENCE ROI means only.
+            # Target ROI is excluded from ROI-match alpha fitting by design.
+            ref_rois = roi_set.get_references()
+            if not ref_rois:
+                return _empty_single_result(
+                    base_label,
+                    compare_label,
+                    operation,
+                    error="ROI-Match failed: define at least one Reference ROI",
+                )
+
             base_means: List[float] = []
             compare_means: List[float] = []
-            for roi in roi_set.rois:
+            for roi in ref_rois:
                 b_roi = roi.crop(base_proc)
                 c_roi = roi.crop(comp_proc)
                 if b_roi.size == 0 or c_roi.size == 0:
@@ -557,7 +567,7 @@ def compute_single_pair(
 
             if not base_means or not compare_means:
                 return _empty_single_result(base_label, compare_label, operation,
-                                            error="ROI-Match failed: no valid ROI pixels")
+                                            error="ROI-Match failed: no valid Reference ROI pixels")
 
             b_vec = np.asarray(base_means, dtype=np.float64)
             c_vec = np.asarray(compare_means, dtype=np.float64)

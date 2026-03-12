@@ -1647,13 +1647,13 @@ class AlignmentScoreWidget(QtWidgets.QFrame):
         )
 
 
-class StatisticsWidget(QtWidgets.QFrame):
-    """Merged Analysis card — shows Alignment and Difference metrics in one panel."""
+class AlignmentMetricsWidget(QtWidgets.QFrame):
+    """Compact alignment summary panel for post-compute state."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("StatsCard")
-        self.setMinimumWidth(248)
+        self.setMinimumWidth(220)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.setStyleSheet(f"""
             QFrame#StatsCard {{
@@ -1661,71 +1661,34 @@ class StatisticsWidget(QtWidgets.QFrame):
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.MD};
             }}
-            QFrame#StatsCard QLabel {{
-                border: none;
-                background: transparent;
-            }}
+            QFrame#StatsCard QLabel {{ border: none; background: transparent; }}
             QFrame#StatsCard QLabel[cardTitle="true"] {{
-                color: {UI_TEXT};
-                font-size: {Typography.FONT_SIZE_BODY};
+                color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};
                 font-weight: {Typography.FONT_WEIGHT_BOLD};
-            }}
-            QFrame#StatsCard QLabel[sectionHeader="true"] {{
-                color: {UI_TEXT_SECONDARY};
-                font-size: {Typography.FONT_SIZE_CAPTION};
-                font-weight: {Typography.FONT_WEIGHT_BOLD};
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
             }}
             QFrame#StatsCard QLabel[statLabel="true"] {{
-                color: {UI_TEXT_MUTED};
-                font-size: {Typography.FONT_SIZE_SMALL};
+                color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_SMALL};
             }}
             QFrame#StatsCard QLabel[statValue="true"] {{
-                color: {UI_TEXT};
-                font-size: {Typography.FONT_SIZE_BODY};
+                color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};
                 font-weight: {Typography.FONT_WEIGHT_BOLD};
                 font-family: {Typography.FONT_FAMILY_MONO};
-            }}
-            QFrame#StatsCard QLabel[statValueLong="true"] {{
-                color: {UI_TEXT_SECONDARY};
-                font-size: {Typography.FONT_SIZE_SMALL};
-                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
-                font-family: {Typography.FONT_FAMILY_MONO};
-            }}
-            QFrame#StatsCard QFrame[divider="true"] {{
-                background-color: {UI_BORDER};
-                min-height: 1px;
-                max-height: 1px;
-                border: none;
             }}
         """)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
-        # Card title
-        top_row = QtWidgets.QHBoxLayout()
-        top_row.setSpacing(8)
-        dot = QtWidgets.QLabel()
-        dot.setFixedSize(8, 8)
-        dot.setStyleSheet(f"background-color: {UI_PRIMARY}; border-radius: 4px;")
-        title = QtWidgets.QLabel("Analysis")
+        title = QtWidgets.QLabel("Alignment")
         title.setProperty("cardTitle", True)
-        top_row.addWidget(dot, 0, Qt.AlignVCenter)
-        top_row.addWidget(title)
-        top_row.addStretch()
-        layout.addLayout(top_row)
+        layout.addWidget(title)
 
-        divider0 = QtWidgets.QFrame()
-        divider0.setProperty("divider", True)
-        layout.addWidget(divider0)
-
-        # ── ALIGNMENT section ─────────────────────────────────────────────────
-        lbl_align_hdr = QtWidgets.QLabel("Alignment")
-        lbl_align_hdr.setProperty("sectionHeader", True)
-        layout.addWidget(lbl_align_hdr)
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(6)
 
         self.align_labels: Dict[str, QtWidgets.QLabel] = {}
         for key, label in [
@@ -1733,115 +1696,172 @@ class StatisticsWidget(QtWidgets.QFrame):
             ("ncc", "NCC"),
             ("residual", "Residual"),
             ("final", "Final Score"),
-            ("shift", "Shift"),
+            ("status", "Status"),
         ]:
-            row = QtWidgets.QHBoxLayout()
-            row.setSpacing(8)
             lbl_name = QtWidgets.QLabel(label)
             lbl_name.setProperty("statLabel", True)
             lbl_value = QtWidgets.QLabel("--")
+            lbl_value.setProperty("statValue", True)
             lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if key == "shift":
-                lbl_value.setProperty("statValueLong", True)
-            else:
-                lbl_value.setProperty("statValue", True)
-            row.addWidget(lbl_name)
-            row.addStretch()
-            row.addWidget(lbl_value)
-            layout.addLayout(row)
+            form.addRow(lbl_name, lbl_value)
             self.align_labels[key] = lbl_value
 
-        # Status row (align)
-        status_row = QtWidgets.QHBoxLayout()
-        lbl_status_name = QtWidgets.QLabel("Status")
-        lbl_status_name.setProperty("statLabel", True)
-        self.lbl_align_status = QtWidgets.QLabel("--")
-        self.lbl_align_status.setProperty("statValue", True)
-        self.lbl_align_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        status_row.addWidget(lbl_status_name)
-        status_row.addStretch()
-        status_row.addWidget(self.lbl_align_status)
-        layout.addLayout(status_row)
-
-        divider1 = QtWidgets.QFrame()
-        divider1.setProperty("divider", True)
-        layout.addWidget(divider1)
-
-        # ── DIFFERENCE section ────────────────────────────────────────────────
-        lbl_diff_hdr = QtWidgets.QLabel("Difference")
-        lbl_diff_hdr.setProperty("sectionHeader", True)
-        layout.addWidget(lbl_diff_hdr)
-
-        self.stats_labels: Dict[str, QtWidgets.QLabel] = {}
-        for key, label in [
-            ("diff_mean", "Diff Mean"),
-            ("diff_std", "Diff Std"),
-            ("hot_pixels", "Hot Pixels"),
-            ("norm_coeff", "Normalize"),
-            ("subpixel_shift", "Sub-px Shift"),
-        ]:
-            row = QtWidgets.QHBoxLayout()
-            row.setSpacing(8)
-            lbl_name = QtWidgets.QLabel(label)
-            lbl_name.setProperty("statLabel", True)
-            lbl_value = QtWidgets.QLabel("--")
-            lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if key in {"norm_coeff", "subpixel_shift"}:
-                lbl_value.setProperty("statValueLong", True)
-            else:
-                lbl_value.setProperty("statValue", True)
-            row.addWidget(lbl_name)
-            row.addStretch()
-            row.addWidget(lbl_value)
-            layout.addLayout(row)
-            self.stats_labels[key] = lbl_value
-
+        layout.addLayout(form)
         layout.addStretch(1)
-        self.reset()
 
-    def update_stats(self, result: CombineResult):
-        if not result or not result.stats:
-            for lbl in self.stats_labels.values():
-                lbl.setText("--")
-            return
-
-        s = result.stats
-        self.stats_labels["diff_mean"].setText(f"{s.get('diff_mean', 0):.4f}")
-        self.stats_labels["diff_std"].setText(f"{s.get('diff_std', 0):.4f}")
-        self.stats_labels["hot_pixels"].setText(f"{s.get('hot_pixels', 0)}")
-        self.stats_labels["norm_coeff"].setText(f"a={s.get('norm_a', 0):.4f}, b={s.get('norm_b', 0):.2f}")
-        self.stats_labels["subpixel_shift"].setText(
-            f"({s.get('subpixel_dx', 0):+.2f}, {s.get('subpixel_dy', 0):+.2f})"
-        )
-
-    def update_alignment(self, phase: str, ncc: str, residual: str,
-                         final: str, shift: str, status: str, status_color: str):
-        """Update the alignment section of the merged analysis card."""
+    def update_alignment(self, phase: str, ncc: str, residual: str, final: str, status: str, status_color: str):
         self.align_labels["phase"].setText(phase)
         self.align_labels["ncc"].setText(ncc)
         self.align_labels["residual"].setText(residual)
         self.align_labels["final"].setText(final)
-        self.align_labels["shift"].setText(shift)
-        self.lbl_align_status.setText(f" {status} ")
-        self.lbl_align_status.setStyleSheet(
-            f"color: #FFFFFF; background-color: {status_color}; border: 1px solid {status_color};"
-            f" border-radius: {BorderRadius.SM}; padding: 1px 8px;"
-            f" font-size: {Typography.FONT_SIZE_SMALL}; font-weight: {Typography.FONT_WEIGHT_BOLD};"
+        self.align_labels["status"].setText(status)
+        self.align_labels["status"].setStyleSheet(
+            f"color: {status_color}; font-family: {Typography.FONT_FAMILY_MONO};"
+            f"font-size: {Typography.FONT_SIZE_BODY}; font-weight: {Typography.FONT_WEIGHT_BOLD};"
         )
 
     def reset(self):
-        """Reset Analysis card to default empty-state values."""
         for lbl in self.align_labels.values():
             lbl.setText("--")
-        for lbl in self.stats_labels.values():
-            lbl.setText("--")
-        self.lbl_align_status.setText(" -- ")
-        self.lbl_align_status.setStyleSheet(
-            f"color: {UI_TEXT_MUTED}; background-color: {UI_BG_SUBTLE}; border: 1px solid {UI_BORDER};"
-            f" border-radius: {BorderRadius.SM}; padding: 1px 8px;"
-            f" font-size: {Typography.FONT_SIZE_SMALL}; font-weight: {Typography.FONT_WEIGHT_BOLD};"
-        )
+            lbl.setStyleSheet("")
 
+
+class ROISummaryWidget(QtWidgets.QFrame):
+    """Diff/ROI quantitative summary panel for post-compute analysis."""
+
+    open_roi_manager_requested = Signal()
+    show_roi_details_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ROISummaryCard")
+        self.setMinimumWidth(320)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setStyleSheet(f"""
+            QFrame#ROISummaryCard {{
+                background-color: {UI_BG_CARD};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.MD};
+            }}
+            QFrame#ROISummaryCard QLabel {{ border: none; background: transparent; }}
+            QFrame#ROISummaryCard QLabel[cardTitle="true"] {{
+                color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+            }}
+            QFrame#ROISummaryCard QLabel[sectionHeader="true"] {{
+                color: {UI_TEXT_SECONDARY}; font-size: {Typography.FONT_SIZE_CAPTION};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                text-transform: uppercase;
+            }}
+            QFrame#ROISummaryCard QLabel[statLabel="true"] {{
+                color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_SMALL};
+            }}
+            QFrame#ROISummaryCard QLabel[statValue="true"] {{
+                color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_SMALL};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                font-family: {Typography.FONT_FAMILY_MONO};
+            }}
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(8)
+
+        title = QtWidgets.QLabel("Diff / ROI Analysis")
+        title.setProperty("cardTitle", True)
+        root.addWidget(title)
+
+        self.stack = QtWidgets.QStackedWidget()
+        root.addWidget(self.stack, 1)
+
+        self.page_empty = QtWidgets.QWidget()
+        empty_layout = QtWidgets.QVBoxLayout(self.page_empty)
+        empty_layout.setContentsMargins(0, 8, 0, 0)
+        empty_layout.setSpacing(8)
+        lbl_empty_title = QtWidgets.QLabel("ROI Analysis")
+        lbl_empty_title.setProperty("sectionHeader", True)
+        empty_layout.addWidget(lbl_empty_title)
+        self.lbl_empty_message = QtWidgets.QLabel(
+            "No ROI defined.\n\nDefine ROI in ROI Manager\nto enable defect quantification."
+        )
+        self.lbl_empty_message.setWordWrap(True)
+        self.lbl_empty_message.setProperty("statLabel", True)
+        empty_layout.addWidget(self.lbl_empty_message)
+        empty_layout.addStretch(1)
+        self.btn_open_roi_manager = QtWidgets.QPushButton("Open ROI Manager")
+        self.btn_open_roi_manager.clicked.connect(self.open_roi_manager_requested.emit)
+        empty_layout.addWidget(self.btn_open_roi_manager, 0, Qt.AlignLeft)
+
+        self.page_summary = QtWidgets.QWidget()
+        summary_layout = QtWidgets.QVBoxLayout(self.page_summary)
+        summary_layout.setContentsMargins(0, 4, 0, 0)
+        summary_layout.setSpacing(6)
+
+        self.summary_labels: Dict[str, QtWidgets.QLabel] = {}
+        for section, rows in [
+            ("ROI Summary", [
+                ("target_count", "Target ROI"),
+                ("reference_count", "Reference ROI"),
+                ("roi_match_mode", "ROI-match mode"),
+            ]),
+            ("Calibration", [("alpha", "Alpha")]),
+            ("Diff Quantification", [
+                ("target_mean_diff", "Target Mean Diff"),
+                ("ref_mean_diff", "Ref Mean Diff"),
+                ("ref_std_diff", "Ref Std Diff"),
+                ("delta", "Delta"),
+                ("snr", "SNR"),
+            ]),
+        ]:
+            sh = QtWidgets.QLabel(section)
+            sh.setProperty("sectionHeader", True)
+            summary_layout.addWidget(sh)
+            form = QtWidgets.QFormLayout()
+            form.setHorizontalSpacing(14)
+            form.setVerticalSpacing(4)
+            for key, name in rows:
+                l_name = QtWidgets.QLabel(name)
+                l_name.setProperty("statLabel", True)
+                l_val = QtWidgets.QLabel("--")
+                l_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                l_val.setProperty("statValue", True)
+                form.addRow(l_name, l_val)
+                self.summary_labels[key] = l_val
+            summary_layout.addLayout(form)
+
+        summary_layout.addStretch(1)
+        self.btn_roi_details = QtWidgets.QPushButton("ROI Details...")
+        self.btn_roi_details.clicked.connect(self.show_roi_details_requested.emit)
+        summary_layout.addWidget(self.btn_roi_details, 0, Qt.AlignLeft)
+
+        self.stack.addWidget(self.page_empty)
+        self.stack.addWidget(self.page_summary)
+        self.show_no_roi()
+
+    def show_no_roi(self):
+        self.stack.setCurrentWidget(self.page_empty)
+
+    def update_summary(
+        self,
+        target_count: int,
+        reference_count: int,
+        alpha: Optional[float],
+        target_mean_diff: float,
+        ref_mean_diff: float,
+        ref_std_diff: float,
+        delta: float,
+        snr: float,
+    ):
+        self.summary_labels["target_count"].setText(str(target_count))
+        self.summary_labels["reference_count"].setText(str(reference_count))
+        self.summary_labels["roi_match_mode"].setText("Reference-only")
+        self.summary_labels["alpha"].setText("--" if alpha is None else f"{alpha:.4f}")
+        self.summary_labels["target_mean_diff"].setText(f"{target_mean_diff:.6f}")
+        self.summary_labels["ref_mean_diff"].setText(f"{ref_mean_diff:.6f}")
+        self.summary_labels["ref_std_diff"].setText(f"{ref_std_diff:.6f}")
+        self.summary_labels["delta"].setText(f"{delta:.6f}")
+        self.summary_labels["snr"].setText(f"{snr:.3f}")
+        self.stack.setCurrentWidget(self.page_summary)
 
 class GLVMaskPreviewDialog(QtWidgets.QDialog):
     """Interactive dialog that visualises the GLV-Mask on the Base image.
@@ -2773,6 +2793,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._multi_roi_set: MultiROISet = MultiROISet()
         self._roi_manager: Optional[MultiROIManagerWidget] = None
         self._roi_profile_dialog: Optional[ROIIntensityProfileDialog] = None
+        self._latest_roi_result: Optional[ROIFullResult] = None
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -3749,8 +3770,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         bottom_row.setSpacing(8)
 
         # Card 1: Analysis — combined alignment + difference metrics
-        self.stats_widget = StatisticsWidget()
-        bottom_row.addWidget(self.stats_widget, 2)
+        self.alignment_widget = AlignmentMetricsWidget()
+        self.roi_summary_widget = ROISummaryWidget()
+        bottom_row.addWidget(self.alignment_widget, 1)
+        bottom_row.addWidget(self.roi_summary_widget, 2)
 
         # Card 2: Histogram (wider, positioned under the Difference Map)
         hist_card = QtWidgets.QFrame()
@@ -4073,6 +4096,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # ROI Manager button
         self.btn_roi_manager.clicked.connect(self._on_open_roi_manager)
+        self.roi_summary_widget.open_roi_manager_requested.connect(self._on_open_roi_manager)
+        self.roi_summary_widget.show_roi_details_requested.connect(self._on_show_roi_details)
 
         # Back to Settings / Re-compute buttons (post-compute)
         self.btn_back_to_settings.clicked.connect(self._on_back_to_settings)
@@ -4232,7 +4257,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._hist_range = None
         self.lbl_hist_range.setText("Range: —")
         self.btn_clear_hist_range.setEnabled(False)
-        self.stats_widget.reset()
+        self.alignment_widget.reset()
+        self.roi_summary_widget.show_no_roi()
         self._sync_viewer_mode_buttons()
 
     def _on_qf_auto_detect(self):
@@ -4900,8 +4926,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_export.setVisible(True)
 
         # Multi-ROI analysis — run if any ROIs are defined
+        self._latest_roi_result = None
         if self._multi_roi_set and results:
             self._run_roi_analysis(results)
+        else:
+            self.roi_summary_widget.show_no_roi()
 
     def _on_back_to_settings(self) -> None:
         """Restore pre-compute state: show settings panel, hide diff viewer."""
@@ -4914,6 +4943,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_prev_result.setVisible(False)
         self.btn_next_result.setVisible(False)
         self.btn_export.setVisible(False)
+        self._latest_roi_result = None
+        self.roi_summary_widget.show_no_roi()
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""
@@ -4975,15 +5006,68 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "ROI Analysis", f"ROI analysis failed:\n{exc}")
             return
 
-        # Pass result to manager for export
-        if self._roi_manager is not None:
-            # ROI manager is now configuration-only; ROI results are exported via main Export flow.
-            pass
+        # Cache result for panel summary and ROI Details dialog.
+        self._latest_roi_result = roi_result
+        if self._results:
+            self._update_roi_summary_panel(self._results[self._current_result_idx])
 
-        # Auto-popup profile dialog
+    def _update_roi_summary_panel(self, result: SinglePairResult) -> None:
+        """Update Diff / ROI summary using ROI diff stats from the latest analysis."""
+        if self._latest_roi_result is None:
+            self.roi_summary_widget.show_no_roi()
+            return
+
+        target_roi = self._multi_roi_set.get_target()
+        ref_rois = self._multi_roi_set.get_references()
+        if target_roi is None or not ref_rois:
+            self.roi_summary_widget.show_no_roi()
+            return
+
+        diff_layer = self._latest_roi_result.get_layer(f"{result.compare_label}_diff")
+        if diff_layer is None:
+            self.roi_summary_widget.show_no_roi()
+            return
+
+        t_stats = diff_layer.roi_stats.get(target_roi.id)
+        ref_stats = [diff_layer.roi_stats.get(r.id) for r in ref_rois]
+        ref_stats = [st for st in ref_stats if st is not None]
+        if t_stats is None or not ref_stats:
+            self.roi_summary_widget.show_no_roi()
+            return
+
+        target_mean_diff = float(t_stats.mean)
+        ref_mean_diff = float(np.mean([st.mean for st in ref_stats]))
+        if len(ref_stats) >= 2:
+            ref_std_diff = float(np.std([st.mean for st in ref_stats]))
+        else:
+            ref_std_diff = float(ref_stats[0].std)
+
+        delta = target_mean_diff - ref_mean_diff
+        snr = delta / ref_std_diff if ref_std_diff > 1e-7 else 0.0
+
+        self.roi_summary_widget.update_summary(
+            target_count=1,
+            reference_count=len(ref_rois),
+            alpha=result.roi_match_alpha,
+            target_mean_diff=target_mean_diff,
+            ref_mean_diff=ref_mean_diff,
+            ref_std_diff=ref_std_diff,
+            delta=delta,
+            snr=snr,
+        )
+
+    def _on_show_roi_details(self) -> None:
+        """Open the existing ROIIntensityProfileDialog on demand."""
+        if self._latest_roi_result is None:
+            QtWidgets.QMessageBox.information(
+                self,
+                "ROI Analysis",
+                "No ROI analysis available. Define ROI and run Compute first.",
+            )
+            return
         if self._roi_profile_dialog is not None:
             self._roi_profile_dialog.close()
-        self._roi_profile_dialog = ROIIntensityProfileDialog(roi_result, parent=self)
+        self._roi_profile_dialog = ROIIntensityProfileDialog(self._latest_roi_result, parent=self)
         self._roi_profile_dialog.show()
 
     def _on_compute_error(self, message: str):
@@ -5290,54 +5374,36 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_blend.set_divider(ratio)
 
     def _update_alignment_display(self, result: SinglePairResult):
-        """Update alignment metrics in the merged Analysis card."""
+        """Update alignment metrics in the alignment panel."""
         a = result.alignment
 
         if a.final_score >= 75:
-            status_text = "\u2713 OK"
+            status_text = "OK"
             status_color = UI_SUCCESS
         elif a.final_score >= 55:
-            status_text = "\u26a0 WARN"
+            status_text = "WARN"
             status_color = UI_PRIMARY_HOVER
         else:
-            status_text = "\u2717 FAIL"
+            status_text = "FAIL"
             status_color = UI_WARNING
 
-        self.stats_widget.update_alignment(
+        self.alignment_widget.update_alignment(
             phase=f"{a.score_phase:.3f}",
             ncc=f"{a.score_ncc:.3f}",
             residual=f"{a.score_residual:.3f}",
             final=f"{a.final_score:.1f}",
-            shift=f"({a.dx:+d}, {a.dy:+d})",
             status=status_text,
             status_color=status_color,
         )
 
     def _update_stats_display(self, result: SinglePairResult):
-        """Update statistics widget for single result."""
-        s = result.stats
-        self.stats_widget.stats_labels["diff_mean"].setText(f"{s.get('diff_mean', 0):.4f}")
-        self.stats_widget.stats_labels["diff_std"].setText(f"{s.get('diff_std', 0):.4f}")
-        self.stats_widget.stats_labels["hot_pixels"].setText(f"{s.get('hot_pixels', 0)}")
-        # Display normalize coefficients: a*I + b
-        method_display = _NORMALIZE_METHOD_LABELS.get(result.normalize_method, result.normalize_method)
-        is_linear = result.normalize_method in ('percentile', 'glv_mask')
-        if is_linear:
-            self.stats_widget.stats_labels["norm_coeff"].setText(
-                f"{method_display}  a={result.norm_a:.4f}"
-            )
-        else:
-            self.stats_widget.stats_labels["norm_coeff"].setText(method_display)
-        # Sub-pixel shift
-        dx_f = s.get('dx_subpixel', float(result.alignment.dx))
-        dy_f = s.get('dy_subpixel', float(result.alignment.dy))
-        self.stats_widget.stats_labels["subpixel_shift"].setText(f"({dx_f:+.2f}, {dy_f:+.2f})")
-
-        # ROI-Match alpha readout
+        """Update ROI-match alpha readout and ROI summary panel."""
         if result.roi_match_alpha is not None:
             self.lbl_roi_alpha.setText(f"ROI-match \u03b1 = {result.roi_match_alpha:.4f}")
         else:
             self.lbl_roi_alpha.setText("")
+
+        self._update_roi_summary_panel(result)
 
     def _update_navigation(self):
         """Update navigation buttons and label."""
@@ -5398,7 +5464,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         counts, edges = self._result.histogram
         self.histogram_canvas.plot_histogram(counts, edges)
         self.align_score_widget.update_scores(self._result)
-        self.stats_widget.update_stats(self._result)
+        # Legacy path retained for compatibility
+        self.alignment_widget.reset()
 
     def _update_hint_overlay(self):
         """Legacy: no-op (hint overlay removed)."""
@@ -5441,6 +5508,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Refresh all image widgets when ROI set changes."""
         self._apply_roi_visibility()
         self._update_roi_status_label()
+        self._latest_roi_result = None
+        self.roi_summary_widget.show_no_roi()
 
     def _on_roi_view_toggled(self, _checked: bool) -> None:
         self._apply_roi_visibility()
