@@ -1105,8 +1105,8 @@ class SplitViewWidget(QtWidgets.QWidget):
         x0, y0, iw, ih = target_rect.x(), target_rect.y(), target_rect.width(), target_rect.height()
         div_x = x0 + int(self._divider_ratio * iw)
 
-        # Background fill
-        p.fillRect(self.rect(), QtGui.QColor(UI_BG_CARD))
+        # Background fill keeps viewer matte black (consistent with standard views)
+        p.fillRect(self.rect(), QtGui.QColor(UI_BG_VIEWER))
 
         if self._base_pix is None and self._comp_pix is None:
             p.setPen(QtGui.QColor(UI_TEXT_MUTED))
@@ -2807,7 +2807,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
         self._set_button_icon(self.btn_export, QtWidgets.QStyle.SP_DialogSaveButton, "Export")
         self._set_button_icon(self.btn_swap_base, QtWidgets.QStyle.SP_ArrowRight, "Swap Base")
-        self._set_button_icon(self.btn_about, QtWidgets.QStyle.SP_FileDialogDetailedView, "")
         self._set_button_icon(self.btn_clear_hist_range, QtWidgets.QStyle.SP_DialogResetButton, "Clear Range")
         self._set_button_icon(self.btn_show_norm_compare, QtWidgets.QStyle.SP_FileDialogContentsView, "Normalize")
         self._set_button_icon(self.btn_qf_auto_detect, QtWidgets.QStyle.SP_FileDialogDetailedView, "Auto Detect")
@@ -2898,20 +2897,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_export = QtWidgets.QPushButton("Export")
         self.btn_export.setObjectName("ToolbarSecondary")
         self.btn_export.setEnabled(False)
-        toolbar_layout.addWidget(self.btn_export)
-
-        toolbar_layout.addStretch(1)
+        self.btn_export.setVisible(False)  # shown only in post-compute view
 
         self.btn_roi_manager = QtWidgets.QPushButton("ROI Manager")
         self.btn_roi_manager.setObjectName("ToolbarSecondary")
         self.btn_roi_manager.setToolTip("Open Multi-ROI Manager to define bounding-box ROIs")
         # btn_roi_manager is placed at bottom of left panel, not in toolbar
 
-        self.btn_about = QtWidgets.QPushButton("\u2026")
-        self.btn_about.setObjectName("ToolbarAction")
-        self.btn_about.setFixedWidth(36)
-        self.btn_about.setToolTip("About Fusi\u00b3")
-        toolbar_layout.addWidget(self.btn_about)
+        # Right-aligned export action (replaces legacy About button slot)
+        toolbar_layout.addWidget(self.btn_export)
 
         outer_layout.addWidget(toolbar)
 
@@ -3586,6 +3580,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             btn.setFixedHeight(30)
             left_ctrl_layout.addWidget(btn)
 
+        # Compare mode is not meaningful before compute (no aligned compare yet).
+        self.btn_mode_compare.setVisible(False)
+
         left_ctrl_layout.addSpacing(12)
 
         # Split View toggle placed in left control bar (only affects left viewer)
@@ -3739,6 +3736,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         image_row.setSpacing(8)
         image_row.addLayout(left_section, stretch=1)
         image_row.addWidget(self.wgt_diff_section, stretch=1)
+        image_row.setStretch(0, 1)
+        image_row.setStretch(1, 1)
         self.wgt_diff_section.setVisible(False)  # hidden until compute
         right_layout.addLayout(image_row, stretch=4)
 
@@ -4081,9 +4080,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
 
-        # About button
-        self.btn_about.clicked.connect(self._show_about_dialog)
-
         # ROI Manager button
         self.btn_roi_manager.clicked.connect(self._on_open_roi_manager)
 
@@ -4135,6 +4131,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_base_mag.clicked.connect(self._on_left_viewer_clicked)
         self.img_blend.clicked.connect(self._on_split_viewer_clicked)
         self.img_diff.clicked.connect(self._on_right_viewer_clicked)
+        self.img_diff.cursor_moved.connect(self._on_diff_cursor_moved)
+        self.img_diff.cursor_left.connect(self._on_diff_cursor_left)
+        self.img_base_mag.cursor_moved.connect(self._on_base_mag_cursor_moved)
+        self.img_base_mag.cursor_left.connect(self._on_base_mag_cursor_left)
 
         self._update_sidebar_empty_state(False)
         self._sync_viewer_mode_buttons()
@@ -4898,13 +4898,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_export.setEnabled(bool(self._results))
 
         # Switch to post-compute view: hide settings, show diff viewer + Back button
-        self.left_panel.setVisible(False)
+        self.left_panel_scroll.setVisible(False)
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
         self.btn_split_view.setVisible(True)
+        self.btn_mode_compare.setVisible(True)
         self.btn_prev_result.setVisible(True)
         self.btn_next_result.setVisible(True)
+        self.btn_export.setVisible(True)
 
         # Multi-ROI analysis — run if any ROIs are defined
         if self._multi_roi_set and results:
@@ -4912,13 +4914,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_back_to_settings(self) -> None:
         """Restore pre-compute state: show settings panel, hide diff viewer."""
-        self.left_panel.setVisible(True)
+        self.left_panel_scroll.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
         self.wgt_bottom_row.setVisible(False)
         self.btn_split_view.setVisible(False)
+        self.btn_mode_compare.setVisible(False)
         self.btn_prev_result.setVisible(False)
         self.btn_next_result.setVisible(False)
+        self.btn_export.setVisible(False)
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""
