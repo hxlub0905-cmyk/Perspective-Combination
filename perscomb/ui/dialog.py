@@ -3124,7 +3124,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
         left_layout.setContentsMargins(12, 12, 12, 12)
-        left_layout.setSpacing(8)
+        left_layout.setSpacing(16)
 
         def _make_sidebar_card(title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QVBoxLayout]:
             card = QtWidgets.QFrame()
@@ -3193,22 +3193,24 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.compare_layout.setContentsMargins(2, 2, 2, 2)
         self.compare_layout.setSpacing(4)
 
+        compare_hdr_row = QtWidgets.QHBoxLayout()
+        compare_hdr_row.setContentsMargins(0, 0, 0, 0)
+        compare_hdr_row.setSpacing(4)
         self.lbl_compare_title = QtWidgets.QLabel("Compare Images (0)")
         self.lbl_compare_title.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_PRIMARY_STRONG};")
-        std_layout.addWidget(self.lbl_compare_title)
+        compare_hdr_row.addWidget(self.lbl_compare_title)
+        compare_hdr_row.addStretch()
 
-        # Quick select buttons
-        quick_row = QtWidgets.QHBoxLayout()
+        # Utility buttons in compare header row
         self.btn_select_all = QtWidgets.QPushButton("All")
         self.btn_select_all.setProperty("role", "utility")
         self.btn_select_all.setFlat(True)
         self.btn_select_none = QtWidgets.QPushButton("None")
         self.btn_select_none.setProperty("role", "utility")
         self.btn_select_none.setFlat(True)
-        quick_row.addWidget(self.btn_select_all)
-        quick_row.addWidget(self.btn_select_none)
-        quick_row.addStretch()
-        std_layout.addLayout(quick_row)
+        compare_hdr_row.addWidget(self.btn_select_all)
+        compare_hdr_row.addWidget(self.btn_select_none)
+        std_layout.addLayout(compare_hdr_row)
 
         self.scroll_compare.setWidget(self.compare_container)
         std_layout.addWidget(self.scroll_compare)
@@ -3299,9 +3301,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         adv_layout = QtWidgets.QVBoxLayout(self.grp_advanced)
         adv_layout.setContentsMargins(8, 0, 0, 0)
         adv_layout.setSpacing(4)
-        # ── Subtract mode drop-down (Subtract operation only) ─────────────────
-        sub_mode_row = QtWidgets.QHBoxLayout()
-        sub_mode_row.addWidget(QtWidgets.QLabel("Subtract mode:"))
+        # ── Subtract Options group ────────────────────────────────────────────
+        lbl_subtract_opts = QtWidgets.QLabel("Subtract Options")
+        lbl_subtract_opts.setStyleSheet(
+            f"color: {UI_TEXT_PRIMARY_STRONG}; font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};"
+        )
+        adv_layout.addWidget(lbl_subtract_opts)
+
+        sub_mode_row = QtWidgets.QVBoxLayout()
+        sub_mode_row.setContentsMargins(0, 0, 0, 0)
+        sub_mode_row.setSpacing(6)
+        sub_mode_row.addWidget(QtWidgets.QLabel("Subtract mode"))
         self.cmb_subtract_mode = QtWidgets.QComboBox()
         self.cmb_subtract_mode.addItems([
             "|diff| × 2  (default)",  # index 0
@@ -3313,9 +3323,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "|diff|        : |Base−Compare|, no gain — preserves true magnitude\n"
             "clip ≥ 0      : Base−Compare, keep direction, clamp negatives to 0"
         )
-        sub_mode_row.addWidget(self.cmb_subtract_mode, 1)
+        sub_mode_row.addWidget(self.cmb_subtract_mode)
         adv_layout.addLayout(sub_mode_row)
+
         invert_row = QtWidgets.QHBoxLayout()
+        invert_row.setSpacing(8)
         self.chk_invert_base = QtWidgets.QCheckBox("Inv Base")
         self.chk_invert_base.setToolTip("Apply 255−X to Base before operation")
         self.chk_invert_compare = QtWidgets.QCheckBox("Inv Cmp")
@@ -3327,9 +3339,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         invert_row.addWidget(self.chk_invert_result)
         adv_layout.addLayout(invert_row)
 
+        adv_layout.addSpacing(10)
+
+        # ── Normalization group ───────────────────────────────────────────────
+        lbl_norm_opts = QtWidgets.QLabel("Normalization")
+        lbl_norm_opts.setStyleSheet(
+            f"color: {UI_TEXT_PRIMARY_STRONG}; font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};"
+        )
+        adv_layout.addWidget(lbl_norm_opts)
+
         # ── Normalize mode drop-down ──────────────────────────────────────────
-        norm_mode_row = QtWidgets.QHBoxLayout()
-        norm_mode_row.addWidget(QtWidgets.QLabel("Normalize:"))
+        norm_mode_row = QtWidgets.QVBoxLayout()
+        norm_mode_row.setContentsMargins(0, 0, 0, 0)
+        norm_mode_row.setSpacing(6)
+        norm_mode_row.addWidget(QtWidgets.QLabel("Normalize method"))
         self.cmb_normalize_mode = QtWidgets.QComboBox()
         self.cmb_normalize_mode.addItems([
             "Percentile (P2–P98)",  # index 0 – default
@@ -3346,36 +3369,52 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "            so that reference region response cancels in subtraction, leaving residual\n"
             "            HK/Hf defect signals near inner spacer more visible."
         )
-        norm_mode_row.addWidget(self.cmb_normalize_mode, 1)
+        norm_mode_row.addWidget(self.cmb_normalize_mode)
         adv_layout.addLayout(norm_mode_row)
 
         # GLV-Mask controls (shown only when GLV-Mask mode is selected)
         self.wgt_glv_controls = QtWidgets.QWidget()
-        glv_ctrl_layout = QtWidgets.QHBoxLayout(self.wgt_glv_controls)
+        glv_ctrl_layout = QtWidgets.QVBoxLayout(self.wgt_glv_controls)
         glv_ctrl_layout.setContentsMargins(0, 0, 0, 0)
-        glv_ctrl_layout.addWidget(QtWidgets.QLabel("GLV range:"))
+        glv_ctrl_layout.setSpacing(6)
+
+        glv_ctrl_layout.addWidget(QtWidgets.QLabel("GLV Range"))
+
+        glv_min_row = QtWidgets.QVBoxLayout()
+        glv_min_row.setContentsMargins(0, 0, 0, 0)
+        glv_min_row.setSpacing(4)
+        glv_min_row.addWidget(QtWidgets.QLabel("Min"))
         self.spn_glv_low = QtWidgets.QSpinBox()
         self.spn_glv_low.setRange(0, 254)
         self.spn_glv_low.setValue(100)
-        self.spn_glv_low.setFixedWidth(68)
+        self.spn_glv_low.setMinimumWidth(96)
         self.spn_glv_low.setToolTip("Lower bound of GLV mask (inclusive, 0–255)")
-        glv_ctrl_layout.addWidget(self.spn_glv_low)
-        glv_ctrl_layout.addWidget(QtWidgets.QLabel("–"))
+        glv_min_row.addWidget(self.spn_glv_low)
+        glv_ctrl_layout.addLayout(glv_min_row)
+
+        glv_max_row = QtWidgets.QVBoxLayout()
+        glv_max_row.setContentsMargins(0, 0, 0, 0)
+        glv_max_row.setSpacing(4)
+        glv_max_row.addWidget(QtWidgets.QLabel("Max"))
         self.spn_glv_high = QtWidgets.QSpinBox()
         self.spn_glv_high.setRange(1, 255)
         self.spn_glv_high.setValue(160)
-        self.spn_glv_high.setFixedWidth(68)
+        self.spn_glv_high.setMinimumWidth(96)
         self.spn_glv_high.setToolTip("Upper bound of GLV mask (inclusive, 0–255)")
-        glv_ctrl_layout.addWidget(self.spn_glv_high)
+        glv_max_row.addWidget(self.spn_glv_high)
+        glv_ctrl_layout.addLayout(glv_max_row)
+
         self.btn_preview_glv_mask = QtWidgets.QPushButton("Preview Mask")
+        self.btn_preview_glv_mask.setProperty("role", "secondary")
         self.btn_preview_glv_mask.setToolTip(
             "Show a preview window highlighting which pixels of the Base image\n"
             "fall within the GLV range and will be used for normalization."
         )
         self.btn_preview_glv_mask.clicked.connect(self._on_preview_glv_mask)
         glv_ctrl_layout.addWidget(self.btn_preview_glv_mask)
-        glv_ctrl_layout.addStretch()
         adv_layout.addWidget(self.wgt_glv_controls)
+
+        adv_layout.addSpacing(10)
 
         # ROI-Match controls (shown only when ROI-Match mode is selected)
         self.wgt_roi_match_controls = QtWidgets.QWidget()
@@ -3436,40 +3475,45 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         align_layout.setContentsMargins(0, 4, 0, 0)
         align_layout.setSpacing(4)
 
-        align_method_row = QtWidgets.QHBoxLayout()
+        align_method_row = QtWidgets.QVBoxLayout()
+        align_method_row.setContentsMargins(0, 0, 0, 0)
+        align_method_row.setSpacing(6)
         align_method_row.addWidget(QtWidgets.QLabel("Method"))
         self.cmb_align_method = QtWidgets.QComboBox()
         self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)"])
-        align_method_row.addWidget(self.cmb_align_method, 1)
+        align_method_row.addWidget(self.cmb_align_method)
         align_layout.addLayout(align_method_row)
 
-        snr_win_row = QtWidgets.QHBoxLayout()
+        snr_win_row = QtWidgets.QVBoxLayout()
+        snr_win_row.setContentsMargins(0, 0, 0, 0)
+        snr_win_row.setSpacing(6)
         snr_win_row.addWidget(QtWidgets.QLabel("SNR Window"))
         self.spn_snr_window = QtWidgets.QSpinBox()
         self.spn_snr_window.setRange(7, 127)
         self.spn_snr_window.setSingleStep(2)
         self.spn_snr_window.setValue(31)
-        self.spn_snr_window.setFixedWidth(60)
+        self.spn_snr_window.setMinimumWidth(96)
         self.spn_snr_window.setToolTip(
             "Box-filter window size for Z-Map SNR calculation (odd, \u22657).\n"
             "Larger values \u2192 smoother map.\n"
             "Recommended: 15 for ~512 px, 31 for ~1000 px, 63 for >2000 px."
         )
         snr_win_row.addWidget(self.spn_snr_window)
-        snr_win_row.addStretch()
         align_layout.addLayout(snr_win_row)
         alignment_card_layout.addWidget(self.grp_align)
 
         left_layout.addStretch()
 
-        # Compute + ROI Manager at bottom of left panel
-        _action_btn_row = QtWidgets.QHBoxLayout()
-        _action_btn_row.setSpacing(6)
+        # ROI + status + Compute (stacked hierarchy)
+        lbl_roi_section = QtWidgets.QLabel("ROI")
+        lbl_roi_section.setStyleSheet(
+            f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_SECONDARY_MUTED};"
+        )
+        left_layout.addWidget(lbl_roi_section)
+
         self.btn_roi_manager.setProperty("role", "secondary")
         self.btn_compute.setProperty("role", "primary")
-        _action_btn_row.addWidget(self.btn_roi_manager, stretch=1)
-        _action_btn_row.addWidget(self.btn_compute, stretch=2)
-        left_layout.addLayout(_action_btn_row)
+        left_layout.addWidget(self.btn_roi_manager)
 
         self.lbl_roi_status = QtWidgets.QLabel("No ROIs — analysis will be skipped")
         self.lbl_roi_status.setAlignment(Qt.AlignCenter)
@@ -3477,6 +3521,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "color: #9CA3AF; font-size: 11px; border: none; background: transparent;"
         )
         left_layout.addWidget(self.lbl_roi_status)
+        left_layout.addWidget(self.btn_compute)
 
         content_layout.addWidget(left_panel)
 
