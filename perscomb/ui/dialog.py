@@ -2296,7 +2296,8 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
         self.setWindowTitle("ROI Manager")
         self.setWindowFlags(self.windowFlags() | Qt.Tool)
-        self.resize(440, 540)
+        self.setMinimumWidth(480)
+        self.resize(480, 540)
         self._build_ui()
         self._connect_signals()
         self._refresh_list()
@@ -3666,11 +3667,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # ── IMAGE AREA: left section + right section side by side ─────────────
         # Back button — only visible post-compute, restores pre-compute state
+        _top_btn_row = QtWidgets.QHBoxLayout()
         self.btn_back_to_settings = QtWidgets.QPushButton("← Back")
         self.btn_back_to_settings.setToolTip("Return to Settings & pre-compute view")
         self.btn_back_to_settings.setFixedHeight(28)
         self.btn_back_to_settings.setVisible(False)
-        right_layout.addWidget(self.btn_back_to_settings, alignment=Qt.AlignLeft)
+        _top_btn_row.addWidget(self.btn_back_to_settings)
+        self.btn_recompute = QtWidgets.QPushButton("Re-compute")
+        self.btn_recompute.setObjectName("ToolbarPrimary")
+        self.btn_recompute.setToolTip("Run Compute again with current settings")
+        self.btn_recompute.setFixedHeight(28)
+        self.btn_recompute.setVisible(False)
+        _top_btn_row.addWidget(self.btn_recompute)
+        _top_btn_row.addStretch()
+        right_layout.addLayout(_top_btn_row)
 
         image_row = QtWidgets.QHBoxLayout()
         image_row.setSpacing(8)
@@ -3689,7 +3699,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_layout.addSpacing(4)
 
         # === BOTTOM: Analysis (merged) | Histogram (under Difference Map) ===
-        bottom_row = QtWidgets.QHBoxLayout()
+        self.wgt_bottom_row = QtWidgets.QWidget()
+        self.wgt_bottom_row.setVisible(False)   # hidden until compute
+        bottom_row = QtWidgets.QHBoxLayout(self.wgt_bottom_row)
+        bottom_row.setContentsMargins(0, 0, 0, 0)
         bottom_row.setSpacing(8)
 
         # Card 1: Analysis — combined alignment + difference metrics
@@ -3736,12 +3749,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_score_widget = AlignmentScoreWidget()
         self.align_score_widget.setVisible(False)
 
-        self.wgt_bottom_row = QtWidgets.QWidget()
-        _bottom_row_outer = QtWidgets.QHBoxLayout(self.wgt_bottom_row)
-        _bottom_row_outer.setContentsMargins(0, 0, 0, 0)
-        _bottom_row_outer.setSpacing(0)
-        _bottom_row_outer.addLayout(bottom_row)
-        self.wgt_bottom_row.setVisible(False)   # hidden until compute
         right_layout.addWidget(self.wgt_bottom_row)
 
         # === QUADRANT FUSION RIGHT PANEL (Page 1) ===
@@ -3958,8 +3965,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ROI Manager button
         self.btn_roi_manager.clicked.connect(self._on_open_roi_manager)
 
-        # Back to Settings button (post-compute)
+        # Back to Settings / Re-compute buttons (post-compute)
         self.btn_back_to_settings.clicked.connect(self._on_back_to_settings)
+        self.btn_recompute.clicked.connect(self._on_compute)
 
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
@@ -4766,6 +4774,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel.setVisible(False)
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
+        self.btn_recompute.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
         self.btn_split_view.setVisible(True)
 
@@ -4778,6 +4787,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
+        self.btn_recompute.setVisible(False)
         self.wgt_bottom_row.setVisible(False)
         self.btn_split_view.setVisible(False)
 
