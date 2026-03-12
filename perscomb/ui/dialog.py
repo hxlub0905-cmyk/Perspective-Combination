@@ -932,15 +932,30 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
             # No cursor marker - just magnifier
             cross_color = (0, 200, 255)  # Cyan in BGR
 
-            # Extract zoom region
-            half_zoom = int(self.ZOOM_SIZE / self.ZOOM_FACTOR / 2)
-            x1 = max(0, src_x - half_zoom)
-            y1 = max(0, src_y - half_zoom)
-            x2 = min(w, src_x + half_zoom)
-            y2 = min(h, src_y + half_zoom)
+            # Extract fixed-size source window with edge padding (avoid boundary stretching)
+            src_size = max(8, int(round(self.ZOOM_SIZE / self.ZOOM_FACTOR)))
+            half_zoom = src_size // 2
+            x1_raw, y1_raw = src_x - half_zoom, src_y - half_zoom
+            x2_raw, y2_raw = x1_raw + src_size, y1_raw + src_size
+            x1, y1 = max(0, x1_raw), max(0, y1_raw)
+            x2, y2 = min(w, x2_raw), min(h, y2_raw)
 
             if x2 > x1 and y2 > y1:
                 zoom_region = img_rgb[y1:y2, x1:x2]
+                pad_l = max(0, -x1_raw)
+                pad_t = max(0, -y1_raw)
+                pad_r = max(0, x2_raw - w)
+                pad_b = max(0, y2_raw - h)
+                if pad_l or pad_t or pad_r or pad_b:
+                    zoom_region = cv2.copyMakeBorder(
+                        zoom_region,
+                        pad_t,
+                        pad_b,
+                        pad_l,
+                        pad_r,
+                        borderType=cv2.BORDER_REPLICATE,
+                    )
+
                 # Resize to zoom window size
                 zoomed = cv2.resize(zoom_region, (self.ZOOM_SIZE, self.ZOOM_SIZE),
                                     interpolation=cv2.INTER_LINEAR)
@@ -2348,7 +2363,11 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._btn_multi = QtWidgets.QPushButton("Multi Add")
         for btn in (self._btn_drag, self._btn_single, self._btn_multi):
             btn.setCheckable(True)
-            btn.setMinimumHeight(28)
+            btn.setMinimumHeight(30)
+            btn.setStyleSheet(
+                "QPushButton { font-weight: 600; }"
+                "QPushButton:checked { background-color: #F59E0B; color: #111827; border: 1px solid #D97706; }"
+            )
             btn_row.addWidget(btn)
         mode_layout.addLayout(btn_row)
 
@@ -2428,6 +2447,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._list_widget = QtWidgets.QListWidget()
         self._list_widget.setAlternatingRowColors(True)
         self._list_widget.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self._list_widget.setSpacing(2)
         root.addWidget(self._list_widget, stretch=1)
 
         self._lbl_summary = QtWidgets.QLabel("Target: 0   Reference: 0")
@@ -2497,7 +2517,10 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._multi_grp.setVisible(not visible)
         self._btn_drag.setChecked(False)
         self._btn_single.setChecked(False)
+        self._btn_multi.setChecked(not visible)
         if not visible:
+            self._base_widget.set_multi_draw_mode('idle')
+        else:
             self._base_widget.set_multi_draw_mode('idle')
 
     def _enter_anchor_mode(self, which: str) -> None:
@@ -2542,7 +2565,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
     def _auto_preview_grid(self) -> None:
         """Update grid preview automatically when spinbox values change (if anchors are set)."""
-        if self._grid_anchor_tl is not None and self._grid_anchor_br is not None:
+        if self._base_widget._grid_anchor_tl is not None and self._base_widget._grid_anchor_br is not None:
             self._on_preview_grid()
 
     def _on_confirm_grid(self) -> None:
@@ -2599,7 +2622,6 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
             row_widget = self._make_roi_row(roi)
             item.setSizeHint(row_widget.sizeHint())
             self._list_widget.setItemWidget(item, row_widget)
-        n_t = len(self._roi_set.get_references().__class__ and self._roi_set.get_references())
         n_target = 1 if self._roi_set.get_target() else 0
         n_ref = len(self._roi_set.get_references())
         self._lbl_summary.setText(f"Target: {n_target} ★   Reference: {n_ref}")
@@ -2607,8 +2629,8 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def _make_roi_row(self, roi: NamedROI) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         row = QtWidgets.QHBoxLayout(w)
-        row.setContentsMargins(4, 2, 4, 2)
-        row.setSpacing(4)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(6)
 
         # Color swatch
         swatch = QtWidgets.QLabel()
@@ -2619,12 +2641,13 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
         # Label
         lbl = QtWidgets.QLabel(roi.label)
-        lbl.setMinimumWidth(70)
+        lbl.setMinimumWidth(82)
+        lbl.setMinimumHeight(24)
         row.addWidget(lbl, stretch=1)
 
         # Current state badge (non-clickable, shows what the ROI currently is)
         state_badge = QtWidgets.QLabel("T" if roi.roi_type == 'target' else "R")
-        state_badge.setFixedWidth(18)
+        state_badge.setFixedSize(20, 24)
         state_badge.setAlignment(Qt.AlignCenter)
         state_badge.setStyleSheet(
             "font-weight: bold; color: #ff4444;" if roi.roi_type == 'target'
@@ -2634,20 +2657,20 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
         # Action button (toggle to the other type)
         if roi.roi_type == 'reference':
-            btn_type = QtWidgets.QPushButton("→T")
-            btn_type.setMinimumWidth(44)
+            btn_type = QtWidgets.QPushButton("Set T")
+            btn_type.setMinimumSize(52, 24)
             btn_type.setToolTip("Promote to Target")
             btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_promote(rid))
         else:
-            btn_type = QtWidgets.QPushButton("→R")
-            btn_type.setMinimumWidth(44)
+            btn_type = QtWidgets.QPushButton("Set R")
+            btn_type.setMinimumSize(52, 24)
             btn_type.setToolTip("Demote to Reference")
             btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_demote(rid))
         row.addWidget(btn_type)
 
         # Delete button
         btn_del = QtWidgets.QPushButton("✕")
-        btn_del.setMinimumWidth(30)
+        btn_del.setMinimumSize(30, 24)
         btn_del.clicked.connect(lambda checked, rid=roi.id: self._on_delete(rid))
         row.addWidget(btn_del)
         return w
@@ -3020,17 +3043,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: none;
             }}
             QWidget#LeftPanel QLabel#SectionTitle {{
-                color: {UI_TEXT};
-                font-size: {Typography.FONT_SIZE_BODY};
-                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+                color: #111827;
+                font-size: {Typography.FONT_SIZE_H3};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
                 text-transform: uppercase;
-                padding: 2px 0px;
-                letter-spacing: 0.6px;
+                padding: 4px 0px 2px 0px;
+                letter-spacing: 0.8px;
             }}
             QWidget#LeftPanel QLabel#SectionSeparator {{
-                background-color: {UI_BORDER};
-                min-height: 1px;
-                max-height: 1px;
+                background-color: {UI_PRIMARY};
+                min-height: 2px;
+                max-height: 2px;
                 border: none;
                 margin-top: 2px;
                 margin-bottom: 2px;
@@ -3058,16 +3081,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.lbl_input_empty_hint.setWordWrap(True)
         left_layout.addWidget(self.lbl_input_empty_hint)
 
-        # Auto Pair dropdown (input mode)
+        # Input mode (Standard only; Quadrant Fusion removed)
         self.cmb_input_mode = QtWidgets.QComboBox()
-        self.cmb_input_mode.addItems([
-            "Standard (Base/Compare)",
-            "Quadrant Fusion (Illum + T/B/L/R)",
-        ])
+        self.cmb_input_mode.addItems(["Standard (Base/Compare)"])
         self.cmb_input_mode.setToolTip(
-            "Standard: classic Base vs Compare subtract/blend workflow.\n"
-            "Quadrant Fusion: combine Illuminator + 4 Quadrant detector images\n"
-            "to produce BSE-clean, Topography, or Composite maps."
+            "Classic Base vs Compare subtract/blend workflow."
         )
         left_layout.addWidget(self.cmb_input_mode)
 
@@ -3128,109 +3146,24 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         left_layout.addWidget(self.wgt_standard_select)
 
-        # ── Quadrant Fusion mode widgets ─────────────────────────────────────
+        # Quadrant Fusion placeholders (feature removed from UI)
         self.wgt_quadrant_select = QtWidgets.QWidget()
-        qf_layout = QtWidgets.QVBoxLayout(self.wgt_quadrant_select)
-        qf_layout.setContentsMargins(0, 0, 0, 0)
-        qf_layout.setSpacing(4)
-
-        # Five detector dropdowns
-        self._qf_combos: Dict[str, QtWidgets.QComboBox] = {}
-        for det_name in ("Illuminator", "Top", "Bottom", "Left", "Right"):
-            row = QtWidgets.QHBoxLayout()
-            row.addWidget(QtWidgets.QLabel(f"{det_name}:"))
-            cmb = QtWidgets.QComboBox()
-            cmb.setMinimumWidth(140)
-            row.addWidget(cmb, 1)
-            qf_layout.addLayout(row)
-            self._qf_combos[det_name] = cmb
-
-        # Auto-detect button
-        self.btn_qf_auto_detect = QtWidgets.QPushButton("Auto-detect by filename")
-        self.btn_qf_auto_detect.setToolTip(
-            "Match files by keywords: illum/central → Illuminator,\n"
-            "top/bottom/left/right → corresponding quadrant."
-        )
-        qf_layout.addWidget(self.btn_qf_auto_detect)
-
-        # Output type
-        out_row = QtWidgets.QHBoxLayout()
-        out_row.addWidget(QtWidgets.QLabel("Output:"))
+        self.wgt_quadrant_select.setVisible(False)
+        self._qf_combos: Dict[str, QtWidgets.QComboBox] = {
+            name: QtWidgets.QComboBox() for name in ("Illuminator", "Top", "Bottom", "Left", "Right")
+        }
+        self.btn_qf_auto_detect = QtWidgets.QPushButton("Auto-detect")
+        self.btn_qf_pick_roi = QtWidgets.QPushButton("Pick ROI")
+        self.btn_qf_clear_roi = QtWidgets.QPushButton("Clear ROI")
         self.cmb_qf_output = QtWidgets.QComboBox()
         self.cmb_qf_output.addItems(["BSE Enhanced", "Topography", "Composite"])
-        out_row.addWidget(self.cmb_qf_output, 1)
-        qf_layout.addLayout(out_row)
-
-        # Alpha mode
-        alpha_row = QtWidgets.QHBoxLayout()
-        alpha_row.addWidget(QtWidgets.QLabel("Alpha:"))
         self.cmb_qf_alpha_mode = QtWidgets.QComboBox()
         self.cmb_qf_alpha_mode.addItems(["Auto", "Manual"])
-        self.cmb_qf_alpha_mode.setFixedWidth(100)
-        alpha_row.addWidget(self.cmb_qf_alpha_mode)
         self.spn_qf_alpha = QtWidgets.QDoubleSpinBox()
-        self.spn_qf_alpha.setRange(0.0, 5.0)
-        self.spn_qf_alpha.setSingleStep(0.1)
-        self.spn_qf_alpha.setValue(1.0)
-        self.spn_qf_alpha.setFixedWidth(76)
-        self.spn_qf_alpha.setEnabled(False)
-        alpha_row.addWidget(self.spn_qf_alpha)
-        alpha_row.addStretch()
-        qf_layout.addLayout(alpha_row)
-
-        self.cmb_qf_alpha_mode.currentIndexChanged.connect(
-            lambda idx: self.spn_qf_alpha.setEnabled(idx == 1)
-        )
-
-        # Beta (composite weight)
-        beta_row = QtWidgets.QHBoxLayout()
-        beta_row.addWidget(QtWidgets.QLabel("Beta (composite):"))
         self.spn_qf_beta = QtWidgets.QDoubleSpinBox()
-        self.spn_qf_beta.setRange(0.0, 1.0)
-        self.spn_qf_beta.setSingleStep(0.05)
-        self.spn_qf_beta.setValue(0.3)
-        self.spn_qf_beta.setFixedWidth(76)
-        beta_row.addWidget(self.spn_qf_beta)
-        beta_row.addStretch()
-        qf_layout.addLayout(beta_row)
-
-        # Gaussian sigma
-        sigma_row = QtWidgets.QHBoxLayout()
-        sigma_row.addWidget(QtWidgets.QLabel("Topo smoothing:"))
         self.spn_qf_sigma = QtWidgets.QDoubleSpinBox()
-        self.spn_qf_sigma.setRange(0.0, 3.0)
-        self.spn_qf_sigma.setSingleStep(0.5)
-        self.spn_qf_sigma.setValue(0.0)
-        self.spn_qf_sigma.setFixedWidth(76)
-        self.spn_qf_sigma.setToolTip("Gaussian sigma for topo map smoothing (0 = off)")
-        sigma_row.addWidget(self.spn_qf_sigma)
-        sigma_row.addStretch()
-        qf_layout.addLayout(sigma_row)
-
-        # ROI for alpha fit (reuse existing Pick/Clear ROI buttons)
-        qf_roi_row = QtWidgets.QHBoxLayout()
-        self.btn_qf_pick_roi = QtWidgets.QPushButton("Pick ROI")
-        self.btn_qf_pick_roi.setToolTip("Draw ROI on Base magnifier for alpha auto-fit")
-        self.btn_qf_pick_roi.setFixedWidth(96)
-        self.btn_qf_clear_roi = QtWidgets.QPushButton("Clear ROI")
-        self.btn_qf_clear_roi.setFixedWidth(96)
-        self.btn_qf_clear_roi.setEnabled(False)
-        qf_roi_row.addWidget(self.btn_qf_pick_roi)
-        qf_roi_row.addWidget(self.btn_qf_clear_roi)
-        qf_roi_row.addStretch()
-        qf_layout.addLayout(qf_roi_row)
-        self.lbl_qf_roi_info = QtWidgets.QLabel("ROI: not set")
-        self.lbl_qf_roi_info.setStyleSheet(
-            f"color: {UI_TEXT_SECONDARY}; font-family: {Typography.FONT_FAMILY_MONO};"
-            f" font-size: {Typography.FONT_SIZE_SMALL};"
-        )
-        qf_layout.addWidget(self.lbl_qf_roi_info)
-
-        self.wgt_quadrant_select.setVisible(False)
-        left_layout.addWidget(self.wgt_quadrant_select)
-
-        # Internal state for Quadrant Fusion ROI
-        self._qf_roi_rect: Optional[tuple] = None  # (norm_x, norm_y, norm_w, norm_h)
+        self.lbl_qf_roi_info = QtWidgets.QLabel("")
+        self._qf_roi_rect: Optional[tuple] = None
         self._qf_last_result: Optional[QuadrantFusionResult] = None
 
         # --- OPERATION section ---
@@ -3248,10 +3181,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         op_layout = QtWidgets.QVBoxLayout(self.grp_op)
         op_layout.setContentsMargins(0, 4, 0, 0)
         op_layout.setSpacing(4)
-
-        lbl_op = QtWidgets.QLabel("Operation")
-        lbl_op.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};")
-        op_layout.addWidget(lbl_op)
 
         # Operation as radio-button-style checkboxes
         self.cmb_operation = QtWidgets.QComboBox()
@@ -3525,7 +3454,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_split_view.setCheckable(True)
         self.btn_split_view.setChecked(False)
         self.btn_split_view.setToolTip(
-            "OFF: Magnifier mode \u2014 synchronized with Difference Map\n"
+            "OFF: Magnifier mode\n"
             "ON:  Split-view Base vs Aligned Compare (drag divider or use slider)"
         )
         self.btn_split_view.setVisible(False)   # hidden until compute
@@ -3548,11 +3477,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         left_ctrl_layout.addStretch(1)
 
-        self.chk_sync_zoom = QtWidgets.QCheckBox("Sync Zoom")
-        self.chk_sync_zoom.setChecked(True)
-        self.chk_sync_zoom.setToolTip("Synchronize zoom between left and right viewers")
-        left_ctrl_layout.addWidget(self.chk_sync_zoom)
-
         left_section.addWidget(left_ctrl_bar)
 
         # Left stacked viewer: magnifier (page 0) + split view (page 1)
@@ -3573,17 +3497,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_blend.addWidget(self.img_blend)  # index 1 split view
         self.stk_blend.setCurrentIndex(0)
         left_section.addWidget(self.stk_blend, stretch=1)
-
-        # Magnifier hint — visible in default (magnifier) mode, hidden in split view
-        self.lbl_magnifier_hint = QtWidgets.QLabel(
-            "Hover over Difference Map to zoom here"
-        )
-        self.lbl_magnifier_hint.setAlignment(Qt.AlignCenter)
-        self.lbl_magnifier_hint.setStyleSheet(
-            "color: #9CA3AF; font-size: 10px; border: none; background: transparent;"
-        )
-        self.lbl_magnifier_hint.setVisible(False)   # shown after compute
-        left_section.addWidget(self.lbl_magnifier_hint)
 
         # ── RIGHT SECTION (result view): control bar + difference map ─────────
         # Wrapped in a QWidget so it can be hidden in pre-compute state
@@ -3654,6 +3567,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_range.setToolTip("Control how difference values are scaled for display")
         right_ctrl_layout.addWidget(self.cmb_range)
 
+        right_ctrl_layout.addSpacing(10)
+        self.chk_roi_view = QtWidgets.QCheckBox("ROI View")
+        self.chk_roi_view.setChecked(True)
+        self.chk_roi_view.setToolTip("Show or hide ROI overlays on Base and Diff viewers")
+        right_ctrl_layout.addWidget(self.chk_roi_view)
+
         right_ctrl_layout.addStretch(1)
 
         right_section.addWidget(right_ctrl_bar)
@@ -3673,12 +3592,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_back_to_settings.setFixedHeight(28)
         self.btn_back_to_settings.setVisible(False)
         _top_btn_row.addWidget(self.btn_back_to_settings)
-        self.btn_recompute = QtWidgets.QPushButton("Re-compute")
-        self.btn_recompute.setObjectName("ToolbarPrimary")
-        self.btn_recompute.setToolTip("Run Compute again with current settings")
-        self.btn_recompute.setFixedHeight(28)
-        self.btn_recompute.setVisible(False)
-        _top_btn_row.addWidget(self.btn_recompute)
         _top_btn_row.addStretch()
         right_layout.addLayout(_top_btn_row)
 
@@ -3999,7 +3912,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # Back to Settings / Re-compute buttons (post-compute)
         self.btn_back_to_settings.clicked.connect(self._on_back_to_settings)
-        self.btn_recompute.clicked.connect(self._on_compute)
 
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
@@ -4029,6 +3941,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Dynamic range control
         self.cmb_range.currentIndexChanged.connect(self._on_range_changed)
         self.btn_show_norm_compare.clicked.connect(self._on_show_normalized_compare)
+        self.chk_roi_view.toggled.connect(self._on_roi_view_toggled)
 
         # Colormap selector
         self.cmb_colormap.currentIndexChanged.connect(lambda _: self._refresh_diff_display())
@@ -4039,14 +3952,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ROI-Match: pick / clear
         self.btn_pick_roi.clicked.connect(self._on_open_roi_manager_for_match)
 
-        # Split View toggle + bidirectional cursor sync
+        # Split View toggle
         self.btn_split_view.toggled.connect(self._on_split_view_toggle)
-        # Diff map → left magnifier
-        self.img_diff.cursor_moved.connect(self._on_diff_cursor_moved)
-        self.img_diff.cursor_left.connect(self._on_diff_cursor_left)
-        # Left magnifier → diff map (bidirectional)
-        self.img_base_mag.cursor_moved.connect(self._on_base_mag_cursor_moved)
-        self.img_base_mag.cursor_left.connect(self._on_base_mag_cursor_left)
 
         self.img_base_mag.clicked.connect(self._on_left_viewer_clicked)
         self.img_blend.clicked.connect(self._on_split_viewer_clicked)
@@ -4212,12 +4119,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._left_view_mode = 'split'
             self.stk_blend.setCurrentIndex(1)  # show SplitViewWidget
             self.blend_slider_widget.setVisible(True)
-            self.lbl_magnifier_hint.setVisible(False)
         else:
             self._left_view_mode = self._left_non_split_mode
             self.stk_blend.setCurrentIndex(0)  # show magnifier
             self.blend_slider_widget.setVisible(False)
-            self.lbl_magnifier_hint.setVisible(True)
             self._refresh_base_compare_display(self._left_non_split_mode)
         self._sync_viewer_mode_buttons()
         self._update_blend_preview()
@@ -4510,11 +4415,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_compute(self):
         """Run the combination computation for all selected pairs."""
-        # ── Quadrant Fusion mode ──────────────────────────────────────────
-        if self.cmb_input_mode.currentIndex() == 1:
-            self._on_compute_quadrant_fusion()
-            return
-
         base_label = self.cmb_base.currentText()
         is_auto_pair = self.chk_auto_pair.isChecked()
 
@@ -4553,7 +4453,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             snr_window_size += 1
         norm_mode = self.cmb_normalize_mode.currentIndex()
         # 0 = Percentile, 1 = GLV-Mask, 2 = Skip, 3 = ROI-Match
-        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'skip'}
+        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'roi_match'}
         normalize_method = _method_map.get(norm_mode, 'percentile')
         normalize = (normalize_method not in ('skip', 'roi_match'))
         glv_range = None
@@ -4809,12 +4709,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel.setVisible(False)
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
-        self.btn_recompute.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
         self.btn_split_view.setVisible(True)
         self.btn_prev_result.setVisible(True)
         self.btn_next_result.setVisible(True)
-        self.lbl_magnifier_hint.setVisible(True)
 
         # Multi-ROI analysis — run if any ROIs are defined
         if self._multi_roi_set and results:
@@ -4825,12 +4723,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
-        self.btn_recompute.setVisible(False)
         self.wgt_bottom_row.setVisible(False)
         self.btn_split_view.setVisible(False)
         self.btn_prev_result.setVisible(False)
         self.btn_next_result.setVisible(False)
-        self.lbl_magnifier_hint.setVisible(False)
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""
@@ -5327,7 +5223,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         base_img = self._images.get(base_label)
         if base_img is not None:
             self._roi_manager.set_image_shape(base_img.shape[:2])
-            self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
+            self._apply_roi_visibility()
 
         self._roi_manager.show()
         self._roi_manager.raise_()
@@ -5335,9 +5231,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_multi_rois_changed(self) -> None:
         """Refresh all image widgets when ROI set changes."""
-        self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
-        self.img_diff.set_multi_roi_set(self._multi_roi_set)
+        self._apply_roi_visibility()
         self._update_roi_status_label()
+
+    def _on_roi_view_toggled(self, _checked: bool) -> None:
+        self._apply_roi_visibility()
+
+    def _apply_roi_visibility(self) -> None:
+        show = getattr(self, 'chk_roi_view', None) is None or self.chk_roi_view.isChecked()
+        roi_set = self._multi_roi_set if show else None
+        self.img_base_mag.set_multi_roi_set(roi_set)
+        self.img_diff.set_multi_roi_set(roi_set)
 
     def _update_roi_status_label(self) -> None:
         """Update the ROI count status label below the ROI Manager button."""
@@ -5367,20 +5271,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Handle ROI drawn on an image widget (shared by Standard & QF modes)."""
         roi = (norm_x, norm_y, norm_w, norm_h)
 
-        if self.cmb_input_mode.currentIndex() == 1:
-            # Quadrant Fusion mode — ROI on QF viewers
-            self._qf_roi_rect = roi
-            self.img_qf_illum.set_active_roi(roi)
-            self.img_qf_main.set_active_roi(roi)
-            self.btn_qf_clear_roi.setEnabled(True)
-            self.lbl_qf_roi_info.setText(
-                f"ROI: ({norm_x:.2f}, {norm_y:.2f}) {norm_w:.2f}×{norm_h:.2f}"
-            )
-        else:
-            # Standard mode — ROI on Standard viewers
-            self.img_base_mag.set_active_roi(roi)
-            self.img_diff.set_active_roi(roi)
-            self.lbl_roi_alpha.setText("")
+        self.img_base_mag.set_active_roi(roi)
+        self.img_diff.set_active_roi(roi)
+        self.lbl_roi_alpha.setText("")
 
     def _on_normalize_mode_changed(self):
         """Show/hide GLV-Mask / ROI-Match controls depending on the selected normalize mode."""
