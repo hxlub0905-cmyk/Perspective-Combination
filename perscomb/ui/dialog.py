@@ -1978,8 +1978,6 @@ class GLVMaskPreviewDialog(QtWidgets.QDialog):
 _NORMALIZE_METHOD_LABELS = {
     'percentile': 'Percentile (P2–P98)',
     'glv_mask': 'GLV-Mask',
-    'heq': 'Histogram EQ (HEQ)',
-    'clahe': 'CLAHE',
     'skip': 'Skip (raw ÷ 255)',
     'roi_match': 'ROI-Match (EPI Nulling)',
 }
@@ -2111,15 +2109,6 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         root.setSpacing(8)
         root.setContentsMargins(8, 8, 8, 8)
 
-        if self._result.nonlinear_warning:
-            warn = QtWidgets.QLabel(
-                "⚠  HEQ / CLAHE normalization is non-linear — "
-                "cross-LE ROI stats are NOT quantitatively comparable."
-            )
-            warn.setStyleSheet("color: #F59E0B; font-weight: bold;")
-            warn.setWordWrap(True)
-            root.addWidget(warn)
-
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(self._build_snr_tab(), "SNR across LE")
         tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
@@ -2161,6 +2150,17 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             ax.spines['right'].set_visible(False)
             ax.grid(True, color='#374151', linewidth=0.5)
             ax.set_title("SNR = (μ_Target − μ_Ref) / σ_Ref", color='#9CA3AF', fontsize=9)
+            for i, label in enumerate(labels):
+                entry = snr_data[label]
+                ax.annotate(
+                    f"{entry.snr:.2f}\nT:{entry.mu_target:.3f} R:{entry.mu_ref:.3f} σR:{entry.sigma_ref:.3f}",
+                    (i, entry.snr),
+                    textcoords="offset points",
+                    xytext=(0, 8),
+                    ha='center',
+                    fontsize=7,
+                    color='#D1D5DB',
+                )
         else:
             ax.text(0.5, 0.5, "No Target ROI defined", ha='center', va='center',
                     color='#9CA3AF', transform=ax.transAxes)
@@ -2780,8 +2780,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._set_button_icon(self.btn_qf_auto_detect, QtWidgets.QStyle.SP_FileDialogDetailedView, "Auto Detect")
         self._set_button_icon(self.btn_qf_pick_roi, QtWidgets.QStyle.SP_DialogOpenButton, "Pick ROI")
         self._set_button_icon(self.btn_qf_clear_roi, QtWidgets.QStyle.SP_DialogResetButton, "Clear ROI")
-        self._set_button_icon(self.btn_pick_roi, QtWidgets.QStyle.SP_DialogOpenButton, "Pick ROI")
-        self._set_button_icon(self.btn_clear_roi, QtWidgets.QStyle.SP_DialogResetButton, "Clear ROI")
+        self._set_button_icon(self.btn_pick_roi, QtWidgets.QStyle.SP_DialogOpenButton, "ROI Manager")
         self._set_button_icon(self.btn_preview_glv_mask, QtWidgets.QStyle.SP_DesktopIcon, "Preview Mask")
 
     def closeEvent(self, event):
@@ -3327,29 +3326,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_normalize_mode.addItems([
             "Percentile (P2–P98)",  # index 0 – default
             "GLV-Mask",  # index 1
-            "Histogram EQ (HEQ)",  # index 2
-            "CLAHE",  # index 3
-            "Skip (raw ÷ 255)",  # index 4
-            "ROI-Match (EPI Nulling) [pending]",  # index 5 – disabled until Multi-ROI is ready
+            "Skip (raw ÷ 255)",  # index 2
+            "ROI-Match (EPI Nulling)",  # index 3
         ])
-        # Disable the ROI-Match entry until it is reconnected to Multi-ROI
-        _roi_match_item_model = self.cmb_normalize_mode.model()
-        _roi_match_item_model.item(5).setEnabled(False)
-        _roi_match_item_model.item(5).setToolTip(
-            "ROI-Match will be re-integrated after Multi-ROI is fully set up.\n"
-            "Use the ROI Manager toolbar button to define ROIs."
-        )
         self.cmb_normalize_mode.setToolTip(
             "Percentile: each image independently mapped to [0,1] via its P2–P98 range.\n"
             "GLV-Mask:   P2/P98 computed only from pixels inside the specified GLV range\n"
             "            (e.g. MG 110–145, EPI 200–255); map applied to full image.\n"
-            "HEQ:        Histogram Equalization — non-linear, enhances visual contrast.\n"
-            "            NOTE: non-linear; subtraction result loses quantitative meaning.\n"
-            "CLAHE:      Contrast-Limited Adaptive HEQ — non-linear, local enhancement.\n"
-            "            NOTE: non-linear; subtraction result loses quantitative meaning.\n"
             "Skip:       bypass normalization; divide pixels by 255 directly.\n"
-            "ROI-Match:  Calibrate a scale factor from a user-drawn ROI (typically EPI)\n"
-            "            so that the EPI region cancels in subtraction, leaving residual\n"
+            "ROI-Match:  Calibrate a scale factor from ROI Manager ROIs (bounding-box means)\n"
+            "            so that reference region response cancels in subtraction, leaving residual\n"
             "            HK/Hf defect signals near inner spacer more visible."
         )
         norm_mode_row.addWidget(self.cmb_normalize_mode, 1)
@@ -3383,24 +3369,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         glv_ctrl_layout.addStretch()
         adv_layout.addWidget(self.wgt_glv_controls)
 
-        # CLAHE controls (shown only when CLAHE mode is selected)
-        self.wgt_clahe_controls = QtWidgets.QWidget()
-        clahe_ctrl_layout = QtWidgets.QHBoxLayout(self.wgt_clahe_controls)
-        clahe_ctrl_layout.setContentsMargins(0, 0, 0, 0)
-        clahe_ctrl_layout.addWidget(QtWidgets.QLabel("Clip Limit:"))
-        self.spn_clahe_clip = QtWidgets.QDoubleSpinBox()
-        self.spn_clahe_clip.setRange(0.5, 10.0)
-        self.spn_clahe_clip.setSingleStep(0.5)
-        self.spn_clahe_clip.setValue(2.0)
-        self.spn_clahe_clip.setFixedWidth(78)
-        self.spn_clahe_clip.setToolTip(
-            "CLAHE contrast clip limit (higher = stronger local contrast).\n"
-            "Typical values: 1.0–4.0. Default: 2.0."
-        )
-        clahe_ctrl_layout.addWidget(self.spn_clahe_clip)
-        clahe_ctrl_layout.addStretch()
-        adv_layout.addWidget(self.wgt_clahe_controls)
-
         # ROI-Match controls (shown only when ROI-Match mode is selected)
         self.wgt_roi_match_controls = QtWidgets.QWidget()
         roi_match_layout = QtWidgets.QVBoxLayout(self.wgt_roi_match_controls)
@@ -3408,22 +3376,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         roi_match_layout.setSpacing(4)
 
         roi_btn_row = QtWidgets.QHBoxLayout()
-        self.btn_pick_roi = QtWidgets.QPushButton("Pick ROI")
+        self.btn_pick_roi = QtWidgets.QPushButton("Open ROI Manager")
         self.btn_pick_roi.setToolTip(
-            "Draw a rectangular ROI on the Base image (Comparison View).\n"
-            "Choose a uniform EPI-dominated region for best results."
+            "Define ROIs in ROI Manager. ROI-Match uses ROI bounding-box means\n"
+            "from those ROIs to calibrate the compare scaling coefficient."
         )
-        self.btn_pick_roi.setFixedWidth(96)
+        self.btn_pick_roi.setFixedWidth(140)
         roi_btn_row.addWidget(self.btn_pick_roi)
-        self.btn_clear_roi = QtWidgets.QPushButton("Clear ROI")
-        self.btn_clear_roi.setToolTip("Remove the current ROI selection")
-        self.btn_clear_roi.setFixedWidth(96)
-        self.btn_clear_roi.setEnabled(False)
-        roi_btn_row.addWidget(self.btn_clear_roi)
         roi_btn_row.addStretch()
         roi_match_layout.addLayout(roi_btn_row)
 
-        self.lbl_roi_info = QtWidgets.QLabel("ROI: not set")
+        self.lbl_roi_info = QtWidgets.QLabel("ROI source: ROI Manager")
         self.lbl_roi_info.setStyleSheet(
             f"color: {UI_TEXT_SECONDARY}; font-family: {Typography.FONT_FAMILY_MONO};"
             f" font-size: {Typography.FONT_SIZE_SMALL};"
@@ -3447,9 +3410,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         roi_match_layout.addWidget(self.chk_roi_abs_diff)
 
         adv_layout.addWidget(self.wgt_roi_match_controls)
-
-        # Internal state for ROI-Match
-        self._roi_match_rect: Optional[tuple] = None  # (norm_x, norm_y, norm_w, norm_h)
 
         self.cmb_normalize_mode.currentIndexChanged.connect(self._on_normalize_mode_changed)
         self._on_normalize_mode_changed()  # set initial visibility
@@ -4077,8 +4037,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_swap_base.clicked.connect(self._on_swap_base)
 
         # ROI-Match: pick / clear
-        self.btn_pick_roi.clicked.connect(self._on_pick_roi)
-        self.btn_clear_roi.clicked.connect(self._on_clear_roi)
+        self.btn_pick_roi.clicked.connect(self._on_open_roi_manager_for_match)
 
         # Split View toggle + bidirectional cursor sync
         self.btn_split_view.toggled.connect(self._on_split_view_toggle)
@@ -4593,8 +4552,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if snr_window_size % 2 == 0:
             snr_window_size += 1
         norm_mode = self.cmb_normalize_mode.currentIndex()
-        # 0 = Percentile, 1 = GLV-Mask, 2 = HEQ, 3 = CLAHE, 4 = Skip, 5 = ROI-Match
-        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'heq', 3: 'clahe', 4: 'skip', 5: 'roi_match'}
+        # 0 = Percentile, 1 = GLV-Mask, 2 = Skip, 3 = ROI-Match
+        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'skip'}
         normalize_method = _method_map.get(norm_mode, 'percentile')
         normalize = (normalize_method not in ('skip', 'roi_match'))
         glv_range = None
@@ -4603,28 +4562,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             glv_high = self.spn_glv_high.value()
             if glv_low < glv_high:
                 glv_range = (glv_low, glv_high)
-        clahe_clip_limit = self.spn_clahe_clip.value() if norm_mode == 3 else 2.0
+        clahe_clip_limit = 2.0
 
         # ROI-Match (EPI Nulling) parameters
-        use_roi_match = (norm_mode == 5)
+        use_roi_match = (norm_mode == 3)
         roi_rect_px = None
         if use_roi_match:
-            if self._roi_match_rect is None:
+            if len(self._multi_roi_set) == 0:
                 QtWidgets.QMessageBox.warning(
                     self, "ROI-Match",
-                    "Please draw an ROI on the Base image first.\n"
-                    "Use the 'Pick ROI' button and select a uniform EPI-dominated region."
+                    "Please define at least one ROI in ROI Manager first."
                 )
                 return
-            # Convert normalized ROI to pixel coordinates using base image dimensions
-            base_img_check = self._images.get(base_label)
-            if base_img_check is not None:
-                img_h, img_w = base_img_check.shape[:2]
-                nx, ny, nw, nh = self._roi_match_rect
-                roi_rect_px = (
-                    int(nx * img_w), int(ny * img_h),
-                    max(1, int(nw * img_w)), max(1, int(nh * img_h)),
-                )
 
         sub_mode = self.cmb_subtract_mode.currentIndex()
         # 0 = |diff|×2 (default), 1 = |diff| no gain, 2 = clip≥0 (preserve direction)
@@ -4674,6 +4623,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             snr_window_size=snr_window_size,
             is_auto_pair=is_auto_pair,  # captured on main thread — do NOT read inside thread
             roi_rect=roi_rect_px,
+            roi_set=self._multi_roi_set,
             roi_match=use_roi_match,
         )
 
@@ -4698,6 +4648,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             snr_window_size: int = 31,
             is_auto_pair: bool = False,
             roi_rect: Optional[tuple] = None,
+            roi_set: Optional[MultiROISet] = None,
             roi_match: bool = False,
     ):
         if self._compute_thread is not None:
@@ -4755,6 +4706,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                             abs_no_gain=abs_no_gain,
                             snr_window_size=snr_window_size,
                             roi_rect=roi_rect,
+                            roi_set=roi_set,
                             roi_match=roi_match,
                         )
                         results.append(result)
@@ -4786,6 +4738,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     abs_no_gain=abs_no_gain,
                     snr_window_size=snr_window_size,
                     roi_rect=roi_rect,
+                    roi_set=roi_set,
                     roi_match=roi_match,
                 )
                 results.append(r)
@@ -4892,12 +4845,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             aligned_compares[r.compare_label] = r.aligned_compare
 
         norm_mode = self.cmb_normalize_mode.currentIndex()
-        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'heq', 3: 'clahe', 4: 'skip'}
+        _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'skip'}
         normalize_method = _method_map.get(norm_mode, 'percentile')
         glv_range = None
         if norm_mode == 1:
             glv_range = (self.spn_glv_low.value(), self.spn_glv_high.value())
-        clahe_clip = self.spn_clahe_clip.value() if norm_mode == 3 else 2.0
+        clahe_clip = 2.0
 
         sub_mode = self.cmb_subtract_mode.currentIndex()
         preserve_positive = (sub_mode == 0)
@@ -5404,27 +5357,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     # ── ROI-Match (EPI Nulling) handlers ─────────────────────────────────
 
-    def _on_pick_roi(self):
-        """Enter ROI drawing mode on the Base magnifier widget."""
-        if not self._images:
-            QtWidgets.QMessageBox.information(
-                self, "ROI-Match", "Please load images first."
-            )
-            return
-        # Ensure magnifier page is visible so the user can draw on Base
-        if self.btn_split_view.isChecked():
-            self.btn_split_view.setChecked(False)
-        self.img_base_mag.set_roi_mode(True)
-        self.lbl_roi_info.setText("ROI: draw on Base image...")
-
-    def _on_clear_roi(self):
-        """Clear the current ROI selection."""
-        self._roi_match_rect = None
-        self.img_base_mag.set_active_roi(None)
-        self.img_diff.set_active_roi(None)
-        self.btn_clear_roi.setEnabled(False)
-        self.lbl_roi_info.setText("ROI: not set")
-        self.lbl_roi_alpha.setText("")
+    def _on_open_roi_manager_for_match(self):
+        """Open ROI Manager so ROI-Match can use ROIs defined there."""
+        self._on_open_roi_manager()
+        n = len(self._multi_roi_set)
+        self.lbl_roi_info.setText(f"ROI source: ROI Manager ({n} ROI{'s' if n != 1 else ''})")
 
     def _on_roi_selected(self, norm_x: float, norm_y: float, norm_w: float, norm_h: float):
         """Handle ROI drawn on an image widget (shared by Standard & QF modes)."""
@@ -5441,21 +5378,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             )
         else:
             # Standard mode — ROI on Standard viewers
-            self._roi_match_rect = roi
             self.img_base_mag.set_active_roi(roi)
             self.img_diff.set_active_roi(roi)
-            self.btn_clear_roi.setEnabled(True)
-            self.lbl_roi_info.setText(
-                f"ROI: ({norm_x:.2f}, {norm_y:.2f}) {norm_w:.2f}×{norm_h:.2f}"
-            )
-            self.lbl_roi_alpha.setText("")  # clear previous alpha
+            self.lbl_roi_alpha.setText("")
 
     def _on_normalize_mode_changed(self):
-        """Show/hide GLV-Mask / CLAHE / ROI-Match controls depending on the selected normalize mode."""
+        """Show/hide GLV-Mask / ROI-Match controls depending on the selected normalize mode."""
         idx = self.cmb_normalize_mode.currentIndex()
         self.wgt_glv_controls.setVisible(idx == 1)  # GLV-Mask
-        self.wgt_clahe_controls.setVisible(idx == 3)  # CLAHE
-        self.wgt_roi_match_controls.setVisible(idx == 5)  # ROI-Match (EPI Nulling)
+        self.wgt_roi_match_controls.setVisible(idx == 3)  # ROI-Match (EPI Nulling)
 
     def _on_preview_glv_mask(self):
         """Open the interactive GLV Mask Preview dialog."""

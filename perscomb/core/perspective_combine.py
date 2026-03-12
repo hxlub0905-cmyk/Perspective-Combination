@@ -428,6 +428,7 @@ def compute_single_pair(
     abs_no_gain: bool = False,
     snr_window_size: int = 31,
     roi_rect: Optional[Tuple[int, int, int, int]] = None,
+    roi_set: Optional[MultiROISet] = None,
     roi_match: bool = False,
 ) -> SinglePairResult:
     """Compute a single Base-Compare pair operation.
@@ -452,7 +453,9 @@ def compute_single_pair(
         preserve_positive_diff: Keep signal direction (B−C), clamp negatives to 0, no gain.
         abs_no_gain: Take |B−C| without the ×2 enhancement factor.
         snr_window_size: Box-filter window size for SNR map (must be odd, ≥3)
-        roi_rect: (x, y, w, h) in pixel coords — reference ROI for ROI-Match (EPI Nulling).
+        roi_rect: (x, y, w, h) in pixel coords — legacy fallback ROI for ROI-Match.
+        roi_set: ROI set from ROI Manager. When roi_match=True and roi_set has ROIs,
+                 alpha is calibrated from ROI means defined in this set.
         roi_match: When True, use ROI-Match mode: calibrate a scale factor (alpha) from the
                    ROI so that EPI-dominated regions cancel in subtraction, leaving residual
                    HK/Hf defect signals near inner spacer visible.
@@ -538,22 +541,44 @@ def compute_single_pair(
     #   5. Force keep-direction subtraction (clip >= 0) and skip independent
     #      per-image normalization so the energy-dependent signature is preserved.
     roi_match_alpha: Optional[float] = None
-    if roi_match and roi_rect is not None:
-        rx, ry, rw, rh = roi_rect
-        h_img, w_img = base_proc.shape[:2]
-        # Clamp ROI to image bounds
-        rx = max(0, min(rx, w_img - 1))
-        ry = max(0, min(ry, h_img - 1))
-        rw = max(1, min(rw, w_img - rx))
-        rh = max(1, min(rh, h_img - ry))
+    if roi_match and (roi_set is not None and len(roi_set.rois) > 0 or roi_rect is not None):
+        alpha_roi: float
+        if roi_set is not None and len(roi_set.rois) > 0:
+            # ROI Manager mode: use bounding-box means from all defined ROIs.
+            base_means: List[float] = []
+            compare_means: List[float] = []
+            for roi in roi_set.rois:
+                b_roi = roi.crop(base_proc)
+                c_roi = roi.crop(comp_proc)
+                if b_roi.size == 0 or c_roi.size == 0:
+                    continue
+                base_means.append(float(np.mean(b_roi)))
+                compare_means.append(float(np.mean(c_roi)))
 
-        b_roi = base_proc[ry:ry + rh, rx:rx + rw]
-        c_roi = comp_proc[ry:ry + rh, rx:rx + rw]
+            if not base_means or not compare_means:
+                return _empty_single_result(base_label, compare_label, operation,
+                                            error="ROI-Match failed: no valid ROI pixels")
 
-        # Least-squares scale: minimise ||B_roi - alpha * C_roi||^2
-        denom = float(np.sum(c_roi.astype(np.float64) * c_roi.astype(np.float64)))
-        numer = float(np.sum(b_roi.astype(np.float64) * c_roi.astype(np.float64)))
-        alpha_roi = numer / (denom + 1e-6)
+            b_vec = np.asarray(base_means, dtype=np.float64)
+            c_vec = np.asarray(compare_means, dtype=np.float64)
+            # Least-squares scale on ROI means: minimise ||B_mean - alpha * C_mean||^2
+            denom = float(np.sum(c_vec * c_vec))
+            numer = float(np.sum(b_vec * c_vec))
+            alpha_roi = numer / (denom + 1e-6)
+        else:
+            # Legacy single-ROI fallback for backward compatibility.
+            rx, ry, rw, rh = roi_rect
+            h_img, w_img = base_proc.shape[:2]
+            rx = max(0, min(rx, w_img - 1))
+            ry = max(0, min(ry, h_img - 1))
+            rw = max(1, min(rw, w_img - rx))
+            rh = max(1, min(rh, h_img - ry))
+
+            b_roi = base_proc[ry:ry + rh, rx:rx + rw]
+            c_roi = comp_proc[ry:ry + rh, rx:rx + rw]
+            denom = float(np.sum(c_roi.astype(np.float64) * c_roi.astype(np.float64)))
+            numer = float(np.sum(b_roi.astype(np.float64) * c_roi.astype(np.float64)))
+            alpha_roi = numer / (denom + 1e-6)
 
         # Clamp to reasonable range to avoid blowups from noisy/flat ROIs
         _ALPHA_MIN, _ALPHA_MAX = 0.25, 4.0
@@ -605,25 +630,6 @@ def compute_single_pair(
         comp_norm = _normalize_image_with_range(comp_proc, base_p2, base_p98)
         norm_a = 1.0
         norm_b = 0.0
-
-    elif effective_method == 'heq':
-        # Histogram Equalization – non-linear, for visual enhancement only.
-        # WARNING: cross-LE ROI stats are not quantitatively comparable with HEQ.
-        _norm_nonlinear = True
-        base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
-        comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
-        base_norm = cv2.equalizeHist(base_u8).astype(np.float32) / 255.0
-        comp_norm = cv2.equalizeHist(comp_u8).astype(np.float32) / 255.0
-
-    elif effective_method == 'clahe':
-        # CLAHE – non-linear, for visual enhancement only.
-        # WARNING: cross-LE ROI stats are not quantitatively comparable with CLAHE.
-        _norm_nonlinear = True
-        clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
-        base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
-        comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
-        base_norm = clahe_obj.apply(base_u8).astype(np.float32) / 255.0
-        comp_norm = clahe_obj.apply(comp_u8).astype(np.float32) / 255.0
 
     else:
         # 'percentile' (default) – Use BASE P2/P98 to anchor both images.
@@ -798,6 +804,7 @@ def compute_multi_pairs(
     abs_no_gain: bool = False,
     snr_window_size: int = 31,
     roi_rect: Optional[Tuple[int, int, int, int]] = None,
+    roi_set: Optional[MultiROISet] = None,
     roi_match: bool = False,
 ) -> List[SinglePairResult]:
     """Compute operations for multiple Base-Compare pairs.
@@ -815,6 +822,7 @@ def compute_multi_pairs(
         preserve_positive_diff: Use base-compare (no abs/no gain) and clamp negatives to 0
         snr_window_size: Box-filter window size for SNR map (must be odd, ≥3)
         roi_rect: (x, y, w, h) in pixel coords for ROI-Match (EPI Nulling).
+        roi_set: ROI set from ROI Manager used by ROI-Match mode.
         roi_match: When True, use ROI-Match mode.
 
     Returns:
@@ -845,6 +853,7 @@ def compute_multi_pairs(
             abs_no_gain=abs_no_gain,
             snr_window_size=snr_window_size,
             roi_rect=roi_rect,
+            roi_set=roi_set,
             roi_match=roi_match,
         )
         results.append(result)
@@ -890,7 +899,7 @@ def compute_roi_full_stats(
     ROIFullResult with layers for base + all compares + all diffs, plus SNR.
     """
     _EPS = 1e-7
-    nonlinear_warning = normalize_method in ('heq', 'clahe')
+    nonlinear_warning = False
 
     base_proc = base.astype(np.float32)
 
@@ -903,15 +912,6 @@ def compute_roi_full_stats(
         glv_low, glv_high = int(glv_range[0]), int(glv_range[1])
         b_p2, b_p98 = _percentile_range_glv_masked(base_proc, glv_low, glv_high)
         base_norm = _normalize_image_with_range(base_proc, b_p2, b_p98)
-    elif normalize_method == 'heq':
-        base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
-        base_norm = cv2.equalizeHist(base_u8).astype(np.float32) / 255.0
-        b_p2, b_p98 = 0.0, 1.0   # sentinel, not used for HEQ/CLAHE
-    elif normalize_method == 'clahe':
-        clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
-        base_u8 = np.clip(base_proc, 0, 255).astype(np.uint8)
-        base_norm = clahe_obj.apply(base_u8).astype(np.float32) / 255.0
-        b_p2, b_p98 = 0.0, 1.0
     else:
         # percentile (default)
         b_p2, b_p98 = float(np.percentile(base_proc, 2)), float(np.percentile(base_proc, 98))
@@ -944,13 +944,6 @@ def compute_roi_full_stats(
             comp_norm = comp_proc / 255.0
         elif normalize_method == 'glv_mask' and glv_range is not None:
             comp_norm = _normalize_image_with_range(comp_proc, b_p2, b_p98)
-        elif normalize_method == 'heq':
-            comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
-            comp_norm = cv2.equalizeHist(comp_u8).astype(np.float32) / 255.0
-        elif normalize_method == 'clahe':
-            clahe_obj = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
-            comp_u8 = np.clip(comp_proc, 0, 255).astype(np.uint8)
-            comp_norm = clahe_obj.apply(comp_u8).astype(np.float32) / 255.0
         else:
             comp_norm = _normalize_image_with_range(comp_proc, b_p2, b_p98)
 
@@ -983,13 +976,15 @@ def compute_roi_full_stats(
         ref_rois = roi_set.get_references()
         if target_roi is not None and ref_rois:
             t_stats = diff_layer.roi_stats.get(target_roi.id)
-            ref_pixels = np.concatenate([
-                roi.crop(diff_f).ravel() for roi in ref_rois
-            ]).astype(np.float32)
-            mu_ref = float(np.mean(ref_pixels))
-            sigma_ref = float(np.std(ref_pixels))
+            ref_means = np.asarray(
+                [diff_layer.roi_stats[r.id].mean for r in ref_rois if r.id in diff_layer.roi_stats],
+                dtype=np.float32,
+            )
+            mu_ref = float(np.mean(ref_means)) if ref_means.size else 0.0
+            sigma_ref = float(np.std(ref_means)) if ref_means.size else 0.0
             mu_target = t_stats.mean if t_stats is not None else 0.0
             snr = (mu_target - mu_ref) / (sigma_ref + _EPS)
+            snr = max(0.0, float(snr))
             result.snr_per_diff[le_label] = ROISNREntry(
                 le_label=le_label,
                 snr=snr,
