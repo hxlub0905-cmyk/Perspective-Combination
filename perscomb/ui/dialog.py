@@ -63,6 +63,14 @@ UI_SUCCESS = Colors.SUCCESS
 UI_WARNING = Colors.WARNING
 UI_INFO = Colors.INFO
 
+UI_WINDOW_BG_LIGHT = "#F3F4F6"
+UI_LEFT_PANEL_BG = "#F9FAFB"
+UI_VIEWER_BG = "#FFFFFF"
+UI_TEXT_PRIMARY_STRONG = "#111827"
+UI_TEXT_SECONDARY_MUTED = "#6B7280"
+UI_ACCENT_HOVER = "#FB923C"
+UI_ACCENT_LIGHT = "#FFF4E5"
+
 
 def _hex_to_bgr(color: str) -> Tuple[int, int, int]:
     """Convert #RRGGBB color to BGR tuple for OpenCV drawing."""
@@ -72,7 +80,7 @@ def _hex_to_bgr(color: str) -> Tuple[int, int, int]:
 
 DIALOG_STYLE = f"""
     QDialog {{
-        background-color: {UI_BG_WINDOW};
+        background-color: {UI_WINDOW_BG_LIGHT};
         color: {UI_TEXT};
         font-family: {Typography.FONT_FAMILY};
         font-size: {Typography.FONT_SIZE_BODY};
@@ -2798,6 +2806,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._set_button_icon(self.btn_load_folder, QtWidgets.QStyle.SP_DirOpenIcon, "Load Folder")
         self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
         self._set_button_icon(self.btn_export, QtWidgets.QStyle.SP_DialogSaveButton, "Export")
+        self._set_button_icon(self.btn_swap_base, QtWidgets.QStyle.SP_ArrowRight, "Swap Base")
+        self._set_button_icon(self.btn_about, QtWidgets.QStyle.SP_FileDialogDetailedView, "")
         self._set_button_icon(self.btn_clear_hist_range, QtWidgets.QStyle.SP_DialogResetButton, "Clear Range")
         self._set_button_icon(self.btn_show_norm_compare, QtWidgets.QStyle.SP_FileDialogContentsView, "Normalize")
         self._set_button_icon(self.btn_qf_auto_detect, QtWidgets.QStyle.SP_FileDialogDetailedView, "Auto Detect")
@@ -2927,15 +2937,21 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ================================================================
         content_layout = QtWidgets.QHBoxLayout()
         content_layout.setSpacing(8)
+        content_layout.setContentsMargins(0, 0, 0, 0)
 
         # === LEFT SIDEBAR ===
         self.left_panel = QtWidgets.QWidget()
         left_panel = self.left_panel   # local alias for existing code below
         left_panel.setObjectName("LeftPanel")
-        left_panel.setFixedWidth(320)
+        self._sidebar_pref_width = 320
+        self._sidebar_min_width = 260
+        self._sidebar_max_width = 360
+        left_panel.setMinimumWidth(self._sidebar_min_width)
+        left_panel.setMaximumWidth(self._sidebar_max_width)
+        left_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.MinimumExpanding)
         left_panel.setStyleSheet(f"""
             QWidget#LeftPanel {{
-                background-color: {UI_BG_PANEL};
+                background-color: {UI_LEFT_PANEL_BG};
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.MD};
             }}
@@ -2950,7 +2966,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border-radius: {BorderRadius.SM};
                 padding: {Spacing.INPUT_PADDING};
                 font-size: {Typography.FONT_SIZE_SMALL};
-                min-height: 28px;
+                min-height: 30px;
             }}
             QWidget#LeftPanel QComboBox:hover,
             QWidget#LeftPanel QComboBox:focus {{
@@ -2973,6 +2989,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 font-size: {Typography.FONT_SIZE_SMALL};
                 background: transparent;
                 border: none;
+                min-height: 24px;
             }}
             QWidget#LeftPanel QCheckBox::indicator {{
                 width: 16px;
@@ -2992,7 +3009,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.SM};
                 padding: 4px 22px 4px 8px;
-                min-height: 24px;
+                min-height: 30px;
                 font-size: {Typography.FONT_SIZE_SMALL};
             }}
             QWidget#LeftPanel QSpinBox:hover,
@@ -3025,7 +3042,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.SM};
                 padding: 4px 10px;
-                min-height: 26px;
+                min-height: 30px;
                 font-size: {Typography.FONT_SIZE_SMALL};
                 font-weight: {Typography.FONT_WEIGHT_MEDIUM};
             }}
@@ -3036,6 +3053,36 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             QWidget#LeftPanel QPushButton:pressed {{
                 background-color: #FDE7C2;
             }}
+            QWidget#LeftPanel QPushButton[role="primary"] {{
+                background-color: {UI_PRIMARY};
+                color: {UI_TEXT_ON_PRIMARY};
+                border: 1px solid {UI_PRIMARY};
+                border-radius: {BorderRadius.SM};
+                min-height: 34px;
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+            }}
+            QWidget#LeftPanel QPushButton[role="primary"]:hover {{
+                background-color: {UI_ACCENT_HOVER};
+                border-color: {UI_ACCENT_HOVER};
+            }}
+            QWidget#LeftPanel QPushButton[role="secondary"] {{
+                background-color: {UI_BG_PANEL};
+                border: 1px solid #D1D5DB;
+                color: {UI_TEXT};
+            }}
+            QWidget#LeftPanel QPushButton[role="utility"] {{
+                background: transparent;
+                border: none;
+                color: {UI_PRIMARY};
+                min-width: 0;
+                padding: 2px 4px;
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+            }}
+            QWidget#LeftPanel QPushButton[role="utility"]:hover {{
+                color: {UI_ACCENT_HOVER};
+                background: transparent;
+                border: none;
+            }}
             QWidget#LeftPanel QLabel {{
                 color: {UI_TEXT};
                 font-size: {Typography.FONT_SIZE_SMALL};
@@ -3043,7 +3090,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: none;
             }}
             QWidget#LeftPanel QLabel#SectionTitle {{
-                color: #111827;
+                color: {UI_TEXT_PRIMARY_STRONG};
                 font-size: {Typography.FONT_SIZE_H3};
                 font-weight: {Typography.FONT_WEIGHT_BOLD};
                 text-transform: uppercase;
@@ -3058,6 +3105,25 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 margin-top: 2px;
                 margin-bottom: 2px;
             }}
+            QWidget#LeftPanel QFrame[card="true"] {{
+                background-color: #FFFFFF;
+                border: 1px solid {UI_BORDER};
+                border-radius: 6px;
+            }}
+            QWidget#LeftPanel QCheckBox[compareItem="true"] {{
+                padding: 4px 6px;
+                margin-bottom: 2px;
+                border-radius: {BorderRadius.SM};
+            }}
+            QWidget#LeftPanel QCheckBox[compareItem="true"]:hover {{
+                background-color: {UI_WINDOW_BG_LIGHT};
+            }}
+            QWidget#LeftPanel QCheckBox[baseItem="true"] {{
+                background-color: {UI_ACCENT_LIGHT};
+                border-left: 4px solid {UI_PRIMARY};
+                padding-left: 4px;
+                border-radius: {BorderRadius.SM};
+            }}
             QWidget#LeftPanel QScrollArea {{
                 border: none;
                 background: transparent;
@@ -3065,21 +3131,37 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
         left_layout.setContentsMargins(12, 12, 12, 12)
-        left_layout.setSpacing(5)
+        left_layout.setSpacing(16)
+
+        def _make_sidebar_card(title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QVBoxLayout]:
+            card = QtWidgets.QFrame()
+            card.setProperty("card", True)
+            card_layout = QtWidgets.QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 10, 10, 10)
+            card_layout.setSpacing(6)
+
+            lbl_title = QtWidgets.QLabel(title)
+            lbl_title.setObjectName("SectionTitle")
+            card_layout.addWidget(lbl_title)
+
+            sep = QtWidgets.QLabel()
+            sep.setObjectName("SectionSeparator")
+            card_layout.addWidget(sep)
+            card_layout.addSpacing(2)
+            return card, card_layout
 
         # --- INPUT section ---
-        lbl_img_mgr = QtWidgets.QLabel("INPUT")
-        lbl_img_mgr.setObjectName("SectionTitle")
-        left_layout.addWidget(lbl_img_mgr)
-        sep1 = QtWidgets.QLabel()
-        sep1.setObjectName("SectionSeparator")
-        left_layout.addWidget(sep1)
-        left_layout.addSpacing(6)
+        card_input, input_layout = _make_sidebar_card("INPUT")
+        left_layout.addWidget(card_input)
 
         self.lbl_input_empty_hint = QtWidgets.QLabel("No images loaded.\nLoad a folder to begin.")
         self.lbl_input_empty_hint.setProperty("secondary", True)
         self.lbl_input_empty_hint.setWordWrap(True)
-        left_layout.addWidget(self.lbl_input_empty_hint)
+        input_layout.addWidget(self.lbl_input_empty_hint)
+
+        lbl_mode = QtWidgets.QLabel("Mode")
+        lbl_mode.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_PRIMARY_STRONG};")
+        input_layout.addWidget(lbl_mode)
 
         # Input mode (Standard only; Quadrant Fusion removed)
         self.cmb_input_mode = QtWidgets.QComboBox()
@@ -3087,13 +3169,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_input_mode.setToolTip(
             "Classic Base vs Compare subtract/blend workflow."
         )
-        left_layout.addWidget(self.cmb_input_mode)
+        input_layout.addWidget(self.cmb_input_mode)
 
         # ── Standard mode widgets (Base/Compare) ─────────────────────────────
         self.wgt_standard_select = QtWidgets.QWidget()
         std_layout = QtWidgets.QVBoxLayout(self.wgt_standard_select)
         std_layout.setContentsMargins(0, 4, 0, 0)
-        std_layout.setSpacing(4)
+        std_layout.setSpacing(6)
 
         # Base Image label
         lbl_base = QtWidgets.QLabel("Base Image")
@@ -3116,35 +3198,48 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.compare_container = QtWidgets.QWidget()
         self.compare_layout = QtWidgets.QVBoxLayout(self.compare_container)
         self.compare_layout.setContentsMargins(2, 2, 2, 2)
-        self.compare_layout.setSpacing(2)
+        self.compare_layout.setSpacing(4)
+
+        compare_hdr_row = QtWidgets.QHBoxLayout()
+        compare_hdr_row.setContentsMargins(0, 0, 0, 0)
+        compare_hdr_row.setSpacing(4)
+        self.compare_hdr_row = compare_hdr_row
+        self.lbl_compare_title = QtWidgets.QLabel("Compare Images (0)")
+        self.lbl_compare_title.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_PRIMARY_STRONG};")
+        compare_hdr_row.addWidget(self.lbl_compare_title)
+        compare_hdr_row.addStretch()
+
+        # Utility buttons in compare header row
+        self.btn_select_all = QtWidgets.QPushButton("All")
+        self.btn_select_all.setProperty("role", "utility")
+        self.btn_select_all.setFlat(True)
+        self.btn_select_none = QtWidgets.QPushButton("None")
+        self.btn_select_none.setProperty("role", "utility")
+        self.btn_select_none.setFlat(True)
+        compare_hdr_row.addWidget(self.btn_select_all)
+        compare_hdr_row.addWidget(self.btn_select_none)
+        std_layout.addLayout(compare_hdr_row)
+
         self.scroll_compare.setWidget(self.compare_container)
         std_layout.addWidget(self.scroll_compare)
 
-        # Quick select buttons
-        quick_row = QtWidgets.QHBoxLayout()
-        self.btn_select_all = QtWidgets.QPushButton("All")
-        self.btn_select_all.setFixedWidth(50)
-        self.btn_select_all.setFixedHeight(24)
-        self.btn_select_none = QtWidgets.QPushButton("None")
-        self.btn_select_none.setFixedWidth(50)
-        self.btn_select_none.setFixedHeight(24)
-        quick_row.addWidget(self.btn_select_all)
-        quick_row.addWidget(self.btn_select_none)
-        quick_row.addStretch()
-        std_layout.addLayout(quick_row)
-
-        # Auto pair checkbox (hidden, controlled by toolbar button)
+        # Auto pair checkbox moved to pairing card
         self.chk_auto_pair = QtWidgets.QCheckBox("Auto Pair")
         self.chk_auto_pair.setToolTip("Generate all unique pairs from selected images")
-        std_layout.addWidget(self.chk_auto_pair)
 
-        # Swap Base button
+        # Swap Base button moved to pairing card
         self.btn_swap_base = QtWidgets.QPushButton("\u25b6 Swap Base")
+        self.btn_swap_base.setProperty("role", "secondary")
         self.btn_swap_base.setFixedHeight(26)
         self.btn_swap_base.setToolTip("Swap base image with compare image selection")
-        std_layout.addWidget(self.btn_swap_base)
 
-        left_layout.addWidget(self.wgt_standard_select)
+        input_layout.addWidget(self.wgt_standard_select)
+
+        # --- PAIRING section ---
+        card_pairing, pairing_layout = _make_sidebar_card("PAIRING")
+        pairing_layout.addWidget(self.chk_auto_pair)
+        pairing_layout.addWidget(self.btn_swap_base)
+        left_layout.addWidget(card_pairing)
 
         # Quadrant Fusion placeholders (feature removed from UI)
         self.wgt_quadrant_select = QtWidgets.QWidget()
@@ -3167,14 +3262,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._qf_last_result: Optional[QuadrantFusionResult] = None
 
         # --- OPERATION section ---
-        left_layout.addSpacing(8)
-        lbl_params = QtWidgets.QLabel("OPERATION")
-        lbl_params.setObjectName("SectionTitle")
-        left_layout.addWidget(lbl_params)
-        sep2 = QtWidgets.QLabel()
-        sep2.setObjectName("SectionSeparator")
-        left_layout.addWidget(sep2)
-        left_layout.addSpacing(4)
+        card_operation, operation_card_layout = _make_sidebar_card("OPERATION")
+        left_layout.addWidget(card_operation)
 
         # Operation Settings (Standard mode only)
         self.grp_op = QtWidgets.QWidget()
@@ -3210,7 +3299,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         op_layout.addWidget(self.grp_blend_coef)
 
         # ── Advanced options (collapsed by default) ─────────────────────────
-        self.btn_adv_toggle = QtWidgets.QPushButton("Advanced \u25b6")
+        self.btn_adv_toggle = QtWidgets.QPushButton("Advanced Settings \u25b6")
         self.btn_adv_toggle.setCheckable(True)
         self.btn_adv_toggle.setChecked(False)
         self.btn_adv_toggle.setProperty("variant", "ghost")
@@ -3220,9 +3309,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         adv_layout = QtWidgets.QVBoxLayout(self.grp_advanced)
         adv_layout.setContentsMargins(8, 0, 0, 0)
         adv_layout.setSpacing(4)
-        # ── Subtract mode drop-down (Subtract operation only) ─────────────────
-        sub_mode_row = QtWidgets.QHBoxLayout()
-        sub_mode_row.addWidget(QtWidgets.QLabel("Subtract mode:"))
+        # ── Subtract Options group ────────────────────────────────────────────
+        lbl_subtract_opts = QtWidgets.QLabel("Subtract Options")
+        lbl_subtract_opts.setStyleSheet(
+            f"color: {UI_TEXT_PRIMARY_STRONG}; font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};"
+        )
+        adv_layout.addWidget(lbl_subtract_opts)
+
+        sub_mode_row = QtWidgets.QVBoxLayout()
+        sub_mode_row.setContentsMargins(0, 0, 0, 0)
+        sub_mode_row.setSpacing(6)
+        sub_mode_row.addWidget(QtWidgets.QLabel("Subtract mode"))
         self.cmb_subtract_mode = QtWidgets.QComboBox()
         self.cmb_subtract_mode.addItems([
             "|diff| × 2  (default)",  # index 0
@@ -3234,9 +3331,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "|diff|        : |Base−Compare|, no gain — preserves true magnitude\n"
             "clip ≥ 0      : Base−Compare, keep direction, clamp negatives to 0"
         )
-        sub_mode_row.addWidget(self.cmb_subtract_mode, 1)
+        sub_mode_row.addWidget(self.cmb_subtract_mode)
         adv_layout.addLayout(sub_mode_row)
+
         invert_row = QtWidgets.QHBoxLayout()
+        invert_row.setSpacing(8)
+        self.invert_row = invert_row
         self.chk_invert_base = QtWidgets.QCheckBox("Inv Base")
         self.chk_invert_base.setToolTip("Apply 255−X to Base before operation")
         self.chk_invert_compare = QtWidgets.QCheckBox("Inv Cmp")
@@ -3248,9 +3348,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         invert_row.addWidget(self.chk_invert_result)
         adv_layout.addLayout(invert_row)
 
+        adv_layout.addSpacing(10)
+
+        # ── Normalization group ───────────────────────────────────────────────
+        lbl_norm_opts = QtWidgets.QLabel("Normalization")
+        lbl_norm_opts.setStyleSheet(
+            f"color: {UI_TEXT_PRIMARY_STRONG}; font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};"
+        )
+        adv_layout.addWidget(lbl_norm_opts)
+
         # ── Normalize mode drop-down ──────────────────────────────────────────
-        norm_mode_row = QtWidgets.QHBoxLayout()
-        norm_mode_row.addWidget(QtWidgets.QLabel("Normalize:"))
+        norm_mode_row = QtWidgets.QVBoxLayout()
+        norm_mode_row.setContentsMargins(0, 0, 0, 0)
+        norm_mode_row.setSpacing(6)
+        norm_mode_row.addWidget(QtWidgets.QLabel("Normalize method"))
         self.cmb_normalize_mode = QtWidgets.QComboBox()
         self.cmb_normalize_mode.addItems([
             "Percentile (P2–P98)",  # index 0 – default
@@ -3267,36 +3378,52 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "            so that reference region response cancels in subtraction, leaving residual\n"
             "            HK/Hf defect signals near inner spacer more visible."
         )
-        norm_mode_row.addWidget(self.cmb_normalize_mode, 1)
+        norm_mode_row.addWidget(self.cmb_normalize_mode)
         adv_layout.addLayout(norm_mode_row)
 
         # GLV-Mask controls (shown only when GLV-Mask mode is selected)
         self.wgt_glv_controls = QtWidgets.QWidget()
-        glv_ctrl_layout = QtWidgets.QHBoxLayout(self.wgt_glv_controls)
+        glv_ctrl_layout = QtWidgets.QVBoxLayout(self.wgt_glv_controls)
         glv_ctrl_layout.setContentsMargins(0, 0, 0, 0)
-        glv_ctrl_layout.addWidget(QtWidgets.QLabel("GLV range:"))
+        glv_ctrl_layout.setSpacing(6)
+
+        glv_ctrl_layout.addWidget(QtWidgets.QLabel("GLV Range"))
+
+        glv_min_row = QtWidgets.QVBoxLayout()
+        glv_min_row.setContentsMargins(0, 0, 0, 0)
+        glv_min_row.setSpacing(4)
+        glv_min_row.addWidget(QtWidgets.QLabel("Min"))
         self.spn_glv_low = QtWidgets.QSpinBox()
         self.spn_glv_low.setRange(0, 254)
         self.spn_glv_low.setValue(100)
-        self.spn_glv_low.setFixedWidth(68)
+        self.spn_glv_low.setMinimumWidth(96)
         self.spn_glv_low.setToolTip("Lower bound of GLV mask (inclusive, 0–255)")
-        glv_ctrl_layout.addWidget(self.spn_glv_low)
-        glv_ctrl_layout.addWidget(QtWidgets.QLabel("–"))
+        glv_min_row.addWidget(self.spn_glv_low)
+        glv_ctrl_layout.addLayout(glv_min_row)
+
+        glv_max_row = QtWidgets.QVBoxLayout()
+        glv_max_row.setContentsMargins(0, 0, 0, 0)
+        glv_max_row.setSpacing(4)
+        glv_max_row.addWidget(QtWidgets.QLabel("Max"))
         self.spn_glv_high = QtWidgets.QSpinBox()
         self.spn_glv_high.setRange(1, 255)
         self.spn_glv_high.setValue(160)
-        self.spn_glv_high.setFixedWidth(68)
+        self.spn_glv_high.setMinimumWidth(96)
         self.spn_glv_high.setToolTip("Upper bound of GLV mask (inclusive, 0–255)")
-        glv_ctrl_layout.addWidget(self.spn_glv_high)
+        glv_max_row.addWidget(self.spn_glv_high)
+        glv_ctrl_layout.addLayout(glv_max_row)
+
         self.btn_preview_glv_mask = QtWidgets.QPushButton("Preview Mask")
+        self.btn_preview_glv_mask.setProperty("role", "secondary")
         self.btn_preview_glv_mask.setToolTip(
             "Show a preview window highlighting which pixels of the Base image\n"
             "fall within the GLV range and will be used for normalization."
         )
         self.btn_preview_glv_mask.clicked.connect(self._on_preview_glv_mask)
         glv_ctrl_layout.addWidget(self.btn_preview_glv_mask)
-        glv_ctrl_layout.addStretch()
         adv_layout.addWidget(self.wgt_glv_controls)
+
+        adv_layout.addSpacing(10)
 
         # ROI-Match controls (shown only when ROI-Match mode is selected)
         self.wgt_roi_match_controls = QtWidgets.QWidget()
@@ -3346,64 +3473,77 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.grp_advanced.setVisible(False)
         op_layout.addWidget(self.grp_advanced)
 
-        left_layout.addWidget(self.grp_op)
+        operation_card_layout.addWidget(self.grp_op)
 
         # --- ALIGNMENT section ---
-        left_layout.addSpacing(10)
-        lbl_align_section = QtWidgets.QLabel("ALIGNMENT")
-        lbl_align_section.setObjectName("SectionTitle")
-        left_layout.addWidget(lbl_align_section)
-        sep_align = QtWidgets.QLabel()
-        sep_align.setObjectName("SectionSeparator")
-        left_layout.addWidget(sep_align)
-        left_layout.addSpacing(6)
+        card_alignment, alignment_card_layout = _make_sidebar_card("ALIGNMENT")
+        left_layout.addWidget(card_alignment)
 
         self.grp_align = QtWidgets.QWidget()
         align_layout = QtWidgets.QVBoxLayout(self.grp_align)
         align_layout.setContentsMargins(0, 4, 0, 0)
         align_layout.setSpacing(4)
 
-        align_method_row = QtWidgets.QHBoxLayout()
-        align_method_row.addWidget(QtWidgets.QLabel("Align:"))
+        align_method_row = QtWidgets.QVBoxLayout()
+        align_method_row.setContentsMargins(0, 0, 0, 0)
+        align_method_row.setSpacing(6)
+        align_method_row.addWidget(QtWidgets.QLabel("Method"))
         self.cmb_align_method = QtWidgets.QComboBox()
         self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)"])
-        align_method_row.addWidget(self.cmb_align_method, 1)
+        align_method_row.addWidget(self.cmb_align_method)
         align_layout.addLayout(align_method_row)
 
-        snr_win_row = QtWidgets.QHBoxLayout()
-        snr_win_row.addWidget(QtWidgets.QLabel("SNR Win:"))
+        snr_win_row = QtWidgets.QVBoxLayout()
+        snr_win_row.setContentsMargins(0, 0, 0, 0)
+        snr_win_row.setSpacing(6)
+        snr_win_row.addWidget(QtWidgets.QLabel("SNR Window"))
         self.spn_snr_window = QtWidgets.QSpinBox()
         self.spn_snr_window.setRange(7, 127)
         self.spn_snr_window.setSingleStep(2)
         self.spn_snr_window.setValue(31)
-        self.spn_snr_window.setFixedWidth(60)
+        self.spn_snr_window.setMinimumWidth(96)
         self.spn_snr_window.setToolTip(
             "Box-filter window size for Z-Map SNR calculation (odd, \u22657).\n"
             "Larger values \u2192 smoother map.\n"
             "Recommended: 15 for ~512 px, 31 for ~1000 px, 63 for >2000 px."
         )
         snr_win_row.addWidget(self.spn_snr_window)
-        snr_win_row.addStretch()
         align_layout.addLayout(snr_win_row)
-        left_layout.addWidget(self.grp_align)
+        alignment_card_layout.addWidget(self.grp_align)
 
         left_layout.addStretch()
 
-        # Compute + ROI Manager at bottom of left panel
-        _action_btn_row = QtWidgets.QHBoxLayout()
-        _action_btn_row.setSpacing(6)
-        _action_btn_row.addWidget(self.btn_roi_manager, stretch=1)
-        _action_btn_row.addWidget(self.btn_compute, stretch=2)
-        left_layout.addLayout(_action_btn_row)
+        # ROI + status + Compute (stacked hierarchy)
+        lbl_roi_section = QtWidgets.QLabel("ROI")
+        lbl_roi_section.setStyleSheet(
+            f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_SECONDARY_MUTED};"
+        )
+        left_layout.addWidget(lbl_roi_section)
+
+        self.btn_roi_manager.setProperty("role", "secondary")
+        self.btn_compute.setProperty("role", "primary")
+        left_layout.addWidget(self.btn_roi_manager)
 
         self.lbl_roi_status = QtWidgets.QLabel("No ROIs — analysis will be skipped")
         self.lbl_roi_status.setAlignment(Qt.AlignCenter)
+        self.lbl_roi_status.setWordWrap(True)
         self.lbl_roi_status.setStyleSheet(
             "color: #9CA3AF; font-size: 11px; border: none; background: transparent;"
         )
         left_layout.addWidget(self.lbl_roi_status)
+        left_layout.addWidget(self.btn_compute)
 
-        content_layout.addWidget(left_panel)
+        self.left_panel_scroll = QtWidgets.QScrollArea()
+        self.left_panel_scroll.setObjectName("LeftPanelScroll")
+        self.left_panel_scroll.setWidgetResizable(True)
+        self.left_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.left_panel_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
+        self.left_panel_scroll.setMaximumWidth(self._sidebar_max_width)
+        self.left_panel_scroll.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
+        self.left_panel_scroll.setWidget(left_panel)
+        content_layout.addWidget(self.left_panel_scroll, stretch=0)
 
         # ================================================================
         # RIGHT PANEL: Viewer + Controls
@@ -3852,6 +3992,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.setCurrentIndex(0)
 
         content_layout.addWidget(self.stk_right_panel, stretch=1)
+        content_layout.setStretch(0, 0)
+        content_layout.setStretch(1, 1)
         outer_layout.addLayout(content_layout, stretch=1)
 
         # ── Embedded progress banner (shown during compute) ───────────────
@@ -3889,6 +4031,41 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _pb_layout.addWidget(self.progress_bar)
         self.wgt_progress_banner.setVisible(False)
         outer_layout.addWidget(self.wgt_progress_banner)
+
+        self._apply_responsive_sidebar_layout()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent):
+        super().resizeEvent(event)
+        self._apply_responsive_sidebar_layout()
+
+    def _apply_responsive_sidebar_layout(self):
+        """Apply responsive sidebar sizing and control reflow based on current width."""
+        if not hasattr(self, "left_panel"):
+            return
+
+        total_w = max(1, self.width())
+        # Keep sidebar readable and bounded; viewer gets most extra space.
+        target_w = int(total_w * 0.27)
+        target_w = max(self._sidebar_min_width, min(self._sidebar_max_width, target_w))
+        self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
+        self.left_panel_scroll.setMaximumWidth(target_w)
+        self.left_panel.setMinimumWidth(self._sidebar_min_width)
+        self.left_panel.setMaximumWidth(target_w)
+
+        sidebar_w = self.left_panel.width()
+        compact = sidebar_w < 305
+
+        # INPUT compare header: split title and utility buttons into two rows in compact mode.
+        if hasattr(self, "compare_hdr_row"):
+            self.compare_hdr_row.setDirection(
+                QtWidgets.QBoxLayout.TopToBottom if compact else QtWidgets.QBoxLayout.LeftToRight
+            )
+
+        # Invert options: avoid squeezing 3 checkboxes in one row.
+        if hasattr(self, "invert_row"):
+            self.invert_row.setDirection(
+                QtWidgets.QBoxLayout.TopToBottom if compact else QtWidgets.QBoxLayout.LeftToRight
+            )
 
     def _connect_signals(self):
         """Connect UI signals."""
@@ -4180,6 +4357,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
                 # Add checkbox for compare
                 chk = QtWidgets.QCheckBox(label)
+                chk.setProperty("compareItem", True)
                 chk.setChecked(False)
                 self.compare_layout.addWidget(chk)
                 self._compare_checkboxes.append(chk)
@@ -4189,6 +4367,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     cmb.addItem(label)
 
         self.compare_layout.addStretch()
+        self._refresh_compare_count_label()
 
         has_images = self.cmb_base.count() > 0
         self._update_sidebar_empty_state(has_images)
@@ -4208,6 +4387,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_swap_base.setEnabled(has_images)
         self.btn_select_all.setEnabled(has_images)
         self.btn_select_none.setEnabled(has_images)
+        if not has_images:
+            self.lbl_compare_title.setText("Compare Images (0)")
 
     def _on_base_changed(self):
         """Update compare checkboxes when base changes and display base image immediately."""
@@ -4217,8 +4398,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             # Disable checkbox for the base image
             is_base = (chk.text() == base_label)
             chk.setEnabled(not is_base)
+            chk.setProperty("baseItem", is_base)
+            chk.style().unpolish(chk)
+            chk.style().polish(chk)
             if is_base:
                 chk.setChecked(False)
+
+        self._refresh_compare_count_label()
 
         # Display base image without waiting for Compute
         base_img = self._images.get(base_label)
@@ -4227,6 +4413,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             if self._roi_manager is not None:
                 self._roi_manager.set_image_shape(base_img.shape[:2])
                 self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
+
+    def _refresh_compare_count_label(self):
+        """Update compare image count in the INPUT card title."""
+        base_count = 1 if self.cmb_base.currentText() else 0
+        compare_count = max(0, len(getattr(self, "_compare_checkboxes", [])) - base_count)
+        self.lbl_compare_title.setText(f"Compare Images ({compare_count})")
 
     def _select_all_compare(self):
         """Select all compare images."""
@@ -5012,7 +5204,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_adv_toggle(self, checked: bool):
         """Show/hide Advanced operation options."""
         self.grp_advanced.setVisible(checked)
-        self.btn_adv_toggle.setText("Advanced \u25bc" if checked else "Advanced \u25b6")
+        self.btn_adv_toggle.setText("Advanced Settings \u25bc" if checked else "Advanced Settings \u25b6")
 
     def _show_about_dialog(self):
         """Show the About Fusi\u00b3 dialog."""
