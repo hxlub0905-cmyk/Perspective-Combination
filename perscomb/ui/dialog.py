@@ -134,7 +134,7 @@ DIALOG_STYLE = f"""
     QPushButton#ToolbarAction {{
         background-color: {UI_BG_PANEL};
         color: {UI_TEXT};
-        border: 1px solid {UI_BORDER};
+        border: 1px solid #D1D5DB;
         border-radius: {BorderRadius.SM};
         padding: 6px 14px;
         min-height: 32px;
@@ -146,15 +146,36 @@ DIALOG_STYLE = f"""
         background-color: #FFF8ED;
         border-color: {UI_PRIMARY};
     }}
+    QPushButton#ToolbarSecondary {{
+        background-color: #FEF3C7;
+        color: #92400E;
+        border: 1.5px solid {UI_PRIMARY};
+        border-radius: {BorderRadius.SM};
+        padding: 6px 14px;
+        min-height: 32px;
+        min-width: 80px;
+        font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+        font-size: {Typography.FONT_SIZE_SMALL};
+    }}
+    QPushButton#ToolbarSecondary:hover {{
+        background-color: #FDE68A;
+        border-color: #D97706;
+    }}
+    QPushButton#ToolbarSecondary:disabled {{
+        background-color: {UI_BG_SUBTLE};
+        color: {UI_TEXT_MUTED};
+        border-color: {UI_BORDER};
+    }}
     QPushButton#ToolbarPrimary {{
         background-color: {UI_PRIMARY};
         color: {UI_TEXT_ON_PRIMARY};
         border: 1px solid {UI_PRIMARY};
         border-radius: {BorderRadius.SM};
-        padding: 6px 18px;
-        min-height: 32px;
+        padding: 10px 24px;
+        min-height: 44px;
         font-weight: {Typography.FONT_WEIGHT_BOLD};
-        font-size: {Typography.FONT_SIZE_SMALL};
+        font-size: {Typography.FONT_SIZE_BODY};
+        letter-spacing: 0.3px;
     }}
     QPushButton#ToolbarPrimary:hover {{
         background-color: {UI_PRIMARY_HOVER};
@@ -1021,7 +1042,11 @@ class SplitViewWidget(QtWidgets.QWidget):
         if img is None:
             return None
         if img.dtype != np.uint8:
-            img = np.clip(img, 0, 255).astype(np.uint8)
+            # Float images in [0, 1] range (from compute pipeline) need scaling to [0, 255]
+            if img.max() <= 1.0 + 1e-6:
+                img = (img * 255.0).clip(0, 255).astype(np.uint8)
+            else:
+                img = np.clip(img, 0, 255).astype(np.uint8)
         if img.ndim == 2:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
         else:
@@ -1412,6 +1437,7 @@ class HistogramCanvas(FigureCanvas):
 class _Worker(QtCore.QObject):
     finished = Signal(object)
     error = Signal(str)
+    progress = Signal(int, str)   # (completed_count, current_label)
 
     def __init__(self, fn):
         super().__init__()
@@ -1419,7 +1445,7 @@ class _Worker(QtCore.QObject):
 
     def run(self):
         try:
-            result = self._fn()
+            result = self._fn(self)
         except Exception as exc:
             self.error.emit(str(exc))
             return
@@ -2821,34 +2847,31 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_prev_result.setFixedWidth(32)
         self.btn_prev_result.setObjectName("ToolbarAction")
         self.btn_prev_result.setEnabled(False)
+        self.btn_prev_result.setVisible(False)   # hidden until compute
         self.btn_next_result = QtWidgets.QPushButton("\u25B6")
         self.btn_next_result.setFixedWidth(32)
         self.btn_next_result.setObjectName("ToolbarAction")
         self.btn_next_result.setEnabled(False)
+        self.btn_next_result.setVisible(False)   # hidden until compute
         toolbar_layout.addWidget(self.btn_prev_result)
         toolbar_layout.addWidget(self.btn_next_result)
 
         toolbar_layout.addStretch(1)
 
-        # Center: main actions
-        self.btn_auto_pair_toolbar = QtWidgets.QPushButton("Auto Pair")
-        self.btn_auto_pair_toolbar.setObjectName("ToolbarAction")
-        self.btn_auto_pair_toolbar.setCheckable(True)
-        toolbar_layout.addWidget(self.btn_auto_pair_toolbar)
-
         self.btn_compute = QtWidgets.QPushButton("Compute")
         self.btn_compute.setObjectName("ToolbarPrimary")
+        self.btn_compute.setMinimumHeight(44)
         # btn_compute is placed at bottom of left panel, not in toolbar
 
         self.btn_export = QtWidgets.QPushButton("Export")
-        self.btn_export.setObjectName("ToolbarAction")
+        self.btn_export.setObjectName("ToolbarSecondary")
         self.btn_export.setEnabled(False)
         toolbar_layout.addWidget(self.btn_export)
 
         toolbar_layout.addStretch(1)
 
         self.btn_roi_manager = QtWidgets.QPushButton("ROI Manager")
-        self.btn_roi_manager.setObjectName("ToolbarAction")
+        self.btn_roi_manager.setObjectName("ToolbarSecondary")
         self.btn_roi_manager.setToolTip("Open Multi-ROI Manager to define bounding-box ROIs")
         # btn_roi_manager is placed at bottom of left panel, not in toolbar
 
@@ -3096,7 +3119,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Auto pair checkbox (hidden, controlled by toolbar button)
         self.chk_auto_pair = QtWidgets.QCheckBox("Auto Pair")
         self.chk_auto_pair.setToolTip("Generate all unique pairs from selected images")
-        self.chk_auto_pair.setVisible(False)  # controlled by toolbar
         std_layout.addWidget(self.chk_auto_pair)
 
         # Swap Base button
@@ -3485,6 +3507,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _action_btn_row.addWidget(self.btn_compute, stretch=2)
         left_layout.addLayout(_action_btn_row)
 
+        self.lbl_roi_status = QtWidgets.QLabel("No ROIs — analysis will be skipped")
+        self.lbl_roi_status.setAlignment(Qt.AlignCenter)
+        self.lbl_roi_status.setStyleSheet(
+            "color: #9CA3AF; font-size: 11px; border: none; background: transparent;"
+        )
+        left_layout.addWidget(self.lbl_roi_status)
+
         content_layout.addWidget(left_panel)
 
         # ================================================================
@@ -3584,6 +3613,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_blend.addWidget(self.img_blend)  # index 1 split view
         self.stk_blend.setCurrentIndex(0)
         left_section.addWidget(self.stk_blend, stretch=1)
+
+        # Magnifier hint — visible in default (magnifier) mode, hidden in split view
+        self.lbl_magnifier_hint = QtWidgets.QLabel(
+            "Hover over Difference Map to zoom here"
+        )
+        self.lbl_magnifier_hint.setAlignment(Qt.AlignCenter)
+        self.lbl_magnifier_hint.setStyleSheet(
+            "color: #9CA3AF; font-size: 10px; border: none; background: transparent;"
+        )
+        self.lbl_magnifier_hint.setVisible(False)   # shown after compute
+        left_section.addWidget(self.lbl_magnifier_hint)
 
         # ── RIGHT SECTION (result view): control bar + difference map ─────────
         # Wrapped in a QWidget so it can be hidden in pre-compute state
@@ -3941,6 +3981,42 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         content_layout.addWidget(self.stk_right_panel, stretch=1)
         outer_layout.addLayout(content_layout, stretch=1)
 
+        # ── Embedded progress banner (shown during compute) ───────────────
+        self.wgt_progress_banner = QtWidgets.QWidget()
+        self.wgt_progress_banner.setObjectName("ProgressBanner")
+        self.wgt_progress_banner.setStyleSheet(
+            "QWidget#ProgressBanner { background-color: #FFFBEB; border-top: 1px solid #F59E0B; }"
+        )
+        _pb_layout = QtWidgets.QVBoxLayout(self.wgt_progress_banner)
+        _pb_layout.setContentsMargins(16, 8, 16, 8)
+        _pb_layout.setSpacing(4)
+        self.lbl_progress_text = QtWidgets.QLabel("Computing…")
+        self.lbl_progress_text.setStyleSheet(
+            "color: #92400E; font-size: 12px; font-weight: 600; border: none;"
+        )
+        _pb_layout.addWidget(self.lbl_progress_text)
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%v / %m  (%p%)")
+        self.progress_bar.setFixedHeight(18)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #F59E0B;
+                border-radius: 4px;
+                background: #FEF3C7;
+                text-align: center;
+                color: #92400E;
+                font-size: 11px;
+            }
+            QProgressBar::chunk {
+                background-color: #F59E0B;
+                border-radius: 3px;
+            }
+        """)
+        _pb_layout.addWidget(self.progress_bar)
+        self.wgt_progress_banner.setVisible(False)
+        outer_layout.addWidget(self.wgt_progress_banner)
+
     def _connect_signals(self):
         """Connect UI signals."""
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
@@ -3954,10 +4030,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.slider_blend.valueChanged.connect(self._on_blend_change)
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
-
-        # Toolbar Auto Pair button -> sync with hidden checkbox
-        self.btn_auto_pair_toolbar.toggled.connect(self.chk_auto_pair.setChecked)
-        self.btn_auto_pair_toolbar.toggled.connect(self._on_auto_pair_toggle)
 
         # About button
         self.btn_about.clicked.connect(self._show_about_dialog)
@@ -4181,10 +4253,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._left_view_mode = 'split'
             self.stk_blend.setCurrentIndex(1)  # show SplitViewWidget
             self.blend_slider_widget.setVisible(True)
+            self.lbl_magnifier_hint.setVisible(False)
         else:
             self._left_view_mode = self._left_non_split_mode
             self.stk_blend.setCurrentIndex(0)  # show magnifier
             self.blend_slider_widget.setVisible(False)
+            self.lbl_magnifier_hint.setVisible(True)
             self._refresh_base_compare_display(self._left_non_split_mode)
         self._sync_viewer_mode_buttons()
         self._update_blend_preview()
@@ -4639,31 +4713,21 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_prev_result.setEnabled(False)
         self.btn_next_result.setEnabled(False)
 
-        # ── Indeterminate progress dialog so the UI never looks frozen ─────
-        self._compute_progress = QtWidgets.QProgressDialog(
-            f"Computing {pair_count} pair(s)…\n"
-            "Aligning and processing — please wait.",
-            None,  # no cancel button while running
-            0, 0,  # min == max == 0 → indeterminate spinning bar
-            self,
-        )
-        self._compute_progress.setWindowTitle("Fusi\u00b3 \u2014 Computing")
-        # NonModal: parent window stays interactive; Compute button is already
-        # disabled so users cannot double-submit.
-        self._compute_progress.setWindowModality(Qt.NonModal)
-        self._compute_progress.setMinimumDuration(0)
-        self._compute_progress.setStyleSheet(DIALOG_STYLE)
-        self._compute_progress.setValue(0)
-        self._compute_progress.show()
+        # ── Embedded progress banner ──────────────────────────────────────
+        self.progress_bar.setRange(0, pair_count)
+        self.progress_bar.setValue(0)
+        self.lbl_progress_text.setText(f"Preparing {pair_count} pair(s)…")
+        self.wgt_progress_banner.setVisible(True)
         QtWidgets.QApplication.processEvents()
 
-        def _run_compute():
+        def _run_compute(worker):
             # IMPORTANT: do NOT access any Qt widget here — this runs on a
             # background thread.  All widget state must be captured before
             # _start_compute_worker is called (see is_auto_pair below).
             if is_auto_pair:
                 results: List[SinglePairResult] = []
                 labels = list(compare_imgs.keys())
+                idx = 0
                 for i in range(len(labels)):
                     for j in range(len(labels)):
                         if i == j:
@@ -4694,43 +4758,59 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                             roi_match=roi_match,
                         )
                         results.append(result)
+                        idx += 1
+                        worker.progress.emit(idx, f"{base_lbl} → {cmp_lbl}")
                 return results
-            return compute_multi_pairs(
-                base=base_img,
-                base_label=base_label,
-                compare_images=compare_imgs,
-                operation=operation,
-                alpha=alpha,
-                beta=beta,
-                invert_base=invert_base,
-                invert_compare=invert_compare,
-                invert_result=invert_result,
-                normalize=normalize,
-                normalize_method=normalize_method,
-                glv_range=glv_range,
-                clahe_clip_limit=clahe_clip_limit,
-                search_radius=50,
-                alignment_method=alignment_method,
-                preserve_positive_diff=preserve_positive_diff,
-                abs_no_gain=abs_no_gain,
-                snr_window_size=snr_window_size,
-                roi_rect=roi_rect,
-                roi_match=roi_match,
-            )
+            # Standard mode: one base vs N compares
+            cmp_labels = list(compare_imgs.keys())
+            results = []
+            for idx, cmp_lbl in enumerate(cmp_labels):
+                r = compute_single_pair(
+                    base=base_img,
+                    compare=compare_imgs[cmp_lbl],
+                    base_label=base_label,
+                    compare_label=cmp_lbl,
+                    operation=operation,
+                    alpha=alpha,
+                    beta=beta,
+                    invert_base=invert_base,
+                    invert_compare=invert_compare,
+                    invert_result=invert_result,
+                    normalize=normalize,
+                    normalize_method=normalize_method,
+                    glv_range=glv_range,
+                    clahe_clip_limit=clahe_clip_limit,
+                    search_radius=50,
+                    alignment_method=alignment_method,
+                    preserve_positive_diff=preserve_positive_diff,
+                    abs_no_gain=abs_no_gain,
+                    snr_window_size=snr_window_size,
+                    roi_rect=roi_rect,
+                    roi_match=roi_match,
+                )
+                results.append(r)
+                worker.progress.emit(idx + 1, f"{base_label} → {cmp_lbl}")
+            return results
+
+        def _on_progress(current, label):
+            self.progress_bar.setValue(current)
+            self.lbl_progress_text.setText(f"Processing: {label}")
 
         self._compute_thread, self._compute_worker = self._start_worker(
             _run_compute,
             on_success=self._on_compute_finished,
             on_error=self._on_compute_error,
-            on_done=self._on_compute_done
+            on_done=self._on_compute_done,
+            on_progress=_on_progress,
         )
 
-    def _start_worker(self, fn, on_success, on_error=None, on_done=None):
+    def _start_worker(self, fn, on_success, on_error=None, on_done=None, on_progress=None):
         """Run *fn* on a QThread; all callbacks execute on the main thread.
 
         Signal routing:
           worker.finished  ──QueuedConn──▶  on_success  (main thread)
           worker.error     ──QueuedConn──▶  on_error    (main thread)
+          worker.progress  ──QueuedConn──▶  on_progress (main thread, optional)
           worker.finished/error ──Direct──▶ thread.quit()  (safe, thread-safe call)
           thread.finished  ──QueuedConn──▶  on_done     (main thread)
           thread.finished  ──QueuedConn──▶  deleteLater (deferred, safe)
@@ -4746,6 +4826,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         worker.finished.connect(on_success)
         if on_error is not None:
             worker.error.connect(on_error)
+        if on_progress is not None:
+            worker.progress.connect(on_progress)
 
         # Tell the thread's event loop to exit once work is done.
         # These lambdas discard the argument and call thread.quit(),
@@ -4777,6 +4859,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_recompute.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
         self.btn_split_view.setVisible(True)
+        self.btn_prev_result.setVisible(True)
+        self.btn_next_result.setVisible(True)
+        self.lbl_magnifier_hint.setVisible(True)
 
         # Multi-ROI analysis — run if any ROIs are defined
         if self._multi_roi_set and results:
@@ -4790,6 +4875,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_recompute.setVisible(False)
         self.wgt_bottom_row.setVisible(False)
         self.btn_split_view.setVisible(False)
+        self.btn_prev_result.setVisible(False)
+        self.btn_next_result.setVisible(False)
+        self.lbl_magnifier_hint.setVisible(False)
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""
@@ -4846,7 +4934,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_compute_done(self):
         self._compute_thread = None
         self._compute_worker = None
-        # Close indeterminate progress dialog
+        # Hide embedded progress banner
+        self.wgt_progress_banner.setVisible(False)
+        # Also close legacy progress dialog if present (e.g. from Quadrant Fusion)
         if hasattr(self, '_compute_progress') and self._compute_progress is not None:
             self._compute_progress.close()
             self._compute_progress = None
@@ -5294,6 +5384,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Refresh all image widgets when ROI set changes."""
         self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
         self.img_diff.set_multi_roi_set(self._multi_roi_set)
+        self._update_roi_status_label()
+
+    def _update_roi_status_label(self) -> None:
+        """Update the ROI count status label below the ROI Manager button."""
+        n = len(self._multi_roi_set)
+        if n == 0:
+            self.lbl_roi_status.setText("No ROIs — analysis will be skipped")
+            self.lbl_roi_status.setStyleSheet(
+                "color: #9CA3AF; font-size: 11px; border: none; background: transparent;"
+            )
+        else:
+            t = sum(1 for r in self._multi_roi_set.rois if r.roi_type == 'target')
+            ref = n - t
+            self.lbl_roi_status.setText(f"{n} ROIs  (T:{t}  R:{ref}) — analysis enabled ✓")
+            self.lbl_roi_status.setStyleSheet(
+                "color: #16A34A; font-size: 11px; font-weight: 600; border: none; background: transparent;"
+            )
 
     # ── ROI-Match (EPI Nulling) handlers ─────────────────────────────────
 
