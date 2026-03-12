@@ -2302,7 +2302,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
         self.setWindowTitle("ROI Manager")
         self.setWindowFlags(self.windowFlags() | Qt.Tool)
-        self.resize(380, 520)
+        self.resize(440, 540)
         self._build_ui()
         self._connect_signals()
         self._refresh_list()
@@ -2353,20 +2353,20 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         multi_layout = QtWidgets.QVBoxLayout(self._multi_grp)
         multi_layout.setSpacing(4)
 
-        period_row = QtWidgets.QHBoxLayout()
-        period_row.addWidget(QtWidgets.QLabel("Period X:"))
-        self._spn_px = QtWidgets.QSpinBox()
-        self._spn_px.setRange(1, 4096)
-        self._spn_px.setValue(128)
-        self._spn_px.setSuffix(" px")
-        period_row.addWidget(self._spn_px)
-        period_row.addWidget(QtWidgets.QLabel("Y:"))
-        self._spn_py = QtWidgets.QSpinBox()
-        self._spn_py.setRange(1, 4096)
-        self._spn_py.setValue(128)
-        self._spn_py.setSuffix(" px")
-        period_row.addWidget(self._spn_py)
-        multi_layout.addLayout(period_row)
+        grid_count_row = QtWidgets.QHBoxLayout()
+        grid_count_row.addWidget(QtWidgets.QLabel("Cols:"))
+        self._spn_cols = QtWidgets.QSpinBox()
+        self._spn_cols.setRange(1, 100)
+        self._spn_cols.setValue(7)
+        self._spn_cols.setToolTip("Number of ROIs in horizontal direction")
+        grid_count_row.addWidget(self._spn_cols)
+        grid_count_row.addWidget(QtWidgets.QLabel("Rows:"))
+        self._spn_rows = QtWidgets.QSpinBox()
+        self._spn_rows.setRange(1, 100)
+        self._spn_rows.setValue(3)
+        self._spn_rows.setToolTip("Number of ROIs in vertical direction")
+        grid_count_row.addWidget(self._spn_rows)
+        multi_layout.addLayout(grid_count_row)
 
         anchor_row = QtWidgets.QHBoxLayout()
         self._btn_set_tl = QtWidgets.QPushButton("Set TL Anchor")
@@ -2511,7 +2511,8 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def _on_preview_grid(self) -> None:
         rects = self._build_grid_rects()
         self._base_widget.set_grid_preview(rects)
-        self._lbl_grid_count.setText(f"{len(rects)} ROIs")
+        c, r = self._spn_cols.value(), self._spn_rows.value()
+        self._lbl_grid_count.setText(f"{c}×{r} = {len(rects)} ROIs")
 
     def _on_confirm_grid(self) -> None:
         rects = self._build_grid_rects()
@@ -2540,8 +2541,8 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         return self._roi_set.generate_grid(
             anchor_tl_norm=tl,
             anchor_br_norm=br,
-            period_x_px=self._spn_px.value(),
-            period_y_px=self._spn_py.value(),
+            cols=self._spn_cols.value(),
+            rows=self._spn_rows.value(),
             roi_w_px=self._spn_w.value(),
             roi_h_px=self._spn_h.value(),
             img_shape=self._img_shape,
@@ -2598,19 +2599,19 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         # Promote / demote button
         if roi.roi_type == 'reference':
             btn_type = QtWidgets.QPushButton("→T")
-            btn_type.setFixedWidth(32)
+            btn_type.setMinimumWidth(44)
             btn_type.setToolTip("Promote to Target")
             btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_promote(rid))
         else:
             btn_type = QtWidgets.QPushButton("→R")
-            btn_type.setFixedWidth(32)
+            btn_type.setMinimumWidth(44)
             btn_type.setToolTip("Demote to Reference")
             btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_demote(rid))
         row.addWidget(btn_type)
 
         # Delete button
         btn_del = QtWidgets.QPushButton("✕")
-        btn_del.setFixedWidth(26)
+        btn_del.setMinimumWidth(30)
         btn_del.clicked.connect(lambda checked, rid=roi.id: self._on_delete(rid))
         row.addWidget(btn_del)
         return w
@@ -2873,7 +2874,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         content_layout.setSpacing(8)
 
         # === LEFT SIDEBAR ===
-        left_panel = QtWidgets.QWidget()
+        self.left_panel = QtWidgets.QWidget()
+        left_panel = self.left_panel   # local alias for existing code below
         left_panel.setObjectName("LeftPanel")
         left_panel.setFixedWidth(260)
         left_panel.setStyleSheet(f"""
@@ -3565,8 +3567,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_section.addWidget(self.stk_blend, stretch=1)
 
         # ── RIGHT SECTION (result view): control bar + difference map ─────────
-        right_section = QtWidgets.QVBoxLayout()
+        # Wrapped in a QWidget so it can be hidden in pre-compute state
+        self.wgt_diff_section = QtWidgets.QWidget()
+        right_section = QtWidgets.QVBoxLayout(self.wgt_diff_section)
         right_section.setSpacing(4)
+        right_section.setContentsMargins(0, 0, 0, 0)
 
         # Right control bar: Diff | Z-Map  +  Range  Normalize  Colormap
         right_ctrl_bar = QtWidgets.QFrame()
@@ -3642,10 +3647,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_section.addWidget(self.img_diff, stretch=1)
 
         # ── IMAGE AREA: left section + right section side by side ─────────────
+        # Back button — only visible post-compute, restores pre-compute state
+        self.btn_back_to_settings = QtWidgets.QPushButton("← Back")
+        self.btn_back_to_settings.setToolTip("Return to Settings & pre-compute view")
+        self.btn_back_to_settings.setFixedHeight(28)
+        self.btn_back_to_settings.setVisible(False)
+        right_layout.addWidget(self.btn_back_to_settings, alignment=Qt.AlignLeft)
+
         image_row = QtWidgets.QHBoxLayout()
         image_row.setSpacing(8)
         image_row.addLayout(left_section, stretch=1)
-        image_row.addLayout(right_section, stretch=1)
+        image_row.addWidget(self.wgt_diff_section, stretch=1)
+        self.wgt_diff_section.setVisible(False)  # hidden until compute
         right_layout.addLayout(image_row, stretch=4)
 
         # Hidden backward-compat widgets (not shown)
@@ -3920,6 +3933,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # ROI Manager button
         self.btn_roi_manager.clicked.connect(self._on_open_roi_manager)
+
+        # Back to Settings button (post-compute)
+        self.btn_back_to_settings.clicked.connect(self._on_back_to_settings)
 
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
@@ -4224,7 +4240,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_select_none.setEnabled(has_images)
 
     def _on_base_changed(self):
-        """Update compare checkboxes when base changes."""
+        """Update compare checkboxes when base changes and display base image immediately."""
         base_label = self.cmb_base.currentText()
 
         for chk in self._compare_checkboxes:
@@ -4233,6 +4249,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             chk.setEnabled(not is_base)
             if is_base:
                 chk.setChecked(False)
+
+        # Display base image without waiting for Compute
+        base_img = self._images.get(base_label)
+        if base_img is not None:
+            self.img_base_mag.setImage(base_img)
+            if self._roi_manager is not None:
+                self._roi_manager.set_image_shape(base_img.shape[:2])
+                self.img_base_mag.set_multi_roi_set(self._multi_roi_set)
 
     def _select_all_compare(self):
         """Select all compare images."""
@@ -4714,9 +4738,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_navigation()
         self.btn_export.setEnabled(bool(self._results))
 
+        # Switch to post-compute view: hide settings, show diff viewer + Back button
+        self.left_panel.setVisible(False)
+        self.wgt_diff_section.setVisible(True)
+        self.btn_back_to_settings.setVisible(True)
+
         # Multi-ROI analysis — run if any ROIs are defined
         if self._multi_roi_set and results:
             self._run_roi_analysis(results)
+
+    def _on_back_to_settings(self) -> None:
+        """Restore pre-compute state: show settings panel, hide diff viewer."""
+        self.left_panel.setVisible(True)
+        self.wgt_diff_section.setVisible(False)
+        self.btn_back_to_settings.setVisible(False)
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""

@@ -278,25 +278,26 @@ class MultiROISet:
         self,
         anchor_tl_norm: Tuple[float, float],
         anchor_br_norm: Tuple[float, float],
-        period_x_px: int,
-        period_y_px: int,
+        cols: int,
+        rows: int,
         roi_w_px: int,
         roi_h_px: int,
         img_shape: Tuple[int, int],
     ) -> List[Tuple[float, float, float, float]]:
-        """Generate a regular grid of norm_rects between two anchor points.
+        """Generate a regular cols×rows grid of norm_rects between two anchor points.
 
-        Anchors define the centers of the top-left and bottom-right ROIs.
-        The grid fills the space between anchors using the specified periods.
+        Anchors define the centers of the top-left and bottom-right corner ROIs.
+        The spacing between ROIs is derived from the anchor span divided by (count-1),
+        so exactly `cols × rows` ROIs are produced filling the anchor area evenly.
         All returned rects are in normalized [0, 1] coordinates.
         The rois are NOT added to the set here — caller must call add_roi() for each.
 
         Parameters
         ----------
-        anchor_tl_norm  : (norm_cx, norm_cy) center of top-left anchor ROI.
-        anchor_br_norm  : (norm_cx, norm_cy) center of bottom-right anchor ROI.
-        period_x_px     : Horizontal distance between ROI centers (pixels).
-        period_y_px     : Vertical distance between ROI centers (pixels).
+        anchor_tl_norm  : (norm_cx, norm_cy) center of top-left corner ROI.
+        anchor_br_norm  : (norm_cx, norm_cy) center of bottom-right corner ROI.
+        cols            : Number of ROIs in the horizontal direction.
+        rows            : Number of ROIs in the vertical direction.
         roi_w_px        : Width of each ROI (pixels).
         roi_h_px        : Height of each ROI (pixels).
         img_shape       : (H, W) of the base image for pixel↔norm conversion.
@@ -304,6 +305,8 @@ class MultiROISet:
         h, w = img_shape[:2]
         if w == 0 or h == 0:
             return []
+        cols = max(1, int(cols))
+        rows = max(1, int(rows))
 
         # Convert anchor centers to pixel coordinates
         tl_cx = anchor_tl_norm[0] * w
@@ -311,25 +314,23 @@ class MultiROISet:
         br_cx = anchor_br_norm[0] * w
         br_cy = anchor_br_norm[1] * h
 
-        # Pixel-space half sizes for norm conversion
+        # Pixel-space ROI size in norm coords
         nw = roi_w_px / w
         nh = roi_h_px / h
 
-        rects: List[Tuple[float, float, float, float]] = []
+        # Step between ROI centers derived from span / (count-1)
+        step_x = (br_cx - tl_cx) / (cols - 1) if cols > 1 else 0.0
+        step_y = (br_cy - tl_cy) / (rows - 1) if rows > 1 else 0.0
 
-        cy = tl_cy
-        while cy <= br_cy + 1e-3:
-            cx = tl_cx
-            while cx <= br_cx + 1e-3:
+        rects: List[Tuple[float, float, float, float]] = []
+        for r in range(rows):
+            for c in range(cols):
+                cx = tl_cx + c * step_x
+                cy = tl_cy + r * step_y
                 # Top-left corner of ROI in norm coords
-                nx = (cx - roi_w_px / 2.0) / w
-                ny = (cy - roi_h_px / 2.0) / h
-                # Clamp to [0, 1]
-                nx = max(0.0, min(nx, 1.0 - nw))
-                ny = max(0.0, min(ny, 1.0 - nh))
+                nx = max(0.0, min((cx - roi_w_px / 2.0) / w, 1.0 - nw))
+                ny = max(0.0, min((cy - roi_h_px / 2.0) / h, 1.0 - nh))
                 rects.append((nx, ny, nw, nh))
-                cx += period_x_px
-            cy += period_y_px
 
         return rects
 
