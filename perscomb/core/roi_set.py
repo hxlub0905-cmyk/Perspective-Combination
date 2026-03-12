@@ -17,19 +17,10 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Colour palette for auto-assignment (BGR tuples)
+# Colour constants for ROI drawing (BGR tuples)
 # ---------------------------------------------------------------------------
-_REFERENCE_COLORS: List[Tuple[int, int, int]] = [
-    (255, 255,   0),   # cyan
-    (  0, 255, 165),   # orange
-    (  0, 255,   0),   # green
-    (255,   0, 255),   # magenta
-    (128,   0, 128),   # purple
-    (  0, 215, 255),   # gold
-    (  0, 128, 255),   # sky-blue
-    (  0, 165, 255),   # light-orange
-]
-_TARGET_COLOR: Tuple[int, int, int] = (0, 0, 255)   # red (BGR)
+_REFERENCE_COLOR: Tuple[int, int, int] = (255, 255, 0)   # cyan (BGR)
+_TARGET_COLOR: Tuple[int, int, int] = (0, 0, 255)         # red (BGR)
 
 
 # ---------------------------------------------------------------------------
@@ -176,13 +167,12 @@ class MultiROISet:
     -----
     - At most ONE ROI may have roi_type == 'target' at any time.
     - set_target(id) demotes the previous target to 'reference' automatically.
-    - Colours are auto-assigned from _REFERENCE_COLORS (cycling); the target
-      always uses _TARGET_COLOR.
+    - All reference ROIs use _REFERENCE_COLOR (cyan); the target always uses
+      _TARGET_COLOR (red).
     """
 
     def __init__(self) -> None:
         self._rois: List[NamedROI] = []
-        self._color_index: int = 0
 
     # ------------------------------------------------------------------
     # CRUD
@@ -206,8 +196,7 @@ class MultiROISet:
             self._demote_current_target()
             color = _TARGET_COLOR
         else:
-            color = _REFERENCE_COLORS[self._color_index % len(_REFERENCE_COLORS)]
-            self._color_index += 1
+            color = _REFERENCE_COLOR
 
         roi = NamedROI(
             id=roi_id,
@@ -227,7 +216,6 @@ class MultiROISet:
 
     def clear(self) -> None:
         self._rois.clear()
-        self._color_index = 0
 
     def update_rect(self, roi_id: str, norm_rect: Tuple[float, float, float, float]) -> bool:
         """Update the norm_rect of an existing ROI. Returns True if found."""
@@ -257,8 +245,7 @@ class MultiROISet:
         if roi is None:
             return False
         roi.roi_type = 'reference'
-        roi.color_bgr = _REFERENCE_COLORS[self._color_index % len(_REFERENCE_COLORS)]
-        self._color_index += 1
+        roi.color_bgr = _REFERENCE_COLOR
         return True
 
     def get_target(self) -> Optional[NamedROI]:
@@ -365,5 +352,4 @@ class MultiROISet:
         for roi in self._rois:
             if roi.roi_type == 'target':
                 roi.roi_type = 'reference'
-                roi.color_bgr = _REFERENCE_COLORS[self._color_index % len(_REFERENCE_COLORS)]
-                self._color_index += 1
+                roi.color_bgr = _REFERENCE_COLOR

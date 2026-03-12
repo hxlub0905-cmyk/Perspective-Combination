@@ -871,12 +871,6 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
                 # Inner shadow for readability
                 cv2.rectangle(img_rgb, (rx + 1, ry + 1),
                                (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
-                badge = f"[T] {roi.label}" if roi.roi_type == 'target' else roi.label
-                text_y = max(ry + 13, 14)
-                cv2.putText(img_rgb, badge, (rx + 3, text_y + 1),
-                            font, 0.38, (0, 0, 0), 2, cv2.LINE_AA)
-                cv2.putText(img_rgb, badge, (rx + 3, text_y),
-                            font, 0.38, color, 1, cv2.LINE_AA)
 
         # 3. Multi-Add anchor markers
         _ANCHOR_COLOR = (0, 215, 255)  # gold
@@ -2437,6 +2431,11 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._btn_clear_all.clicked.connect(self._on_clear_all)
         self._btn_compute.clicked.connect(self.compute_requested.emit)
         self._btn_export.clicked.connect(self._on_export_csv)
+        # Real-time grid preview when spinbox values change
+        self._spn_cols.valueChanged.connect(self._auto_preview_grid)
+        self._spn_rows.valueChanged.connect(self._auto_preview_grid)
+        self._spn_w.valueChanged.connect(self._auto_preview_grid)
+        self._spn_h.valueChanged.connect(self._auto_preview_grid)
         # Signals from base widget
         self._base_widget.multi_roi_drawn.connect(self._on_roi_drawn)
         self._base_widget.multi_roi_anchor.connect(self._on_anchor_set)
@@ -2514,6 +2513,11 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         c, r = self._spn_cols.value(), self._spn_rows.value()
         self._lbl_grid_count.setText(f"{c}×{r} = {len(rects)} ROIs")
 
+    def _auto_preview_grid(self) -> None:
+        """Update grid preview automatically when spinbox values change (if anchors are set)."""
+        if self._grid_anchor_tl is not None and self._grid_anchor_br is not None:
+            self._on_preview_grid()
+
     def _on_confirm_grid(self) -> None:
         rects = self._build_grid_rects()
         for rect in rects:
@@ -2586,17 +2590,22 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         swatch.setStyleSheet(f"background: rgb({r},{g},{b}); border-radius: 3px;")
         row.addWidget(swatch)
 
-        # Star for target
-        star = QtWidgets.QLabel("★" if roi.roi_type == 'target' else "  ")
-        star.setFixedWidth(14)
-        row.addWidget(star)
-
         # Label
         lbl = QtWidgets.QLabel(roi.label)
         lbl.setMinimumWidth(70)
         row.addWidget(lbl, stretch=1)
 
-        # Promote / demote button
+        # Current state badge (non-clickable, shows what the ROI currently is)
+        state_badge = QtWidgets.QLabel("T" if roi.roi_type == 'target' else "R")
+        state_badge.setFixedWidth(18)
+        state_badge.setAlignment(Qt.AlignCenter)
+        state_badge.setStyleSheet(
+            "font-weight: bold; color: #ff4444;" if roi.roi_type == 'target'
+            else "font-weight: bold; color: #00e5ff;"
+        )
+        row.addWidget(state_badge)
+
+        # Action button (toggle to the other type)
         if roi.roi_type == 'reference':
             btn_type = QtWidgets.QPushButton("→T")
             btn_type.setMinimumWidth(44)
@@ -2828,7 +2837,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self.btn_compute = QtWidgets.QPushButton("Compute")
         self.btn_compute.setObjectName("ToolbarPrimary")
-        toolbar_layout.addWidget(self.btn_compute)
+        # btn_compute is placed at bottom of left panel, not in toolbar
 
         self.btn_export = QtWidgets.QPushButton("Export")
         self.btn_export.setObjectName("ToolbarAction")
@@ -2840,7 +2849,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_roi_manager = QtWidgets.QPushButton("ROI Manager")
         self.btn_roi_manager.setObjectName("ToolbarAction")
         self.btn_roi_manager.setToolTip("Open Multi-ROI Manager to define bounding-box ROIs")
-        toolbar_layout.addWidget(self.btn_roi_manager)
+        # btn_roi_manager is placed at bottom of left panel, not in toolbar
 
         self.btn_about = QtWidgets.QPushButton("\u2026")
         self.btn_about.setObjectName("ToolbarAction")
@@ -2877,7 +2886,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel = QtWidgets.QWidget()
         left_panel = self.left_panel   # local alias for existing code below
         left_panel.setObjectName("LeftPanel")
-        left_panel.setFixedWidth(260)
+        left_panel.setFixedWidth(320)
         left_panel.setStyleSheet(f"""
             QWidget#LeftPanel {{
                 background-color: {UI_BG_PANEL};
@@ -3467,6 +3476,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addWidget(self.grp_align)
 
         left_layout.addStretch()
+
+        # Compute + ROI Manager at bottom of left panel
+        _action_btn_row = QtWidgets.QHBoxLayout()
+        _action_btn_row.setSpacing(6)
+        _action_btn_row.addWidget(self.btn_roi_manager, stretch=1)
+        _action_btn_row.addWidget(self.btn_compute, stretch=2)
+        left_layout.addLayout(_action_btn_row)
+
         content_layout.addWidget(left_panel)
 
         # ================================================================
@@ -3521,6 +3538,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "OFF: Magnifier mode \u2014 synchronized with Difference Map\n"
             "ON:  Split-view Base vs Aligned Compare (drag divider or use slider)"
         )
+        self.btn_split_view.setVisible(False)   # hidden until compute
         left_ctrl_layout.addWidget(self.btn_split_view)
 
         # Slider for split view divider
@@ -3718,7 +3736,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_score_widget = AlignmentScoreWidget()
         self.align_score_widget.setVisible(False)
 
-        right_layout.addLayout(bottom_row)
+        self.wgt_bottom_row = QtWidgets.QWidget()
+        _bottom_row_outer = QtWidgets.QHBoxLayout(self.wgt_bottom_row)
+        _bottom_row_outer.setContentsMargins(0, 0, 0, 0)
+        _bottom_row_outer.setSpacing(0)
+        _bottom_row_outer.addLayout(bottom_row)
+        self.wgt_bottom_row.setVisible(False)   # hidden until compute
+        right_layout.addWidget(self.wgt_bottom_row)
 
         # === QUADRANT FUSION RIGHT PANEL (Page 1) ===
         qf_right_panel = QtWidgets.QWidget()
@@ -4742,6 +4766,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel.setVisible(False)
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
+        self.wgt_bottom_row.setVisible(True)
+        self.btn_split_view.setVisible(True)
 
         # Multi-ROI analysis — run if any ROIs are defined
         if self._multi_roi_set and results:
@@ -4752,6 +4778,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
+        self.wgt_bottom_row.setVisible(False)
+        self.btn_split_view.setVisible(False)
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""
