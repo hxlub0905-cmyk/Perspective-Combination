@@ -4735,12 +4735,33 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if base_img is None:
             return
 
-        # Build aligned_compares dict from results (aligned compare images)
+        norm_mode = self.cmb_normalize_mode.currentIndex()
+        use_roi_match = (norm_mode == 3)
+
+        # Build aligned_compares dict from results. In ROI-Match mode, re-apply the
+        # per-pair alpha scale so ROI analysis uses the same calibrated compare image
+        # that produced the displayed diff result.
         aligned_compares: Dict[str, np.ndarray] = {}
         for r in results:
-            aligned_compares[r.compare_label] = r.aligned_compare
+            comp = r.aligned_compare
+            if comp is None:
+                continue
+            if use_roi_match:
+                if r.roi_match_alpha is None:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "ROI Analysis",
+                        "ROI analysis is unavailable for this ROI-Match result because "
+                        "the ROI-match scale (α) was not found.",
+                    )
+                    return
+                comp = np.clip(
+                    comp.astype(np.float32) * float(r.roi_match_alpha),
+                    0,
+                    255,
+                ).astype(np.uint8)
+            aligned_compares[r.compare_label] = comp
 
-        norm_mode = self.cmb_normalize_mode.currentIndex()
         _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'skip'}
         normalize_method = _method_map.get(norm_mode, 'percentile')
         glv_range = None
