@@ -2937,12 +2937,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ================================================================
         content_layout = QtWidgets.QHBoxLayout()
         content_layout.setSpacing(8)
+        content_layout.setContentsMargins(0, 0, 0, 0)
 
         # === LEFT SIDEBAR ===
         self.left_panel = QtWidgets.QWidget()
         left_panel = self.left_panel   # local alias for existing code below
         left_panel.setObjectName("LeftPanel")
-        left_panel.setFixedWidth(320)
+        self._sidebar_pref_width = 320
+        self._sidebar_min_width = 260
+        self._sidebar_max_width = 360
+        left_panel.setMinimumWidth(self._sidebar_min_width)
+        left_panel.setMaximumWidth(self._sidebar_max_width)
+        left_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.MinimumExpanding)
         left_panel.setStyleSheet(f"""
             QWidget#LeftPanel {{
                 background-color: {UI_LEFT_PANEL_BG};
@@ -2960,7 +2966,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border-radius: {BorderRadius.SM};
                 padding: {Spacing.INPUT_PADDING};
                 font-size: {Typography.FONT_SIZE_SMALL};
-                min-height: 28px;
+                min-height: 30px;
             }}
             QWidget#LeftPanel QComboBox:hover,
             QWidget#LeftPanel QComboBox:focus {{
@@ -2983,6 +2989,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 font-size: {Typography.FONT_SIZE_SMALL};
                 background: transparent;
                 border: none;
+                min-height: 24px;
             }}
             QWidget#LeftPanel QCheckBox::indicator {{
                 width: 16px;
@@ -3002,7 +3009,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.SM};
                 padding: 4px 22px 4px 8px;
-                min-height: 24px;
+                min-height: 30px;
                 font-size: {Typography.FONT_SIZE_SMALL};
             }}
             QWidget#LeftPanel QSpinBox:hover,
@@ -3035,7 +3042,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 border: 1px solid {UI_BORDER};
                 border-radius: {BorderRadius.SM};
                 padding: 4px 10px;
-                min-height: 26px;
+                min-height: 30px;
                 font-size: {Typography.FONT_SIZE_SMALL};
                 font-weight: {Typography.FONT_WEIGHT_MEDIUM};
             }}
@@ -3196,6 +3203,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         compare_hdr_row = QtWidgets.QHBoxLayout()
         compare_hdr_row.setContentsMargins(0, 0, 0, 0)
         compare_hdr_row.setSpacing(4)
+        self.compare_hdr_row = compare_hdr_row
         self.lbl_compare_title = QtWidgets.QLabel("Compare Images (0)")
         self.lbl_compare_title.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_PRIMARY_STRONG};")
         compare_hdr_row.addWidget(self.lbl_compare_title)
@@ -3328,6 +3336,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         invert_row = QtWidgets.QHBoxLayout()
         invert_row.setSpacing(8)
+        self.invert_row = invert_row
         self.chk_invert_base = QtWidgets.QCheckBox("Inv Base")
         self.chk_invert_base.setToolTip("Apply 255−X to Base before operation")
         self.chk_invert_compare = QtWidgets.QCheckBox("Inv Cmp")
@@ -3517,13 +3526,24 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self.lbl_roi_status = QtWidgets.QLabel("No ROIs — analysis will be skipped")
         self.lbl_roi_status.setAlignment(Qt.AlignCenter)
+        self.lbl_roi_status.setWordWrap(True)
         self.lbl_roi_status.setStyleSheet(
             "color: #9CA3AF; font-size: 11px; border: none; background: transparent;"
         )
         left_layout.addWidget(self.lbl_roi_status)
         left_layout.addWidget(self.btn_compute)
 
-        content_layout.addWidget(left_panel)
+        self.left_panel_scroll = QtWidgets.QScrollArea()
+        self.left_panel_scroll.setObjectName("LeftPanelScroll")
+        self.left_panel_scroll.setWidgetResizable(True)
+        self.left_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.left_panel_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
+        self.left_panel_scroll.setMaximumWidth(self._sidebar_max_width)
+        self.left_panel_scroll.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
+        self.left_panel_scroll.setWidget(left_panel)
+        content_layout.addWidget(self.left_panel_scroll, stretch=0)
 
         # ================================================================
         # RIGHT PANEL: Viewer + Controls
@@ -3972,6 +3992,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.setCurrentIndex(0)
 
         content_layout.addWidget(self.stk_right_panel, stretch=1)
+        content_layout.setStretch(0, 0)
+        content_layout.setStretch(1, 1)
         outer_layout.addLayout(content_layout, stretch=1)
 
         # ── Embedded progress banner (shown during compute) ───────────────
@@ -4009,6 +4031,41 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _pb_layout.addWidget(self.progress_bar)
         self.wgt_progress_banner.setVisible(False)
         outer_layout.addWidget(self.wgt_progress_banner)
+
+        self._apply_responsive_sidebar_layout()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent):
+        super().resizeEvent(event)
+        self._apply_responsive_sidebar_layout()
+
+    def _apply_responsive_sidebar_layout(self):
+        """Apply responsive sidebar sizing and control reflow based on current width."""
+        if not hasattr(self, "left_panel"):
+            return
+
+        total_w = max(1, self.width())
+        # Keep sidebar readable and bounded; viewer gets most extra space.
+        target_w = int(total_w * 0.27)
+        target_w = max(self._sidebar_min_width, min(self._sidebar_max_width, target_w))
+        self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
+        self.left_panel_scroll.setMaximumWidth(target_w)
+        self.left_panel.setMinimumWidth(self._sidebar_min_width)
+        self.left_panel.setMaximumWidth(target_w)
+
+        sidebar_w = self.left_panel.width()
+        compact = sidebar_w < 305
+
+        # INPUT compare header: split title and utility buttons into two rows in compact mode.
+        if hasattr(self, "compare_hdr_row"):
+            self.compare_hdr_row.setDirection(
+                QtWidgets.QBoxLayout.TopToBottom if compact else QtWidgets.QBoxLayout.LeftToRight
+            )
+
+        # Invert options: avoid squeezing 3 checkboxes in one row.
+        if hasattr(self, "invert_row"):
+            self.invert_row.setDirection(
+                QtWidgets.QBoxLayout.TopToBottom if compact else QtWidgets.QBoxLayout.LeftToRight
+            )
 
     def _connect_signals(self):
         """Connect UI signals."""
