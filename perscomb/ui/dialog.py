@@ -508,7 +508,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         self._active_roi: Optional[tuple] = None  # (norm_x, norm_y, norm_w, norm_h)
         # Multi-ROI state
         self._multi_roi_set: Optional[MultiROISet] = None
-        # Draw mode: 'idle' | 'drag' | 'single_add' | 'multi_add_tl' | 'multi_add_br'
+        # Draw mode: 'idle' | 'drag' | 'single_add' | 'multi_add'
         self._multi_draw_mode: str = 'idle'
         self._multi_roi_start: Optional[tuple] = None   # drag start (norm x, y)
         self._multi_roi_current: Optional[tuple] = None # drag current (norm x, y)
@@ -597,7 +597,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
 
         Parameters
         ----------
-        mode : 'idle' | 'drag' | 'single_add' | 'multi_add_tl' | 'multi_add_br'
+        mode : 'idle' | 'drag' | 'single_add' | 'multi_add'
         add_size_norm : (norm_w, norm_h) used when mode == 'single_add'.
         """
         self._multi_draw_mode = mode
@@ -694,17 +694,18 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
                 self._multi_roi_current = norm
                 self._multi_roi_dragging = True
 
-            elif self._multi_draw_mode in ('multi_add_tl', 'multi_add_br'):
-                anchor_type = 'tl' if self._multi_draw_mode == 'multi_add_tl' else 'br'
+            elif self._multi_draw_mode == 'multi_add':
+                anchor_type = 'tl' if self._grid_anchor_tl is None else 'br'
                 cx, cy = norm
                 if anchor_type == 'tl':
                     self._grid_anchor_tl = (cx, cy)
                 else:
                     self._grid_anchor_br = (cx, cy)
                 self.multi_roi_anchor.emit(anchor_type, cx, cy)
-                # Exit anchor-set mode after placement
-                self._multi_draw_mode = 'idle'
-                self.setCursor(Qt.ArrowCursor)
+                # Exit after second click (BR) to prevent accidental re-anchoring.
+                if anchor_type == 'br':
+                    self._multi_draw_mode = 'idle'
+                    self.setCursor(Qt.ArrowCursor)
 
             self._update_display()
             event.accept()
@@ -1105,8 +1106,8 @@ class SplitViewWidget(QtWidgets.QWidget):
         x0, y0, iw, ih = target_rect.x(), target_rect.y(), target_rect.width(), target_rect.height()
         div_x = x0 + int(self._divider_ratio * iw)
 
-        # Background fill
-        p.fillRect(self.rect(), QtGui.QColor(UI_BG_CARD))
+        # Background fill keeps viewer matte black (consistent with standard views)
+        p.fillRect(self.rect(), QtGui.QColor(UI_BG_VIEWER))
 
         if self._base_pix is None and self._comp_pix is None:
             p.setPen(QtGui.QColor(UI_TEXT_MUTED))
@@ -2330,11 +2331,9 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     Signals
     -------
     rois_changed : Emitted whenever the MultiROISet is modified (add / remove / type change).
-    compute_requested : Emitted when user clicks [Compute ROI Profiles].
     """
 
     rois_changed = Signal()
-    compute_requested = Signal()
 
     def __init__(self, roi_set: MultiROISet, base_widget: SyncZoomImageWidget,
                  parent=None):
@@ -2347,6 +2346,30 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self.setWindowFlags(self.windowFlags() | Qt.Tool)
         self.setMinimumWidth(480)
         self.resize(480, 540)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {UI_BG_WINDOW};
+            }}
+            QGroupBox {{
+                background: {UI_BG_PANEL};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.MD};
+                margin-top: 14px;
+                padding-top: 12px;
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 6px;
+                color: {UI_TEXT};
+            }}
+            QListWidget {{
+                background: {UI_BG_PANEL};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
+            }}
+        """)
         self._build_ui()
         self._connect_signals()
         self._refresh_list()
@@ -2416,12 +2439,12 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         grid_count_row.addWidget(self._spn_rows)
         multi_layout.addLayout(grid_count_row)
 
-        anchor_row = QtWidgets.QHBoxLayout()
-        self._btn_set_tl = QtWidgets.QPushButton("Set TL Anchor")
-        self._btn_set_br = QtWidgets.QPushButton("Set BR Anchor")
-        anchor_row.addWidget(self._btn_set_tl)
-        anchor_row.addWidget(self._btn_set_br)
-        multi_layout.addLayout(anchor_row)
+        self._lbl_multi_hint = QtWidgets.QLabel(
+            "Click Multi Add, then click image: first click = TL, second click = BR"
+        )
+        self._lbl_multi_hint.setWordWrap(True)
+        self._lbl_multi_hint.setStyleSheet(f"color: {UI_TEXT_SECONDARY};")
+        multi_layout.addWidget(self._lbl_multi_hint)
 
         self._lbl_tl = QtWidgets.QLabel("TL: not set")
         self._lbl_br = QtWidgets.QLabel("BR: not set")
@@ -2463,11 +2486,13 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
         # ── Bottom buttons ────────────────────────────────────────────
         bottom_row = QtWidgets.QHBoxLayout()
-        self._btn_compute = QtWidgets.QPushButton("Compute ROI Profiles")
-        self._btn_compute.setMinimumHeight(32)
-        self._btn_export = QtWidgets.QPushButton("Export CSV")
-        bottom_row.addWidget(self._btn_compute, stretch=2)
-        bottom_row.addWidget(self._btn_export)
+        self._btn_confirm = QtWidgets.QPushButton("Confirm")
+        self._btn_confirm.setMinimumHeight(34)
+        self._btn_confirm.setStyleSheet(
+            f"background: {UI_PRIMARY}; color: {UI_TEXT_ON_PRIMARY}; font-weight: 700;"
+        )
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(self._btn_confirm)
         root.addLayout(bottom_row)
 
     # ------------------------------------------------------------------
@@ -2478,14 +2503,11 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._btn_drag.clicked.connect(lambda: self._activate_mode('drag'))
         self._btn_single.clicked.connect(lambda: self._activate_mode('single_add'))
         self._btn_multi.clicked.connect(lambda: self._toggle_multi_mode())
-        self._btn_set_tl.clicked.connect(lambda: self._enter_anchor_mode('tl'))
-        self._btn_set_br.clicked.connect(lambda: self._enter_anchor_mode('br'))
         self._btn_preview_grid.clicked.connect(self._on_preview_grid)
         self._btn_confirm_grid.clicked.connect(self._on_confirm_grid)
         self._btn_reset_anchors.clicked.connect(self._on_reset_anchors)
         self._btn_clear_all.clicked.connect(self._on_clear_all)
-        self._btn_compute.clicked.connect(self.compute_requested.emit)
-        self._btn_export.clicked.connect(self._on_export_csv)
+        self._btn_confirm.clicked.connect(self._on_confirm)
         # Real-time grid preview when spinbox values change
         self._spn_cols.valueChanged.connect(self._auto_preview_grid)
         self._spn_rows.valueChanged.connect(self._auto_preview_grid)
@@ -2502,10 +2524,6 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def set_image_shape(self, shape: Tuple[int, int]) -> None:
         """Inform the manager of the base image shape (H, W) for pixel→norm conversion."""
         self._img_shape = shape
-
-    def set_roi_result(self, result: Optional[ROIFullResult]) -> None:
-        """Store latest compute result (used by Export CSV)."""
-        self._roi_result = result
 
     # ------------------------------------------------------------------
     # Mode management
@@ -2527,13 +2545,13 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._btn_single.setChecked(False)
         self._btn_multi.setChecked(not visible)
         if not visible:
-            self._base_widget.set_multi_draw_mode('idle')
+            self._on_reset_anchors()
+            self._base_widget.set_multi_draw_mode('multi_add')
+            self._lbl_multi_hint.setText(
+                "Click image twice: first point = TL, second point = BR"
+            )
         else:
             self._base_widget.set_multi_draw_mode('idle')
-
-    def _enter_anchor_mode(self, which: str) -> None:
-        mode = 'multi_add_tl' if which == 'tl' else 'multi_add_br'
-        self._base_widget.set_multi_draw_mode(mode)
 
     def _get_add_size_norm(self) -> Optional[Tuple[float, float]]:
         if self._img_shape is None:
@@ -2554,12 +2572,15 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def _on_anchor_set(self, which: str, cx: float, cy: float) -> None:
         if which == 'tl':
             self._lbl_tl.setText(f"TL: ({cx:.3f}, {cy:.3f})")
+            self._lbl_multi_hint.setText("TL set. Click image again to set BR.")
         else:
             self._lbl_br.setText(f"BR: ({cx:.3f}, {cy:.3f})")
+            self._lbl_multi_hint.setText("TL/BR set. You can Preview Grid or Confirm Grid.")
         self._base_widget.set_grid_anchors(
             self._base_widget._grid_anchor_tl,
             self._base_widget._grid_anchor_br,
         )
+        self._auto_preview_grid()
 
     # ------------------------------------------------------------------
     # Grid management
@@ -2580,7 +2601,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         rects = self._build_grid_rects()
         for rect in rects:
             self._roi_set.add_roi(rect)
-        self._base_widget.clear_grid_preview()
+        self._on_reset_anchors()
         self._refresh_list()
         self._base_widget._update_display()
         self.rois_changed.emit()
@@ -2653,7 +2674,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         lbl.setMinimumHeight(24)
         row.addWidget(lbl, stretch=1)
 
-        # Current state badge (non-clickable, shows what the ROI currently is)
+        # Current state badge
         state_badge = QtWidgets.QLabel("T" if roi.roi_type == 'target' else "R")
         state_badge.setFixedSize(20, 24)
         state_badge.setAlignment(Qt.AlignCenter)
@@ -2663,34 +2684,29 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         )
         row.addWidget(state_badge)
 
-        # Action button (toggle to the other type)
-        if roi.roi_type == 'reference':
-            btn_type = QtWidgets.QPushButton("Set T")
-            btn_type.setMinimumSize(52, 24)
-            btn_type.setToolTip("Promote to Target")
-            btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_promote(rid))
-        else:
-            btn_type = QtWidgets.QPushButton("Set R")
-            btn_type.setMinimumSize(52, 24)
-            btn_type.setToolTip("Demote to Reference")
-            btn_type.clicked.connect(lambda checked, rid=roi.id: self._on_demote(rid))
-        row.addWidget(btn_type)
+        # Target icon button (always sets this ROI as Target)
+        btn_target = QtWidgets.QToolButton()
+        btn_target.setText("★" if roi.roi_type == 'target' else "☆")
+        btn_target.setToolTip("Set as Target")
+        btn_target.setFixedSize(28, 24)
+        btn_target.setStyleSheet(
+            "QToolButton { border: 1px solid #E5E7EB; border-radius: 6px; font-size: 14px; }"
+            "QToolButton:hover { border-color: #F59E0B; background: #FFF8ED; }"
+        )
+        btn_target.clicked.connect(lambda checked=False, rid=roi.id: self._on_promote(rid))
+        row.addWidget(btn_target)
 
-        # Delete button
-        btn_del = QtWidgets.QPushButton("✕")
+        # Delete icon button
+        btn_del = QtWidgets.QToolButton()
+        btn_del.setText("🗑")
+        btn_del.setToolTip("Delete ROI")
         btn_del.setMinimumSize(30, 24)
-        btn_del.clicked.connect(lambda checked, rid=roi.id: self._on_delete(rid))
+        btn_del.clicked.connect(lambda checked=False, rid=roi.id: self._on_delete(rid))
         row.addWidget(btn_del)
         return w
 
     def _on_promote(self, roi_id: str) -> None:
         self._roi_set.set_target(roi_id)
-        self._refresh_list()
-        self._base_widget._update_display()
-        self.rois_changed.emit()
-
-    def _on_demote(self, roi_id: str) -> None:
-        self._roi_set.set_reference(roi_id)
         self._refresh_list()
         self._base_widget._update_display()
         self.rois_changed.emit()
@@ -2702,45 +2718,20 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self.rois_changed.emit()
 
     # ------------------------------------------------------------------
-    # Export
+    # Dialog controls
     # ------------------------------------------------------------------
 
-    def _on_export_csv(self) -> None:
-        result: Optional[ROIFullResult] = getattr(self, '_roi_result', None)
-        if result is None:
-            QtWidgets.QMessageBox.information(self, "Export", "No ROI result to export yet.")
-            return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export ROI Stats CSV", "", "CSV files (*.csv)"
-        )
-        if not path:
-            return
-        import csv
-        with open(path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['layer_type', 'image_label', 'roi_id', 'roi_label',
-                              'roi_type', 'mean', 'std', 'p2', 'p98', 'median', 'pixel_count'])
-            for layer in result.layers:
-                for roi in result.roi_set.rois:
-                    stats = layer.roi_stats.get(roi.id)
-                    if stats:
-                        writer.writerow([
-                            layer.layer_type, layer.image_label,
-                            roi.id, roi.label, roi.roi_type,
-                            f"{stats.mean:.6f}", f"{stats.std:.6f}",
-                            f"{stats.p2:.6f}", f"{stats.p98:.6f}",
-                            f"{stats.median:.6f}", stats.pixel_count,
-                        ])
-            # SNR rows
-            writer.writerow([])
-            writer.writerow(['le_label', 'snr', 'mu_target', 'mu_ref', 'sigma_ref'])
-            for le_label, entry in result.snr_per_diff.items():
-                writer.writerow([
-                    le_label, f"{entry.snr:.4f}",
-                    f"{entry.mu_target:.6f}", f"{entry.mu_ref:.6f}",
-                    f"{entry.sigma_ref:.6f}",
-                ])
-        QtWidgets.QMessageBox.information(self, "Export", f"Saved to:\n{path}")
+    def _clear_multi_add_markers(self) -> None:
+        self._base_widget.set_multi_draw_mode('idle')
+        self._on_reset_anchors()
+
+    def _on_confirm(self) -> None:
+        self._clear_multi_add_markers()
+        self.accept()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._clear_multi_add_markers()
+        super().closeEvent(event)
 
 
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
@@ -2807,7 +2798,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
         self._set_button_icon(self.btn_export, QtWidgets.QStyle.SP_DialogSaveButton, "Export")
         self._set_button_icon(self.btn_swap_base, QtWidgets.QStyle.SP_ArrowRight, "Swap Base")
-        self._set_button_icon(self.btn_about, QtWidgets.QStyle.SP_FileDialogDetailedView, "")
         self._set_button_icon(self.btn_clear_hist_range, QtWidgets.QStyle.SP_DialogResetButton, "Clear Range")
         self._set_button_icon(self.btn_show_norm_compare, QtWidgets.QStyle.SP_FileDialogContentsView, "Normalize")
         self._set_button_icon(self.btn_qf_auto_detect, QtWidgets.QStyle.SP_FileDialogDetailedView, "Auto Detect")
@@ -2898,20 +2888,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_export = QtWidgets.QPushButton("Export")
         self.btn_export.setObjectName("ToolbarSecondary")
         self.btn_export.setEnabled(False)
-        toolbar_layout.addWidget(self.btn_export)
-
-        toolbar_layout.addStretch(1)
+        self.btn_export.setVisible(False)  # shown only in post-compute view
 
         self.btn_roi_manager = QtWidgets.QPushButton("ROI Manager")
         self.btn_roi_manager.setObjectName("ToolbarSecondary")
         self.btn_roi_manager.setToolTip("Open Multi-ROI Manager to define bounding-box ROIs")
         # btn_roi_manager is placed at bottom of left panel, not in toolbar
 
-        self.btn_about = QtWidgets.QPushButton("\u2026")
-        self.btn_about.setObjectName("ToolbarAction")
-        self.btn_about.setFixedWidth(36)
-        self.btn_about.setToolTip("About Fusi\u00b3")
-        toolbar_layout.addWidget(self.btn_about)
+        # Right-aligned export action (replaces legacy About button slot)
+        toolbar_layout.addWidget(self.btn_export)
 
         outer_layout.addWidget(toolbar)
 
@@ -3586,6 +3571,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             btn.setFixedHeight(30)
             left_ctrl_layout.addWidget(btn)
 
+        # Compare mode is not meaningful before compute (no aligned compare yet).
+        self.btn_mode_compare.setVisible(False)
+
         left_ctrl_layout.addSpacing(12)
 
         # Split View toggle placed in left control bar (only affects left viewer)
@@ -3739,6 +3727,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         image_row.setSpacing(8)
         image_row.addLayout(left_section, stretch=1)
         image_row.addWidget(self.wgt_diff_section, stretch=1)
+        image_row.setStretch(0, 1)
+        image_row.setStretch(1, 1)
         self.wgt_diff_section.setVisible(False)  # hidden until compute
         right_layout.addLayout(image_row, stretch=4)
 
@@ -4081,9 +4071,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
 
-        # About button
-        self.btn_about.clicked.connect(self._show_about_dialog)
-
         # ROI Manager button
         self.btn_roi_manager.clicked.connect(self._on_open_roi_manager)
 
@@ -4135,6 +4122,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_base_mag.clicked.connect(self._on_left_viewer_clicked)
         self.img_blend.clicked.connect(self._on_split_viewer_clicked)
         self.img_diff.clicked.connect(self._on_right_viewer_clicked)
+        self.img_diff.cursor_moved.connect(self._on_diff_cursor_moved)
+        self.img_diff.cursor_left.connect(self._on_diff_cursor_left)
+        self.img_base_mag.cursor_moved.connect(self._on_base_mag_cursor_moved)
+        self.img_base_mag.cursor_left.connect(self._on_base_mag_cursor_left)
 
         self._update_sidebar_empty_state(False)
         self._sync_viewer_mode_buttons()
@@ -4898,13 +4889,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_export.setEnabled(bool(self._results))
 
         # Switch to post-compute view: hide settings, show diff viewer + Back button
-        self.left_panel.setVisible(False)
+        self.left_panel_scroll.setVisible(False)
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
         self.btn_split_view.setVisible(True)
+        self.btn_mode_compare.setVisible(True)
         self.btn_prev_result.setVisible(True)
         self.btn_next_result.setVisible(True)
+        self.btn_export.setVisible(True)
 
         # Multi-ROI analysis — run if any ROIs are defined
         if self._multi_roi_set and results:
@@ -4912,13 +4905,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_back_to_settings(self) -> None:
         """Restore pre-compute state: show settings panel, hide diff viewer."""
-        self.left_panel.setVisible(True)
+        self.left_panel_scroll.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
         self.wgt_bottom_row.setVisible(False)
         self.btn_split_view.setVisible(False)
+        self.btn_mode_compare.setVisible(False)
         self.btn_prev_result.setVisible(False)
         self.btn_next_result.setVisible(False)
+        self.btn_export.setVisible(False)
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats from the latest compute results and show profile dialog."""
@@ -4982,7 +4977,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # Pass result to manager for export
         if self._roi_manager is not None:
-            self._roi_manager.set_roi_result(roi_result)
+            # ROI manager is now configuration-only; ROI results are exported via main Export flow.
+            pass
 
         # Auto-popup profile dialog
         if self._roi_profile_dialog is not None:
@@ -5429,7 +5425,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 parent=self,
             )
             self._roi_manager.rois_changed.connect(self._on_multi_rois_changed)
-            self._roi_manager.compute_requested.connect(self._on_compute)
 
         # Provide current base image shape for pixel→norm conversion
         base_label = self.cmb_base.currentText()
