@@ -981,10 +981,25 @@ def compute_roi_full_stats(
                 dtype=np.float32,
             )
             mu_ref = float(np.mean(ref_means)) if ref_means.size else 0.0
-            sigma_ref = float(np.std(ref_means)) if ref_means.size else 0.0
+            if ref_means.size >= 2:
+                sigma_ref = float(np.std(ref_means))
+            elif ref_means.size == 1:
+                # Single-reference fallback: use pooled pixel std from the available
+                # reference ROI(s) to avoid near-zero denominator inflation.
+                ref_pixels = [roi.crop(diff_f).astype(np.float32).ravel() for roi in ref_rois]
+                ref_pixels = [px for px in ref_pixels if px.size > 0]
+                if ref_pixels:
+                    sigma_ref = float(np.std(np.concatenate(ref_pixels)))
+                else:
+                    sigma_ref = 0.0
+            else:
+                sigma_ref = 0.0
             mu_target = t_stats.mean if t_stats is not None else 0.0
-            snr = (mu_target - mu_ref) / (sigma_ref + _EPS)
-            snr = max(0.0, float(snr))
+            if sigma_ref <= _EPS:
+                snr = 0.0
+            else:
+                snr = (mu_target - mu_ref) / sigma_ref
+                snr = max(0.0, float(snr))
             result.snr_per_diff[le_label] = ROISNREntry(
                 le_label=le_label,
                 snr=snr,
