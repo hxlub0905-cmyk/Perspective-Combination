@@ -2492,30 +2492,56 @@ class NormalizedCompareDialog(QtWidgets.QDialog):
 
 
 class ROIIntensityProfileDialog(QtWidgets.QDialog):
-    """Auto-popup dialog showing ROI statistics and SNR across Landing Energies.
+    """Detailed ROI analysis dialog — opened via [ROI Details…] button.
+
+    Supports multi-base results (auto-pair mode) by grouping per base_label.
 
     Tabs
     ----
-    1. SNR across LE    – line chart of SNR per diff image.
-    2. Per-ROI Mean     – selectable ROI; three lines: base / compare / diff mean.
-    3. Raw Table        – all layer × ROI stats in a scrollable table.
+    1. LE Summary     – engineering table (one row per pair) + CSV export.
+    2. SNR Chart      – bar chart with Δ subplot and σ_ref error bars.
+    3. Per-ROI Mean   – selectable ROI; base / compare / diff mean lines.
+    4. Raw Table      – all layer × ROI stats (original detailed view).
     """
 
-    def __init__(self, result: ROIFullResult, parent=None):
+    # Shared axis / spine style helpers
+    _BG_FIG  = '#1F2937'
+    _BG_AX   = '#111827'
+    _COL_TXT = '#D1D5DB'
+    _COL_MUT = '#9CA3AF'
+    _COL_SPL = '#4B5563'
+    _COL_GRD = '#374151'
+
+    def __init__(
+        self,
+        roi_results: Dict[str, ROIFullResult],
+        all_results: List[SinglePairResult],
+        parent=None,
+    ):
         super().__init__(parent)
-        self._result = result
+        # roi_results: base_label → ROIFullResult
+        # all_results: full list of SinglePairResult for alpha / align_score lookup
+        self._roi_results = roi_results
+        self._all_results = all_results
+        self._base_labels = list(roi_results.keys())
+
         self.setWindowTitle("ROI Intensity Profiles")
         self.setWindowFlags(self.windowFlags() | Qt.Window)
-        self.resize(720, 520)
+        self.resize(860, 580)
         self._build_ui()
+
+    # ------------------------------------------------------------------
+    # Top-level layout
+    # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setSpacing(8)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(10, 10, 10, 10)
 
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self._build_snr_tab(), "SNR across LE")
+        tabs.addTab(self._build_summary_tab(), "LE Summary")
+        tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
         tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
         tabs.addTab(self._build_table_tab(), "Raw Table")
         root.addWidget(tabs, stretch=1)
@@ -2528,182 +2554,374 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         root.addLayout(bottom)
 
     # ------------------------------------------------------------------
-    # Tab 1 — SNR
+    # Helpers
     # ------------------------------------------------------------------
 
-    def _build_snr_tab(self) -> QtWidgets.QWidget:
+    def _make_base_selector(self, label: str = "Base:") -> Tuple[
+            QtWidgets.QHBoxLayout, Optional[QtWidgets.QComboBox]]:
+        """Return a (layout, combo) pair.  combo is None when only one base exists."""
+        row = QtWidgets.QHBoxLayout()
+        if len(self._base_labels) <= 1:
+            return row, None
+        row.addWidget(QtWidgets.QLabel(label))
+        cmb = QtWidgets.QComboBox()
+        cmb.addItems(self._base_labels)
+        row.addWidget(cmb)
+        row.addStretch()
+        return row, cmb
+
+    def _current_roi_result(self, cmb: Optional[QtWidgets.QComboBox]) -> Optional[ROIFullResult]:
+        key = cmb.currentText() if cmb is not None else (self._base_labels[0] if self._base_labels else None)
+        return self._roi_results.get(key) if key else None
+
+    def _style_ax(self, ax) -> None:
+        ax.set_facecolor(self._BG_AX)
+        ax.tick_params(colors=self._COL_TXT)
+        for spine in ('bottom', 'left'):
+            ax.spines[spine].set_color(self._COL_SPL)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color=self._COL_GRD, linewidth=0.5)
+
+    def _results_for_base(self, base_label: str) -> List[SinglePairResult]:
+        return [r for r in self._all_results if r.base_label == base_label]
+
+    # ------------------------------------------------------------------
+    # Tab 1 — LE Summary (engineering table + CSV export)
+    # ------------------------------------------------------------------
+
+    def _build_summary_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
-        fig = Figure(figsize=(5, 3), tight_layout=True)
-        fig.patch.set_facecolor('#1F2937')
-        ax = fig.add_subplot(111)
-        ax.set_facecolor('#111827')
+        lay.setSpacing(6)
 
-        snr_data = self._result.snr_per_diff
-        if snr_data:
-            labels = list(snr_data.keys())
-            snr_vals = [snr_data[k].snr for k in labels]
-            x = range(len(labels))
-            ax.plot(x, snr_vals, marker='o', color='#F59E0B', linewidth=2)
-            ax.set_xticks(list(x))
-            ax.set_xticklabels(labels, rotation=20, ha='right', color='#D1D5DB', fontsize=9)
-            ax.set_ylabel("SNR", color='#D1D5DB')
-            ax.tick_params(colors='#D1D5DB')
-            ax.spines['bottom'].set_color('#4B5563')
-            ax.spines['left'].set_color('#4B5563')
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.grid(True, color='#374151', linewidth=0.5)
-            ax.set_title("SNR = (μ_Target − μ_Ref) / σ_Ref", color='#9CA3AF', fontsize=9)
-            for i, label in enumerate(labels):
-                entry = snr_data[label]
-                ax.annotate(
-                    f"{entry.snr:.2f}\nT:{entry.mu_target:.3f} R:{entry.mu_ref:.3f} σR:{entry.sigma_ref:.3f}",
-                    (i, entry.snr),
-                    textcoords="offset points",
-                    xytext=(0, 8),
-                    ha='center',
-                    fontsize=7,
-                    color='#D1D5DB',
-                )
-        else:
-            ax.text(0.5, 0.5, "No Target ROI defined", ha='center', va='center',
-                    color='#9CA3AF', transform=ax.transAxes)
+        ctrl_row, self._cmb_summary_base = self._make_base_selector("Filter by Base:")
+        if self._cmb_summary_base is not None:
+            self._cmb_summary_base.currentTextChanged.connect(self._refresh_summary_table)
+        export_btn = QtWidgets.QPushButton("Export CSV…")
+        export_btn.setFixedHeight(26)
+        export_btn.clicked.connect(self._on_export_csv)
+        ctrl_row.addWidget(export_btn)
+        lay.addLayout(ctrl_row)
 
-        canvas = FigureCanvas(fig)
-        lay.addWidget(canvas)
+        headers = [
+            'Base', 'Compare (LE)', 'ROI-match α', 'Align Score',
+            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR',
+        ]
+        self._summary_table = QtWidgets.QTableWidget(0, len(headers))
+        self._summary_table.setHorizontalHeaderLabels(headers)
+        self._summary_table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents
+        )
+        self._summary_table.horizontalHeader().setStretchLastSection(True)
+        self._summary_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._summary_table.setAlternatingRowColors(True)
+        self._summary_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        lay.addWidget(self._summary_table, stretch=1)
+
+        self._refresh_summary_table()
         return w
 
+    def _get_summary_rows(self, base_filter: Optional[str] = None) -> List[List[str]]:
+        """Build list of row values for the LE Summary table."""
+        rows: List[List[str]] = []
+        # Iterate in order of all_results so display order matches result navigation
+        for r in self._all_results:
+            if base_filter is not None and r.base_label != base_filter:
+                continue
+            roi_full = self._roi_results.get(r.base_label)
+            snr_entry = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
+
+            alpha_str = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
+            align_str = f"{r.alignment.final_score:.1f}" if r.alignment else "—"
+
+            if snr_entry is not None:
+                mu_t = snr_entry.mu_target
+                mu_r = snr_entry.mu_ref
+                sigma_r = snr_entry.sigma_ref
+                delta = mu_t - mu_r
+                snr = snr_entry.snr
+                rows.append([
+                    r.base_label,
+                    r.compare_label,
+                    alpha_str,
+                    align_str,
+                    f"{mu_t:.5f}",
+                    f"{mu_r:.5f}",
+                    f"{sigma_r:.5f}",
+                    f"{delta:+.5f}",
+                    f"{snr:.4f}",
+                ])
+            else:
+                rows.append([
+                    r.base_label, r.compare_label,
+                    alpha_str, align_str,
+                    "—", "—", "—", "—", "—",
+                ])
+        return rows
+
+    def _refresh_summary_table(self) -> None:
+        base_filter: Optional[str] = None
+        if self._cmb_summary_base is not None:
+            base_filter = self._cmb_summary_base.currentText() or None
+
+        self._summary_table.setRowCount(0)
+        for values in self._get_summary_rows(base_filter):
+            row_idx = self._summary_table.rowCount()
+            self._summary_table.insertRow(row_idx)
+            for col, val in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(val)
+                item.setTextAlignment(Qt.AlignCenter)
+                self._summary_table.setItem(row_idx, col, item)
+
+    def _on_export_csv(self) -> None:
+        """Export the LE Summary table to a CSV file chosen by the user."""
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export LE Summary", "", "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+        headers = [
+            'base', 'compare_le', 'roi_match_alpha', 'align_score',
+            'target_mean_diff', 'ref_mean_diff', 'ref_std_diff', 'delta', 'snr',
+        ]
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                import csv
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(self._get_summary_rows())  # all bases
+            QtWidgets.QMessageBox.information(self, "Export CSV", f"Saved to:\n{path}")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Export CSV", f"Failed to save:\n{exc}")
+
     # ------------------------------------------------------------------
-    # Tab 2 — Per-ROI Mean across LE
+    # Tab 2 — SNR Chart (bar + Δ subplot with σ_ref error bars)
+    # ------------------------------------------------------------------
+
+    def _build_snr_chart_tab(self) -> QtWidgets.QWidget:
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
+
+        ctrl_row, self._cmb_chart_base = self._make_base_selector()
+        if self._cmb_chart_base is not None:
+            self._cmb_chart_base.currentTextChanged.connect(self._refresh_snr_chart)
+        lay.addLayout(ctrl_row)
+
+        fig = Figure(figsize=(6, 4), tight_layout=True)
+        fig.patch.set_facecolor(self._BG_FIG)
+        self._chart_ax_snr, self._chart_ax_delta = fig.subplots(2, 1, sharex=True)
+        self._chart_canvas = FigureCanvas(fig)
+        lay.addWidget(self._chart_canvas, stretch=1)
+
+        self._refresh_snr_chart()
+        return w
+
+    def _refresh_snr_chart(self) -> None:
+        roi_result = self._current_roi_result(self._cmb_chart_base)
+        base_label = (self._cmb_chart_base.currentText()
+                      if self._cmb_chart_base else
+                      (self._base_labels[0] if self._base_labels else ""))
+
+        ax_snr = self._chart_ax_snr
+        ax_delta = self._chart_ax_delta
+        for ax in (ax_snr, ax_delta):
+            ax.cla()
+            self._style_ax(ax)
+
+        if roi_result is None or not roi_result.snr_per_diff:
+            ax_snr.text(0.5, 0.5, "No ROI data available",
+                        ha='center', va='center', color=self._COL_MUT,
+                        transform=ax_snr.transAxes)
+            self._chart_canvas.draw()
+            return
+
+        snr_data = roi_result.snr_per_diff
+        labels = list(snr_data.keys())
+        xs = list(range(len(labels)))
+
+        snr_vals   = [snr_data[k].snr        for k in labels]
+        delta_vals = [snr_data[k].mu_target - snr_data[k].mu_ref for k in labels]
+        sigma_refs = [snr_data[k].sigma_ref  for k in labels]
+
+        bar_w = 0.55
+
+        # ── subplot 1: SNR bars ────────────────────────────────────────
+        bars = ax_snr.bar(xs, snr_vals, width=bar_w, color='#F59E0B', alpha=0.85,
+                          zorder=3, label='SNR')
+        ax_snr.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_snr.set_ylabel("SNR", color=self._COL_TXT, fontsize=9)
+        ax_snr.set_title(
+            f"SNR = Δ / σ_Ref   [Base: {base_label}]",
+            color=self._COL_MUT, fontsize=9,
+        )
+        # Annotate each bar with SNR value
+        for i, (bar, val) in enumerate(zip(bars, snr_vals)):
+            ax_snr.text(
+                i, val + (max(snr_vals) - min(snr_vals)) * 0.03 if snr_vals else 0,
+                f"{val:.2f}", ha='center', va='bottom',
+                fontsize=8, color=self._COL_TXT,
+            )
+
+        # ── subplot 2: Δ bars with ±σ_ref error bars ──────────────────
+        colors = ['#34D399' if d >= 0 else '#F87171' for d in delta_vals]
+        ax_delta.bar(xs, delta_vals, width=bar_w, color=colors, alpha=0.8,
+                     zorder=3, label='Δ (T−R)')
+        ax_delta.errorbar(
+            xs, delta_vals, yerr=sigma_refs,
+            fmt='none', color='#D1D5DB', capsize=5,
+            linewidth=1.5, zorder=4, label='±σ_Ref',
+        )
+        ax_delta.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_delta.set_ylabel("Δ = T−R", color=self._COL_TXT, fontsize=9)
+        ax_delta.set_xticks(xs)
+        ax_delta.set_xticklabels(labels, rotation=20, ha='right',
+                                 color=self._COL_TXT, fontsize=9)
+        ax_delta.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT,
+                        fontsize=8, loc='upper right')
+
+        self._chart_canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Tab 3 — Per-ROI Mean across LE
     # ------------------------------------------------------------------
 
     def _build_mean_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
 
-        ctrl_row = QtWidgets.QHBoxLayout()
+        ctrl_row, self._cmb_mean_base = self._make_base_selector()
+        if self._cmb_mean_base is not None:
+            self._cmb_mean_base.currentTextChanged.connect(self._on_mean_base_changed)
+
         ctrl_row.addWidget(QtWidgets.QLabel("ROI:"))
         self._cmb_roi = QtWidgets.QComboBox()
-        for roi in self._result.roi_set.rois:
-            self._cmb_roi.addItem(roi.label, roi.id)
+        self._cmb_roi.setMinimumWidth(120)
         ctrl_row.addWidget(self._cmb_roi)
         ctrl_row.addStretch()
         lay.addLayout(ctrl_row)
 
         fig = Figure(figsize=(5, 3), tight_layout=True)
-        fig.patch.set_facecolor('#1F2937')
+        fig.patch.set_facecolor(self._BG_FIG)
         self._mean_ax = fig.add_subplot(111)
         self._mean_canvas = FigureCanvas(fig)
-        lay.addWidget(self._mean_canvas)
+        lay.addWidget(self._mean_canvas, stretch=1)
 
         self._cmb_roi.currentIndexChanged.connect(self._refresh_mean_plot)
-        self._refresh_mean_plot()
+        self._on_mean_base_changed()
         return w
 
+    def _on_mean_base_changed(self) -> None:
+        """Repopulate ROI combo when base changes, then redraw."""
+        roi_result = self._current_roi_result(self._cmb_mean_base)
+        self._cmb_roi.blockSignals(True)
+        self._cmb_roi.clear()
+        if roi_result is not None:
+            for roi in roi_result.roi_set.rois:
+                self._cmb_roi.addItem(roi.label, roi.id)
+        self._cmb_roi.blockSignals(False)
+        self._refresh_mean_plot()
+
     def _refresh_mean_plot(self) -> None:
+        roi_result = self._current_roi_result(self._cmb_mean_base)
         ax = self._mean_ax
         ax.cla()
-        ax.set_facecolor('#111827')
-        ax.spines['bottom'].set_color('#4B5563')
-        ax.spines['left'].set_color('#4B5563')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.grid(True, color='#374151', linewidth=0.5)
-        ax.tick_params(colors='#D1D5DB')
-        ax.set_ylabel("Mean intensity (norm)", color='#D1D5DB')
+        self._style_ax(ax)
+        ax.set_ylabel("Mean intensity (norm)", color=self._COL_TXT)
 
         roi_id = self._cmb_roi.currentData()
-        if roi_id is None:
+        if roi_result is None or roi_id is None:
             self._mean_canvas.draw()
             return
 
-        compare_labels = self._result.compare_labels()
-        diff_labels = self._result.diff_labels()
-        base_layer = self._result.get_base_layer()
+        compare_labels = roi_result.compare_labels()
+        diff_labels    = roi_result.diff_labels()
+        base_layer     = roi_result.get_base_layer()
         x = range(len(compare_labels))
         le_labels = [lbl.replace('_compare', '') for lbl in compare_labels]
 
-        # Base mean (horizontal line)
         if base_layer and roi_id in base_layer.roi_stats:
-            base_mean = base_layer.roi_stats[roi_id].mean
-            ax.axhline(base_mean, color='#60A5FA', linewidth=1.5,
-                       linestyle='--', label='Base')
+            ax.axhline(base_layer.roi_stats[roi_id].mean,
+                       color='#60A5FA', linewidth=1.5, linestyle='--', label='Base')
 
-        # Compare means
-        comp_means = []
-        for lbl in compare_labels:
-            layer = self._result.get_layer(lbl)
-            if layer and roi_id in layer.roi_stats:
-                comp_means.append(layer.roi_stats[roi_id].mean)
-            else:
-                comp_means.append(None)
-        valid_x = [i for i, v in enumerate(comp_means) if v is not None]
-        valid_y = [v for v in comp_means if v is not None]
-        if valid_x:
-            ax.plot(valid_x, valid_y, marker='s', color='#34D399',
-                    linewidth=1.5, label='Compare')
+        comp_means = [
+            roi_result.get_layer(lbl).roi_stats[roi_id].mean
+            if roi_result.get_layer(lbl) and roi_id in roi_result.get_layer(lbl).roi_stats
+            else None
+            for lbl in compare_labels
+        ]
+        vx = [i for i, v in enumerate(comp_means) if v is not None]
+        vy = [v for v in comp_means if v is not None]
+        if vx:
+            ax.plot(vx, vy, marker='s', color='#34D399', linewidth=1.5, label='Compare')
 
-        # Diff means
-        diff_means = []
-        for lbl in diff_labels:
-            layer = self._result.get_layer(lbl)
-            if layer and roi_id in layer.roi_stats:
-                diff_means.append(layer.roi_stats[roi_id].mean)
-            else:
-                diff_means.append(None)
-        valid_xd = [i for i, v in enumerate(diff_means) if v is not None]
-        valid_yd = [v for v in diff_means if v is not None]
-        if valid_xd:
-            ax.plot(valid_xd, valid_yd, marker='^', color='#F87171',
-                    linewidth=1.5, label='Diff')
+        diff_means = [
+            roi_result.get_layer(lbl).roi_stats[roi_id].mean
+            if roi_result.get_layer(lbl) and roi_id in roi_result.get_layer(lbl).roi_stats
+            else None
+            for lbl in diff_labels
+        ]
+        vxd = [i for i, v in enumerate(diff_means) if v is not None]
+        vyd = [v for v in diff_means if v is not None]
+        if vxd:
+            ax.plot(vxd, vyd, marker='^', color='#F87171', linewidth=1.5, label='Diff')
 
         ax.set_xticks(list(x))
         ax.set_xticklabels(le_labels, rotation=20, ha='right',
-                           color='#D1D5DB', fontsize=9)
-        ax.legend(facecolor='#1F2937', labelcolor='#D1D5DB', fontsize=8)
+                           color=self._COL_TXT, fontsize=9)
+        ax.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
         self._mean_canvas.draw()
 
     # ------------------------------------------------------------------
-    # Tab 3 — Raw Table
+    # Tab 4 — Raw Table (all layer × ROI stats)
     # ------------------------------------------------------------------
 
     def _build_table_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
+
+        ctrl_row, self._cmb_raw_base = self._make_base_selector()
+        if self._cmb_raw_base is not None:
+            self._cmb_raw_base.currentTextChanged.connect(self._refresh_raw_table)
+        lay.addLayout(ctrl_row)
+
         headers = ['Layer', 'Image', 'ROI', 'Type', 'Mean', 'Std', 'P2', 'P98', 'Median', 'Pixels']
-        table = QtWidgets.QTableWidget(0, len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.horizontalHeader().setStretchLastSection(False)
-        table.horizontalHeader().setSectionResizeMode(
+        self._raw_table = QtWidgets.QTableWidget(0, len(headers))
+        self._raw_table.setHorizontalHeaderLabels(headers)
+        self._raw_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeToContents
         )
-        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        table.setAlternatingRowColors(True)
+        self._raw_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._raw_table.setAlternatingRowColors(True)
+        lay.addWidget(self._raw_table, stretch=1)
 
-        roi_map = {r.id: r for r in self._result.roi_set.rois}
-        for layer in self._result.layers:
+        self._refresh_raw_table()
+        return w
+
+    def _refresh_raw_table(self) -> None:
+        roi_result = self._current_roi_result(self._cmb_raw_base)
+        self._raw_table.setRowCount(0)
+        if roi_result is None:
+            return
+        roi_map = {r.id: r for r in roi_result.roi_set.rois}
+        for layer in roi_result.layers:
             for roi_id, stats in layer.roi_stats.items():
                 roi = roi_map.get(roi_id)
-                row = table.rowCount()
-                table.insertRow(row)
+                row = self._raw_table.rowCount()
+                self._raw_table.insertRow(row)
                 values = [
-                    layer.layer_type,
-                    layer.image_label,
+                    layer.layer_type, layer.image_label,
                     roi.label if roi else roi_id,
                     roi.roi_type if roi else '',
-                    f"{stats.mean:.5f}",
-                    f"{stats.std:.5f}",
-                    f"{stats.p2:.5f}",
-                    f"{stats.p98:.5f}",
-                    f"{stats.median:.5f}",
-                    str(stats.pixel_count),
+                    f"{stats.mean:.5f}", f"{stats.std:.5f}",
+                    f"{stats.p2:.5f}", f"{stats.p98:.5f}",
+                    f"{stats.median:.5f}", str(stats.pixel_count),
                 ]
                 for col, val in enumerate(values):
-                    table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
-
-        lay.addWidget(table)
-        return w
+                    self._raw_table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
 
 
 class MultiROIManagerWidget(QtWidgets.QDialog):
@@ -3154,7 +3372,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._multi_roi_set: MultiROISet = MultiROISet()
         self._roi_manager: Optional[MultiROIManagerWidget] = None
         self._roi_profile_dialog: Optional[ROIIntensityProfileDialog] = None
-        self._roi_full_result: Optional[ROIFullResult] = None  # Last ROI analysis result
+        # Last ROI analysis results keyed by base_label.
+        # In auto-pair mode there are multiple base groups; standard mode has one.
+        self._roi_full_results: Dict[str, ROIFullResult] = {}
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -5309,41 +5529,19 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Reset bottom panels to empty state
         self.align_panel.reset()
         self.diff_roi_panel.reset()
-        self._roi_full_result = None
+        self._roi_full_results = {}
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
-        """Compute ROI full stats from the latest compute results and show profile dialog."""
-        base_label = self.cmb_base.currentText()
-        base_img = self._images.get(base_label)
-        if base_img is None:
-            return
+        """Compute ROI full stats, grouped by base_label to support auto-pair mode.
+
+        In standard mode all results share the same base_label → one ROIFullResult.
+        In auto-pair mode each distinct base_label gets its own ROIFullResult so
+        the ROI quantification is always computed against the correct base image.
+        """
+        from collections import defaultdict
 
         norm_mode = self.cmb_normalize_mode.currentIndex()
         use_roi_match = (norm_mode == 3)
-
-        # Build aligned_compares dict from results. In ROI-Match mode, re-apply the
-        # per-pair alpha scale so ROI analysis uses the same calibrated compare image
-        # that produced the displayed diff result.
-        aligned_compares: Dict[str, np.ndarray] = {}
-        for r in results:
-            comp = r.aligned_compare
-            if comp is None:
-                continue
-            if use_roi_match:
-                if r.roi_match_alpha is None:
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        "ROI Analysis",
-                        "ROI analysis is unavailable for this ROI-Match result because "
-                        "the ROI-match scale (α) was not found.",
-                    )
-                    return
-                comp = np.clip(
-                    comp.astype(np.float32) * float(r.roi_match_alpha),
-                    0,
-                    255,
-                ).astype(np.uint8)
-            aligned_compares[r.compare_label] = comp
 
         _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'skip'}
         normalize_method = _method_map.get(norm_mode, 'percentile')
@@ -5356,37 +5554,85 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         preserve_positive = (sub_mode == 0)
         abs_diff = (sub_mode == 1)
 
-        try:
-            roi_result = compute_roi_full_stats(
-                base=base_img,
-                aligned_compares=aligned_compares,
-                roi_set=self._multi_roi_set,
-                normalize_method=normalize_method,
-                glv_range=glv_range,
-                clahe_clip_limit=clahe_clip,
-                preserve_positive_diff=preserve_positive,
-                abs_diff=abs_diff,
-            )
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "ROI Analysis", f"ROI analysis failed:\n{exc}")
+        # ── Group results by base_label ──────────────────────────────────
+        groups: Dict[str, List[SinglePairResult]] = defaultdict(list)
+        for r in results:
+            groups[r.base_label].append(r)
+
+        roi_full_results: Dict[str, ROIFullResult] = {}
+
+        for base_lbl, group in groups.items():
+            base_img = self._images.get(base_lbl)
+            if base_img is None:
+                continue
+
+            # Build aligned_compares for this base group.
+            # In ROI-Match mode re-apply per-pair alpha so analysis uses the same
+            # calibrated compare image that produced the displayed diff result.
+            aligned_compares: Dict[str, np.ndarray] = {}
+            skip_group = False
+            for r in group:
+                comp = r.aligned_compare
+                if comp is None:
+                    continue
+                if use_roi_match:
+                    if r.roi_match_alpha is None:
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            "ROI Analysis",
+                            f"ROI analysis is unavailable for pair "
+                            f"'{r.base_label} → {r.compare_label}' because the "
+                            f"ROI-match scale (α) was not found.",
+                        )
+                        skip_group = True
+                        break
+                    comp = np.clip(
+                        comp.astype(np.float32) * float(r.roi_match_alpha),
+                        0, 255,
+                    ).astype(np.uint8)
+                aligned_compares[r.compare_label] = comp
+
+            if skip_group or not aligned_compares:
+                continue
+
+            try:
+                roi_result = compute_roi_full_stats(
+                    base=base_img,
+                    aligned_compares=aligned_compares,
+                    roi_set=self._multi_roi_set,
+                    normalize_method=normalize_method,
+                    glv_range=glv_range,
+                    clahe_clip_limit=clahe_clip,
+                    preserve_positive_diff=preserve_positive,
+                    abs_diff=abs_diff,
+                )
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    self, "ROI Analysis",
+                    f"ROI analysis failed for base '{base_lbl}':\n{exc}"
+                )
+                continue
+
+            roi_full_results[base_lbl] = roi_result
+
+        if not roi_full_results:
             return
 
-        # Store result so the center panel can display it for the current pair
-        self._roi_full_result = roi_result
+        # ── Store and refresh UI ─────────────────────────────────────────
+        self._roi_full_results = roi_full_results
 
         # Refresh the center Diff/ROI panel for the currently displayed result
         if self._results:
             current = self._results[self._current_result_idx]
-            n_target = len([r for r in self._multi_roi_set.rois if r.roi_type == 'target'])
-            n_ref = len(self._multi_roi_set.get_references())
-            self.diff_roi_panel.update_result(current, roi_result, n_target, n_ref)
+            self._update_diff_roi_panel(current)
 
-        # Keep the ROI profile dialog available but do NOT auto-popup on every compute.
-        # The user can open it via the [ROI Details...] button in the center panel.
+        # Rebuild the ROI detail dialog with the new multi-base results.
+        # Do NOT auto-show — user opens via [ROI Details…] button.
         if self._roi_profile_dialog is not None:
-            # Refresh the existing dialog with new data rather than closing it
             self._roi_profile_dialog.close()
-        self._roi_profile_dialog = ROIIntensityProfileDialog(roi_result, parent=self)
+        self._roi_profile_dialog = ROIIntensityProfileDialog(
+            roi_full_results, results, parent=self
+        )
 
     def _on_compute_error(self, message: str):
         QtWidgets.QMessageBox.critical(self, "Error", f"Computation failed:\n{message}")
@@ -5755,19 +6001,22 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_diff_roi_panel(result)
 
     def _update_diff_roi_panel(self, result: SinglePairResult) -> None:
-        """Refresh the DiffROIAnalysisPanelWidget for the given result."""
+        """Refresh the DiffROIAnalysisPanelWidget for the given result.
+
+        Looks up the matching ROIFullResult by result.base_label so that
+        auto-pair results are always shown against the correct base group.
+        """
         n_target = len([r for r in self._multi_roi_set.rois if r.roi_type == 'target'])
         n_ref = len(self._multi_roi_set.get_references())
         if n_target == 0 and n_ref == 0:
             self.diff_roi_panel.show_no_roi()
         else:
-            self.diff_roi_panel.update_result(result, self._roi_full_result, n_target, n_ref)
+            roi_full = self._roi_full_results.get(result.base_label)
+            self.diff_roi_panel.update_result(result, roi_full, n_target, n_ref)
 
     def _on_show_roi_profile_dialog(self) -> None:
-        """Open or raise the ROI Intensity Profile dialog (from [ROI Details...] button)."""
+        """Open or raise the ROI Intensity Profile dialog (from [ROI Details…] button)."""
         if self._roi_profile_dialog is None:
-            if not self._results:
-                return
             QtWidgets.QMessageBox.information(
                 self, "ROI Details",
                 "ROI analysis has not been run yet.\n"
