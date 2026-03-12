@@ -2088,8 +2088,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setSpacing(Spacing.SM)
-        root.setContentsMargins(Spacing.SM, Spacing.SM, Spacing.SM, Spacing.SM)
+        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 8)
 
         if self._result.nonlinear_warning:
             warn = QtWidgets.QLabel(
@@ -2313,8 +2313,8 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setSpacing(Spacing.SM)
-        root.setContentsMargins(Spacing.SM, Spacing.SM, Spacing.SM, Spacing.SM)
+        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 8)
 
         # ── Add Mode ────────────────────────────────────────────────
         mode_grp = QtWidgets.QGroupBox("Add Mode")
