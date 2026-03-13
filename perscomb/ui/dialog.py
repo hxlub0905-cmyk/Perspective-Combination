@@ -3896,6 +3896,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # In auto-pair mode there are multiple base groups; standard mode has one.
         self._roi_full_results: Dict[str, ROIFullResult] = {}
 
+        # The base-image label that was visible in the base viewer when the user
+        # last opened / modified the ROI Manager.  ROI norm_rect values are
+        # defined in this image's coordinate space and must be remapped for every
+        # other base group before computing ROI stats.
+        self._roi_ref_base_label: Optional[str] = None
+
         self._setup_ui()
         self._apply_toolbar_icons()
         self._connect_signals()
@@ -6050,6 +6056,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_panel.reset()
         self.diff_roi_panel.reset()
         self._roi_full_results = {}
+        self._roi_ref_base_label = None
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
         """Compute ROI full stats, grouped by base_label to support auto-pair mode.
@@ -6115,11 +6122,53 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             if skip_group or not aligned_compares:
                 continue
 
+            # ── ROI coordinate remapping ─────────────────────────────────
+            # If the ROI was drawn while a *different* base image was shown in
+            # the base viewer, the norm_rect values are in that image's coordinate
+            # space.  We use the already-computed alignment offset between the
+            # ROI reference base and this base group to shift the ROI coordinates
+            # so they point to the correct physical region.
+            #
+            # pair (roi_ref_base → base_lbl) gives the shift applied to base_lbl
+            # to align it with roi_ref_base.  Under this convention:
+            #   aligned_compare[y, x] = compare[y - dy, x - dx]   (warpAffine -dx/-dy)
+            # → feature at (y, x) in roi_ref_base is at (y + dy, x + dx) in base_lbl
+            # → the ROI must move by (+dx, +dy) ... wait: we need the same region
+            #   in base_lbl that corresponds to the ROI in roi_ref_base.
+            #   base_lbl feature at (y, x)  ≈ roi_ref_base feature at (y - dy, x - dx)
+            #   so roi_ref_base ROI at (rx, ry) → base_lbl ROI at (rx + dx, ry + dy)
+            # BUT alignment is COMPARE=base_lbl aligned to BASE=roi_ref_base, so
+            #   aligned_base_lbl[y, x] = base_lbl[y - dy, x - dx]
+            #   aligned_base_lbl[y, x] ≈ roi_ref_base[y, x]
+            #   → base_lbl[y - dy, x - dx] ≈ roi_ref_base[y, x]
+            #   → base_lbl[y, x]           ≈ roi_ref_base[y + dy, x + dx]
+            #   → ROI at (rx, ry) in roi_ref_base → base_lbl coords: (rx - dx, ry - dy)
+            #
+            # Therefore shift = (-dx, -dy).
+            roi_set_for_base = self._multi_roi_set
+            ref_lbl = self._roi_ref_base_label
+            if (ref_lbl and ref_lbl != base_lbl
+                    and len(self._multi_roi_set) > 0):
+                # Find pair: base=ref_lbl, compare=base_lbl
+                ref_to_base_pair = next(
+                    (r for r in results
+                     if r.base_label == ref_lbl and r.compare_label == base_lbl),
+                    None,
+                )
+                if ref_to_base_pair is not None and ref_to_base_pair.alignment is not None:
+                    dx = ref_to_base_pair.alignment.dx
+                    dy = ref_to_base_pair.alignment.dy
+                    ref_img = self._images.get(ref_lbl)
+                    if ref_img is not None:
+                        roi_set_for_base = self._multi_roi_set.shifted(
+                            -dx, -dy, ref_img.shape
+                        )
+
             try:
                 roi_result = compute_roi_full_stats(
                     base=base_img,
                     aligned_compares=aligned_compares,
-                    roi_set=self._multi_roi_set,
+                    roi_set=roi_set_for_base,
                     normalize_method=normalize_method,
                     glv_range=glv_range,
                     clahe_clip_limit=clahe_clip,
@@ -6641,14 +6690,28 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._roi_manager.set_image_shape(base_img.shape[:2])
             self._apply_roi_visibility()
 
+        # Record which base image the ROI is being drawn on.
+        # In auto-pair mode, use the currently displayed result's base_label
+        # (that image is what img_base_mag shows).  In standard mode, use cmb_base.
+        self._capture_roi_ref_base()
+
         self._roi_manager.show()
         self._roi_manager.raise_()
         self._roi_manager.activateWindow()
+
+    def _capture_roi_ref_base(self) -> None:
+        """Record the base-image label currently shown in the base viewer."""
+        if self._results and 0 <= self._current_result_idx < len(self._results):
+            self._roi_ref_base_label = self._results[self._current_result_idx].base_label
+        elif self.cmb_base.currentText():
+            self._roi_ref_base_label = self.cmb_base.currentText()
 
     def _on_multi_rois_changed(self) -> None:
         """Refresh all image widgets when ROI set changes."""
         self._apply_roi_visibility()
         self._update_roi_status_label()
+        # Keep the ref-base up to date when the user adds/modifies ROIs
+        self._capture_roi_ref_base()
 
     def _on_roi_view_toggled(self, _checked: bool) -> None:
         self._apply_roi_visibility()
