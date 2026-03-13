@@ -2579,6 +2579,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         if self._is_auto_pair:
             tabs.addTab(self._build_matrix_tab(), "Pair Matrix")
         tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
+        tabs.addTab(self._build_drift_tab(), "Align Drift")
         tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
         tabs.addTab(self._build_table_tab(), "Raw Table")
         root.addWidget(tabs, stretch=1)
@@ -2809,17 +2810,31 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "Export CSV", f"Failed to save:\n{exc}")
 
     # ------------------------------------------------------------------
-    # Tab 2 — SNR Chart (bar + Δ subplot with σ_ref error bars)
+    # Tab 2 — SNR Chart (bar + Δ subplot; "All Bases" overlay mode)
     # ------------------------------------------------------------------
+
+    # Colors used for multi-base line overlay (cycles if > 8 bases)
+    _MULTI_COLORS = [
+        '#F59E0B', '#60A5FA', '#34D399', '#F87171',
+        '#A78BFA', '#FB923C', '#2DD4BF', '#E879F9',
+    ]
+    _ALL_BASES_KEY = "All Bases"
 
     def _build_snr_chart_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
         lay.setSpacing(4)
 
-        ctrl_row, self._cmb_chart_base = self._make_base_selector()
-        if self._cmb_chart_base is not None:
+        ctrl_row = QtWidgets.QHBoxLayout()
+        self._cmb_chart_base: Optional[QtWidgets.QComboBox] = None
+        if len(self._base_labels) > 1:
+            ctrl_row.addWidget(QtWidgets.QLabel("Base:"))
+            self._cmb_chart_base = QtWidgets.QComboBox()
+            self._cmb_chart_base.addItem(self._ALL_BASES_KEY)
+            self._cmb_chart_base.addItems(self._base_labels)
             self._cmb_chart_base.currentTextChanged.connect(self._refresh_snr_chart)
+            ctrl_row.addWidget(self._cmb_chart_base)
+        ctrl_row.addStretch()
         lay.addLayout(ctrl_row)
 
         fig = Figure(figsize=(6, 4), tight_layout=True)
@@ -2832,13 +2847,16 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         return w
 
     def _refresh_snr_chart(self) -> None:
-        roi_result = self._current_roi_result(self._cmb_chart_base)
-        base_label = (self._cmb_chart_base.currentText()
-                      if self._cmb_chart_base else
-                      (self._base_labels[0] if self._base_labels else ""))
+        sel = self._cmb_chart_base.currentText() if self._cmb_chart_base else ""
+        if sel == self._ALL_BASES_KEY:
+            self._draw_snr_all_bases()
+        else:
+            self._draw_snr_single_base(sel or (self._base_labels[0] if self._base_labels else ""))
 
-        ax_snr = self._chart_ax_snr
-        ax_delta = self._chart_ax_delta
+    def _draw_snr_single_base(self, base_label: str) -> None:
+        """Bar chart mode — one base, bars per compare LE."""
+        roi_result = self._roi_results.get(base_label)
+        ax_snr, ax_delta = self._chart_ax_snr, self._chart_ax_delta
         for ax in (ax_snr, ax_delta):
             ax.cla()
             self._style_ax(ax)
@@ -2850,51 +2868,230 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             self._chart_canvas.draw()
             return
 
-        snr_data = roi_result.snr_per_diff
-        labels = list(snr_data.keys())
-        xs = list(range(len(labels)))
-
-        snr_vals   = [snr_data[k].snr        for k in labels]
+        snr_data   = roi_result.snr_per_diff
+        labels     = list(snr_data.keys())
+        xs         = list(range(len(labels)))
+        snr_vals   = [snr_data[k].snr for k in labels]
         delta_vals = [snr_data[k].mu_target - snr_data[k].mu_ref for k in labels]
-        sigma_refs = [snr_data[k].sigma_ref  for k in labels]
-
+        sigma_refs = [snr_data[k].sigma_ref for k in labels]
         bar_w = 0.55
 
-        # ── subplot 1: SNR bars ────────────────────────────────────────
-        bars = ax_snr.bar(xs, snr_vals, width=bar_w, color='#F59E0B', alpha=0.85,
-                          zorder=3, label='SNR')
+        bars = ax_snr.bar(xs, snr_vals, width=bar_w, color='#F59E0B', alpha=0.85, zorder=3)
         ax_snr.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
         ax_snr.set_ylabel("SNR", color=self._COL_TXT, fontsize=9)
-        ax_snr.set_title(
-            f"SNR = Δ / σ_Ref   [Base: {base_label}]",
-            color=self._COL_MUT, fontsize=9,
-        )
-        # Annotate each bar with SNR value
-        for i, (bar, val) in enumerate(zip(bars, snr_vals)):
-            ax_snr.text(
-                i, val + (max(snr_vals) - min(snr_vals)) * 0.03 if snr_vals else 0,
-                f"{val:.2f}", ha='center', va='bottom',
-                fontsize=8, color=self._COL_TXT,
-            )
+        ax_snr.set_title(f"SNR = Δ / σ_Ref   [Base: {base_label}]",
+                         color=self._COL_MUT, fontsize=9)
+        spread = max(snr_vals) - min(snr_vals) if snr_vals else 1
+        for i, (_, val) in enumerate(zip(bars, snr_vals)):
+            ax_snr.text(i, val + spread * 0.03, f"{val:.2f}",
+                        ha='center', va='bottom', fontsize=8, color=self._COL_TXT)
 
-        # ── subplot 2: Δ bars with ±σ_ref error bars ──────────────────
-        colors = ['#34D399' if d >= 0 else '#F87171' for d in delta_vals]
-        ax_delta.bar(xs, delta_vals, width=bar_w, color=colors, alpha=0.8,
-                     zorder=3, label='Δ (T−R)')
-        ax_delta.errorbar(
-            xs, delta_vals, yerr=sigma_refs,
-            fmt='none', color='#D1D5DB', capsize=5,
-            linewidth=1.5, zorder=4, label='±σ_Ref',
-        )
+        bar_colors = ['#34D399' if d >= 0 else '#F87171' for d in delta_vals]
+        ax_delta.bar(xs, delta_vals, width=bar_w, color=bar_colors, alpha=0.8, zorder=3, label='Δ (T−R)')
+        ax_delta.errorbar(xs, delta_vals, yerr=sigma_refs,
+                          fmt='none', color='#D1D5DB', capsize=5, linewidth=1.5, zorder=4, label='±σ_Ref')
         ax_delta.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
         ax_delta.set_ylabel("Δ = T−R", color=self._COL_TXT, fontsize=9)
         ax_delta.set_xticks(xs)
-        ax_delta.set_xticklabels(labels, rotation=20, ha='right',
-                                 color=self._COL_TXT, fontsize=9)
-        ax_delta.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT,
-                        fontsize=8, loc='upper right')
-
+        ax_delta.set_xticklabels(labels, rotation=20, ha='right', color=self._COL_TXT, fontsize=9)
+        ax_delta.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8, loc='upper right')
         self._chart_canvas.draw()
+
+    def _draw_snr_all_bases(self) -> None:
+        """Overlay mode — one colored line per base, shared compare-LE x-axis."""
+        ax_snr, ax_delta = self._chart_ax_snr, self._chart_ax_delta
+        for ax in (ax_snr, ax_delta):
+            ax.cla()
+            self._style_ax(ax)
+
+        # Collect union of all compare labels (preserve insertion order)
+        seen: dict = {}
+        for base_lbl in self._base_labels:
+            roi_res = self._roi_results.get(base_lbl)
+            if roi_res:
+                for k in roi_res.snr_per_diff:
+                    seen[k] = None
+        all_compare = list(seen.keys())
+
+        if not all_compare:
+            ax_snr.text(0.5, 0.5, "No ROI data available",
+                        ha='center', va='center', color=self._COL_MUT,
+                        transform=ax_snr.transAxes)
+            self._chart_canvas.draw()
+            return
+
+        x_pos = {lbl: i for i, lbl in enumerate(all_compare)}
+        markers = ['o', 's', '^', 'D', 'v', 'P', 'X', '*']
+
+        for b_idx, base_lbl in enumerate(self._base_labels):
+            roi_res = self._roi_results.get(base_lbl)
+            if roi_res is None or not roi_res.snr_per_diff:
+                continue
+            color   = self._MULTI_COLORS[b_idx % len(self._MULTI_COLORS)]
+            marker  = markers[b_idx % len(markers)]
+            snr_d   = roi_res.snr_per_diff
+            xs_b    = [x_pos[k] for k in snr_d]
+            snr_b   = [snr_d[k].snr for k in snr_d]
+            delta_b = [snr_d[k].mu_target - snr_d[k].mu_ref for k in snr_d]
+            sigma_b = [snr_d[k].sigma_ref for k in snr_d]
+
+            ax_snr.plot(xs_b, snr_b, marker=marker, color=color,
+                        linewidth=1.8, markersize=7, label=base_lbl, zorder=3)
+            ax_delta.plot(xs_b, delta_b, marker=marker, color=color,
+                          linewidth=1.8, markersize=7, label=base_lbl, zorder=3)
+            ax_delta.errorbar(xs_b, delta_b, yerr=sigma_b,
+                              fmt='none', color=color, capsize=4,
+                              linewidth=1.2, alpha=0.6, zorder=2)
+
+        ax_snr.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_snr.set_ylabel("SNR", color=self._COL_TXT, fontsize=9)
+        ax_snr.set_title("SNR = Δ / σ_Ref   [All Bases overlay]",
+                         color=self._COL_MUT, fontsize=9)
+        ax_snr.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT,
+                      fontsize=8, loc='upper right')
+
+        ax_delta.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_delta.set_ylabel("Δ = T−R  (err = ±σ_Ref)", color=self._COL_TXT, fontsize=9)
+        ax_delta.set_xticks(list(range(len(all_compare))))
+        ax_delta.set_xticklabels(all_compare, rotation=20, ha='right',
+                                 color=self._COL_TXT, fontsize=9)
+        self._chart_canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Tab 2c — Alignment Drift (dx / dy vs Compare LE)
+    # ------------------------------------------------------------------
+
+    def _build_drift_tab(self) -> QtWidgets.QWidget:
+        """Show per-pair alignment displacement (dx, dy) across compare labels.
+
+        Single-base: both subplots filled directly.
+        Multi-base:  base selector combo; each base is a separate line in
+                     the same plot so that drift patterns can be compared.
+        """
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
+
+        ctrl_row = QtWidgets.QHBoxLayout()
+        self._cmb_drift_base: Optional[QtWidgets.QComboBox] = None
+        if len(self._base_labels) > 1:
+            ctrl_row.addWidget(QtWidgets.QLabel("Base:"))
+            self._cmb_drift_base = QtWidgets.QComboBox()
+            self._cmb_drift_base.addItem(self._ALL_BASES_KEY)
+            self._cmb_drift_base.addItems(self._base_labels)
+            self._cmb_drift_base.currentTextChanged.connect(self._refresh_drift_chart)
+            ctrl_row.addWidget(self._cmb_drift_base)
+        ctrl_row.addStretch()
+        lay.addLayout(ctrl_row)
+
+        fig = Figure(figsize=(6, 4), tight_layout=True)
+        fig.patch.set_facecolor(self._BG_FIG)
+        self._drift_ax_dx, self._drift_ax_dy = fig.subplots(2, 1, sharex=True)
+        self._drift_canvas = FigureCanvas(fig)
+        lay.addWidget(self._drift_canvas, stretch=1)
+
+        self._refresh_drift_chart()
+        return w
+
+    def _refresh_drift_chart(self) -> None:
+        sel = self._cmb_drift_base.currentText() if self._cmb_drift_base else ""
+        show_all = (sel == self._ALL_BASES_KEY)
+
+        bases_to_plot = self._base_labels if show_all else [
+            sel or (self._base_labels[0] if self._base_labels else "")
+        ]
+
+        ax_dx, ax_dy = self._drift_ax_dx, self._drift_ax_dy
+        for ax in (ax_dx, ax_dy):
+            ax.cla()
+            self._style_ax(ax)
+
+        # Collect union of compare labels (ordering by first appearance)
+        seen: dict = {}
+        for base_lbl in bases_to_plot:
+            for r in self._all_results:
+                if r.base_label == base_lbl:
+                    seen[r.compare_label] = None
+        all_compare = list(seen.keys())
+
+        if not all_compare:
+            ax_dx.text(0.5, 0.5, "No alignment data",
+                       ha='center', va='center', color=self._COL_MUT,
+                       transform=ax_dx.transAxes)
+            self._drift_canvas.draw()
+            return
+
+        x_pos   = {lbl: i for i, lbl in enumerate(all_compare)}
+        markers  = ['o', 's', '^', 'D', 'v', 'P', 'X', '*']
+        s_colors = {
+            'ok':   '#4ADE80',
+            'warn': '#FCD34D',
+            'fail': '#F87171',
+        }
+
+        for b_idx, base_lbl in enumerate(bases_to_plot):
+            pairs = [r for r in self._all_results if r.base_label == base_lbl]
+            if not pairs:
+                continue
+
+            color  = self._MULTI_COLORS[b_idx % len(self._MULTI_COLORS)]
+            marker = markers[b_idx % len(markers)]
+            label  = base_lbl if show_all else None
+
+            xs_b  = [x_pos[r.compare_label] for r in pairs]
+            dx_b  = [r.alignment.dx for r in pairs]
+            dy_b  = [r.alignment.dy for r in pairs]
+            # Use status-based point colors when single base (more readable)
+            # Use uniform color per base in all-bases mode
+            pt_colors_dx = pt_colors_dy = color
+            if not show_all:
+                pt_colors_dx = [s_colors.get(r.alignment.status, color) for r in pairs]
+                pt_colors_dy = pt_colors_dx
+
+            # Connecting line (subtle)
+            ax_dx.plot(xs_b, dx_b, color=color, linewidth=1.2,
+                       linestyle='--', alpha=0.5, zorder=2)
+            ax_dy.plot(xs_b, dy_b, color=color, linewidth=1.2,
+                       linestyle='--', alpha=0.5, zorder=2)
+            # Scatter points colored by status (or base color in all-bases mode)
+            ax_dx.scatter(xs_b, dx_b, c=pt_colors_dx, s=55, zorder=4,
+                          marker=marker, edgecolors='none', label=label)
+            ax_dy.scatter(xs_b, dy_b, c=pt_colors_dy, s=55, zorder=4,
+                          marker=marker, edgecolors='none', label=label)
+
+        # Reference lines at 0
+        ax_dx.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='-')
+        ax_dy.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='-')
+
+        ax_dx.set_ylabel("dx  (px)", color=self._COL_TXT, fontsize=9)
+        ax_dy.set_ylabel("dy  (px)", color=self._COL_TXT, fontsize=9)
+
+        title_suffix = "All Bases overlay" if show_all else f"Base: {bases_to_plot[0]}"
+        ax_dx.set_title(f"Alignment Drift   [{title_suffix}]",
+                        color=self._COL_MUT, fontsize=9)
+
+        ax_dy.set_xticks(list(range(len(all_compare))))
+        ax_dy.set_xticklabels(all_compare, rotation=20, ha='right',
+                              color=self._COL_TXT, fontsize=9)
+
+        # Legend: for single-base mode explain point colors via status; for all-bases show base labels
+        if show_all:
+            ax_dx.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT,
+                         fontsize=8, loc='upper right')
+        else:
+            # Build a manual status legend
+            from matplotlib.lines import Line2D
+            handles = [
+                Line2D([0], [0], marker='o', color='w', markerfacecolor=c,
+                       markersize=8, label=s)
+                for s, c in s_colors.items()
+            ]
+            ax_dx.legend(handles=handles, facecolor=self._BG_FIG,
+                         labelcolor=self._COL_TXT, fontsize=8,
+                         title='Align Status', title_fontsize=8,
+                         loc='upper right')
+
+        self._drift_canvas.draw()
 
     # ------------------------------------------------------------------
     # Tab 2b — Pair Matrix (auto-pair only)
