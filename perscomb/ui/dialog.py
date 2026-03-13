@@ -6690,6 +6690,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._roi_manager.set_image_shape(base_img.shape[:2])
             self._apply_roi_visibility()
 
+        # In auto-pair mode before any compute, img_base_mag may show stale or
+        # empty content because _on_base_changed() is not called when auto-pair
+        # is toggled on.  Force-display the cmb_base image so the user draws ROI
+        # on a known, labeled image, ensuring _roi_ref_base_label is correct.
+        if self.chk_auto_pair.isChecked() and not self._results and base_img is not None:
+            self.img_base_mag.setImage(base_img)
+
         # Record which base image the ROI is being drawn on.
         # In auto-pair mode, use the currently displayed result's base_label
         # (that image is what img_base_mag shows).  In standard mode, use cmb_base.
