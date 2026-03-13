@@ -2203,16 +2203,18 @@ class DiffROIAnalysisPanelWidget(QtWidgets.QFrame):
         compare_label = result.compare_label
         snr_entry = roi_full.snr_per_diff.get(compare_label)
         if snr_entry is not None:
-            mu_t = snr_entry.mu_target
-            mu_r = snr_entry.mu_ref
-            sigma_r = snr_entry.sigma_ref
+            # Stored values are in [0, 1] normalized range; scale to GLV (0-255)
+            # for display so they match the visual diff image brightness.
+            mu_t = snr_entry.mu_target * 255.0
+            mu_r = snr_entry.mu_ref * 255.0
+            sigma_r = snr_entry.sigma_ref * 255.0
             delta = mu_t - mu_r
             snr_val = snr_entry.snr
 
-            self._lbl_target_mean.setText(f"{mu_t:.4f}")
-            self._lbl_ref_mean.setText(f"{mu_r:.4f}")
-            self._lbl_ref_std.setText(f"{sigma_r:.4f}")
-            self._lbl_delta.setText(f"{delta:+.4f}")
+            self._lbl_target_mean.setText(f"{mu_t:.2f}")
+            self._lbl_ref_mean.setText(f"{mu_r:.2f}")
+            self._lbl_ref_std.setText(f"{sigma_r:.2f}")
+            self._lbl_delta.setText(f"{delta:+.2f}")
             self._lbl_snr.setText(f"{snr_val:.3f}")
         else:
             for lbl in (self._lbl_target_mean, self._lbl_ref_mean,
@@ -2705,7 +2707,11 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             align_str     = f"{align_score_v:.1f}" if align_score_v is not None else "—"
 
             if snr_entry is not None:
-                delta_v = snr_entry.mu_target - snr_entry.mu_ref
+                # Scale from [0,1] normalized range to GLV (0-255) for display.
+                mu_t_glv    = snr_entry.mu_target * 255.0
+                mu_r_glv    = snr_entry.mu_ref    * 255.0
+                sigma_r_glv = snr_entry.sigma_ref * 255.0
+                delta_v     = mu_t_glv - mu_r_glv
                 data.append({
                     'base':         r.base_label,
                     'compare':      r.compare_label,
@@ -2713,10 +2719,10 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'alpha':        alpha_str,
                     'align_score':  align_str,
                     'align_score_v': align_score_v,
-                    'mu_t':         f"{snr_entry.mu_target:.5f}",
-                    'mu_r':         f"{snr_entry.mu_ref:.5f}",
-                    'sigma_r':      f"{snr_entry.sigma_ref:.5f}",
-                    'delta':        f"{delta_v:+.5f}",
+                    'mu_t':         f"{mu_t_glv:.2f}",
+                    'mu_r':         f"{mu_r_glv:.2f}",
+                    'sigma_r':      f"{sigma_r_glv:.2f}",
+                    'delta':        f"{delta_v:+.2f}",
                     'delta_v':      delta_v,
                     'snr':          f"{snr_entry.snr:.4f}",
                     'snr_v':        snr_entry.snr,
@@ -2820,7 +2826,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             return
         headers = [
             'base', 'compare_le', 'align_status', 'roi_match_alpha', 'align_score',
-            'target_mean_diff', 'ref_mean_diff', 'ref_std_diff', 'delta', 'snr',
+            'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv', 'snr',
         ]
         try:
             with open(path, 'w', newline='', encoding='utf-8') as f:
@@ -2896,8 +2902,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         labels     = list(snr_data.keys())
         xs         = list(range(len(labels)))
         snr_vals   = [snr_data[k].snr for k in labels]
-        delta_vals = [snr_data[k].mu_target - snr_data[k].mu_ref for k in labels]
-        sigma_refs = [snr_data[k].sigma_ref for k in labels]
+        # Scale to GLV (0-255) so chart y-axis matches displayed table values.
+        delta_vals = [(snr_data[k].mu_target - snr_data[k].mu_ref) * 255.0 for k in labels]
+        sigma_refs = [snr_data[k].sigma_ref * 255.0 for k in labels]
         bar_w = 0.55
 
         bars = ax_snr.bar(xs, snr_vals, width=bar_w, color='#F59E0B', alpha=0.85, zorder=3)
@@ -2956,8 +2963,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             snr_d   = roi_res.snr_per_diff
             xs_b    = [x_pos[k] for k in snr_d]
             snr_b   = [snr_d[k].snr for k in snr_d]
-            delta_b = [snr_d[k].mu_target - snr_d[k].mu_ref for k in snr_d]
-            sigma_b = [snr_d[k].sigma_ref for k in snr_d]
+            delta_b = [(snr_d[k].mu_target - snr_d[k].mu_ref) * 255.0 for k in snr_d]
+            sigma_b = [snr_d[k].sigma_ref * 255.0 for k in snr_d]
 
             ax_snr.plot(xs_b, snr_b, marker=marker, color=color,
                         linewidth=1.8, markersize=7, label=base_lbl, zorder=3)
@@ -3667,16 +3674,20 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
         score_v  = r.alignment.final_score if r.alignment else None
         alpha    = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else '—'
         if entry is not None:
-            delta = entry.mu_target - entry.mu_ref
+            # Scale to GLV (0-255) for display.
+            mu_t_glv    = entry.mu_target * 255.0
+            mu_r_glv    = entry.mu_ref    * 255.0
+            sigma_glv   = entry.sigma_ref * 255.0
+            delta       = mu_t_glv - mu_r_glv
             roi_rows.append({
                 'base': r.base_label, 'compare': r.compare_label,
                 'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
                 'alpha': alpha,
                 'score': f"{score_v:.1f}" if score_v is not None else '—', 'score_v': score_v,
-                'mu_t':  f"{entry.mu_target:.4f}",
-                'mu_r':  f"{entry.mu_ref:.4f}",
-                'sigma': f"{entry.sigma_ref:.4f}",
-                'delta': f"{delta:+.4f}",
+                'mu_t':  f"{mu_t_glv:.2f}",
+                'mu_r':  f"{mu_r_glv:.2f}",
+                'sigma': f"{sigma_glv:.2f}",
+                'delta': f"{delta:+.2f}",
                 'snr':   f"{entry.snr:.3f}", 'snr_v': entry.snr,
             })
         else:
@@ -3798,8 +3809,8 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
             xs  = [x_pos[k] for k in sd]
             ax_snr.plot(xs, [sd[k].snr for k in sd],
                         marker=mk, color=col, linewidth=1.8, markersize=7, label=bl)
-            db = [sd[k].mu_target - sd[k].mu_ref for k in sd]
-            sb = [sd[k].sigma_ref for k in sd]
+            db = [(sd[k].mu_target - sd[k].mu_ref) * 255.0 for k in sd]
+            sb = [sd[k].sigma_ref * 255.0 for k in sd]
             ax_delta.plot(xs, db, marker=mk, color=col, linewidth=1.8, markersize=7, label=bl)
             ax_delta.errorbar(xs, db, yerr=sb, fmt='none', color=col,
                               capsize=4, linewidth=1.2, alpha=0.6)
@@ -3822,8 +3833,8 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
         labels = list(sd.keys())
         xs     = list(range(len(labels)))
         sv     = [sd[k].snr for k in labels]
-        dv     = [sd[k].mu_target - sd[k].mu_ref for k in labels]
-        er     = [sd[k].sigma_ref for k in labels]
+        dv     = [(sd[k].mu_target - sd[k].mu_ref) * 255.0 for k in labels]
+        er     = [sd[k].sigma_ref * 255.0 for k in labels]
 
         ax_snr.bar(xs, sv, width=0.55, color='#F59E0B', alpha=0.85)
         sp = (max(sv) - min(sv)) * 0.03 if sv else 0
