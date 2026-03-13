@@ -2994,11 +2994,14 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
     def _build_matrix_tab(self) -> QtWidgets.QWidget:
         """N×N SNR heatmap — rows = base, columns = compare."""
-        import matplotlib.cm as mpl_cm
+        from matplotlib.colors import LinearSegmentedColormap
+        import matplotlib.ticker as mticker
 
         w = QtWidgets.QWidget()
+        w.setStyleSheet("background: white;")
         lay = QtWidgets.QVBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setContentsMargins(16, 12, 16, 8)
+        lay.setSpacing(6)
 
         # ── Collect ordered labels ─────────────────────────────────────
         all_labels = sorted(set(
@@ -3016,70 +3019,111 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 if entry is not None:
                     matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
 
-        # ── Figure ────────────────────────────────────────────────────
-        cell_px = 90
-        fig_in = max(4.5, n * cell_px / 96)
-        fig = Figure(figsize=(fig_in + 1.2, fig_in), tight_layout=True)
-        fig.patch.set_facecolor(self._BG_FIG)
-        ax = fig.add_subplot(111)
-
-        cmap = mpl_cm.RdYlGn.copy()
-        cmap.set_bad(color='#374151')   # NaN cells (diagonal + missing pairs)
+        # ── Pastel colormap: light-red → light-amber → light-green ────
+        pastel_cmap = LinearSegmentedColormap.from_list(
+            'snr_pastel',
+            [
+                (0.00, '#FECACA'),   # pastel red   (low SNR)
+                (0.35, '#FDE68A'),   # pastel amber (medium)
+                (0.65, '#BBF7D0'),   # pastel green (good)
+                (1.00, '#6EE7B7'),   # deeper mint  (excellent)
+            ]
+        )
+        pastel_cmap.set_bad(color='#F1F5F9')   # diagonal / missing → very light gray
 
         valid = matrix[~np.isnan(matrix)]
-        vmin = float(np.min(valid)) if valid.size else 0.0
-        vmax = float(np.max(valid)) if valid.size else 2.0
-        # Always include 0 and extend a bit so the colorbar is readable
-        vmin = min(vmin, 0.0)
-        vmax = max(vmax, self._SNR_GOOD)
+        vmin = 0.0
+        vmax = max(float(np.max(valid)) if valid.size else 0.0, self._SNR_GOOD) * 1.05
 
-        im = ax.imshow(matrix, cmap=cmap, aspect='equal',
+        # ── Figure ────────────────────────────────────────────────────
+        cell_in = 1.1                                 # inches per cell
+        margin  = 2.4                                 # left/right margin for labels + colorbar
+        fig_w   = n * cell_in + margin
+        fig_h   = max(4.0, n * cell_in + 1.2)
+        fig = Figure(figsize=(fig_w, fig_h))
+        fig.patch.set_facecolor('white')
+
+        # Leave room: left=labels, right=colorbar
+        fig.subplots_adjust(left=0.18, right=0.82, top=0.88, bottom=0.18)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('white')
+
+        im = ax.imshow(matrix, cmap=pastel_cmap, aspect='equal',
                        vmin=vmin, vmax=vmax, interpolation='nearest')
 
+        # ── Grid lines between cells ───────────────────────────────────
+        ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+        ax.grid(which='minor', color='#CBD5E1', linewidth=0.8)
+        ax.tick_params(which='minor', length=0)
+
         # ── Colorbar ──────────────────────────────────────────────────
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("SNR", color=self._COL_TXT, fontsize=9)
-        cbar.ax.tick_params(labelcolor=self._COL_TXT, color=self._COL_TXT)
-        # Mark threshold lines
-        for thresh, lbl in [(self._SNR_OK, f"≥{self._SNR_OK:.0f}"),
-                             (self._SNR_GOOD, f"≥{self._SNR_GOOD:.0f}")]:
-            if vmin < thresh < vmax:
-                cbar.ax.axhline((thresh - vmin) / (vmax - vmin), color='white',
-                                linewidth=0.8, linestyle='--')
+        cbar = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.03)
+        cbar.set_label("SNR", color='#374151', fontsize=11, fontweight='bold', labelpad=8)
+        cbar.ax.tick_params(labelcolor='#374151', color='#CBD5E1', labelsize=10)
+        cbar.outline.set_edgecolor('#CBD5E1')
+        cbar.ax.set_facecolor('white')
+        # Threshold lines on colorbar
+        for thresh, color in [(self._SNR_OK, '#F59E0B'), (self._SNR_GOOD, '#10B981')]:
+            norm_pos = thresh / max(vmax, 1e-9)
+            if 0.0 < norm_pos < 1.0:
+                cbar.ax.axhline(norm_pos, color=color, linewidth=1.5, linestyle='--', alpha=0.85)
+                cbar.ax.text(1.25, norm_pos, f'{thresh:.0f}',
+                             transform=cbar.ax.transAxes,
+                             va='center', ha='left',
+                             color=color, fontsize=9, fontweight='bold')
 
         # ── Cell annotations ──────────────────────────────────────────
         for i in range(n):
             for j in range(n):
                 if i == j:
+                    # Diagonal: self-compare placeholder
+                    ax.add_patch(
+                        __import__('matplotlib.patches', fromlist=['FancyBboxPatch'])
+                        .FancyBboxPatch(
+                            (j - 0.45, i - 0.45), 0.90, 0.90,
+                            boxstyle='round,pad=0.05',
+                            facecolor='#E2E8F0', edgecolor='none', zorder=2,
+                        )
+                    )
                     ax.text(j, i, '—', ha='center', va='center',
-                            fontsize=9, color='#6B7280')
+                            fontsize=12, color='#94A3B8', zorder=3)
                 elif not np.isnan(matrix[i, j]):
                     val = matrix[i, j]
-                    # Choose text color for readability against RdYlGn background
-                    norm_v = (val - vmin) / max(vmax - vmin, 1e-9)
-                    txt_col = '#111827' if norm_v > 0.25 else '#F9FAFB'
+                    # Text always dark on the pastel background
+                    if val >= self._SNR_GOOD:
+                        txt_col = '#065F46'   # dark green
+                    elif val >= self._SNR_OK:
+                        txt_col = '#78350F'   # dark amber
+                    else:
+                        txt_col = '#7F1D1D'   # dark red
                     ax.text(j, i, f"{val:.2f}", ha='center', va='center',
-                            fontsize=8, color=txt_col, fontweight='bold')
+                            fontsize=12, color=txt_col, fontweight='bold', zorder=3)
                 else:
                     ax.text(j, i, 'n/a', ha='center', va='center',
-                            fontsize=8, color='#6B7280')
+                            fontsize=10, color='#94A3B8', zorder=3)
 
         # ── Axes labels ───────────────────────────────────────────────
         ax.set_xticks(range(n))
         ax.set_yticks(range(n))
-        ax.set_xticklabels(all_labels, rotation=30, ha='right',
-                           color=self._COL_TXT, fontsize=9)
-        ax.set_yticklabels(all_labels, color=self._COL_TXT, fontsize=9)
-        ax.set_xlabel("Compare (LE)  →", color=self._COL_TXT, fontsize=9)
-        ax.set_ylabel("Base  ↓", color=self._COL_TXT, fontsize=9)
-        ax.set_title("SNR Pair Matrix  (row = Base, col = Compare LE)",
-                     color=self._COL_MUT, fontsize=9)
-        ax.tick_params(colors=self._COL_TXT, length=0)
+        ax.set_xticklabels(all_labels, rotation=35, ha='right',
+                           color='#1E293B', fontsize=11, fontweight='semibold')
+        ax.set_yticklabels(all_labels, color='#1E293B', fontsize=11,
+                           fontweight='semibold')
+        ax.set_xlabel("Compare (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_ylabel("Base (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_title("SNR Pair Matrix",
+                     color='#0F172A', fontsize=14, fontweight='bold', pad=14)
+        ax.tick_params(which='major', length=0, pad=6)
         for spine in ax.spines.values():
-            spine.set_visible(False)
+            spine.set_edgecolor('#E2E8F0')
+            spine.set_linewidth(1.0)
 
-        self._matrix_fig = fig   # keep ref for Save Chart
+        self._matrix_fig = fig
         canvas = FigureCanvas(fig)
+        canvas.setStyleSheet("background: white;")
 
         # Save button row
         btn_row = QtWidgets.QHBoxLayout()
