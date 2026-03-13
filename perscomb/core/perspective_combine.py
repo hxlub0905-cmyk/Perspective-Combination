@@ -544,10 +544,22 @@ def compute_single_pair(
     if roi_match and (roi_set is not None and len(roi_set.rois) > 0 or roi_rect is not None):
         alpha_roi: float
         if roi_set is not None and len(roi_set.rois) > 0:
-            # ROI Manager mode: use bounding-box means from all defined ROIs.
+            # ROI Manager mode: use bounding-box means from REFERENCE ROIs only.
+            # Engineering rule: the target ROI represents the defect region and must
+            # NOT participate in alpha fitting — doing so would bias the scale factor
+            # toward the defect signal we are trying to reveal.  Only background /
+            # normal-pattern reference ROIs should be used to estimate alpha.
+            ref_rois = roi_set.get_references()
+            if not ref_rois:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "ROI-Match: no reference ROIs defined — falling back to all ROIs for alpha fitting."
+                )
+                ref_rois = roi_set.rois  # graceful fallback when user has not set types
+
             base_means: List[float] = []
             compare_means: List[float] = []
-            for roi in roi_set.rois:
+            for roi in ref_rois:
                 b_roi = roi.crop(base_proc)
                 c_roi = roi.crop(comp_proc)
                 if b_roi.size == 0 or c_roi.size == 0:

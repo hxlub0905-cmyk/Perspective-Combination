@@ -217,6 +217,35 @@ class MultiROISet:
     def clear(self) -> None:
         self._rois.clear()
 
+    def shifted(self, dx: int, dy: int, ref_shape: Tuple[int, int]) -> "MultiROISet":
+        """Return a copy of this ROISet with every ROI translated by (dx, dy) pixels.
+
+        Used to remap ROI coordinates from one base image's coordinate space to
+        another when the alignment offset between the two bases is known.
+
+        Parameters
+        ----------
+        dx, dy  : Pixel shift in the horizontal / vertical direction.
+                  Positive dx moves the ROI right; positive dy moves it down.
+        ref_shape : (H, W) of the *reference* base image on which the original
+                    norm_rect values are defined.  Used to convert the pixel
+                    shift to normalised [0, 1] offsets.
+        """
+        import copy as _copy
+        h, w = ref_shape[:2]
+        new_set = MultiROISet()
+        for roi in self._rois:
+            nx, ny, nw, nh = roi.norm_rect
+            new_nx = nx + dx / w
+            new_ny = ny + dy / h
+            # Clamp so the ROI stays within [0, 1] while preserving size
+            new_nx = max(0.0, min(1.0 - nw, new_nx))
+            new_ny = max(0.0, min(1.0 - nh, new_ny))
+            new_roi = _copy.copy(roi)
+            new_roi.norm_rect = (new_nx, new_ny, nw, nh)
+            new_set._rois.append(new_roi)
+        return new_set
+
     def update_rect(self, roi_id: str, norm_rect: Tuple[float, float, float, float]) -> bool:
         """Update the norm_rect of an existing ROI. Returns True if found."""
         for roi in self._rois:

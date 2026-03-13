@@ -1843,6 +1843,389 @@ class StatisticsWidget(QtWidgets.QFrame):
         )
 
 
+class AlignmentPanelWidget(QtWidgets.QFrame):
+    """Compact alignment-only card for STATE B bottom panel (LEFT slot).
+
+    Shows only alignment-quality metrics using a QFormLayout.
+    Difference / statistics fields have been moved to DiffROIAnalysisPanelWidget.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("AlignCard")
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setStyleSheet(f"""
+            QFrame#AlignCard {{
+                background-color: {UI_BG_CARD};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.MD};
+            }}
+            QFrame#AlignCard QLabel {{
+                border: none;
+                background: transparent;
+            }}
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
+
+        # Card title row
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.setSpacing(8)
+        dot = QtWidgets.QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(f"background-color: {UI_PRIMARY}; border-radius: 4px;")
+        title = QtWidgets.QLabel("Alignment")
+        title.setStyleSheet(
+            f"color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD};"
+        )
+        top_row.addWidget(dot, 0, Qt.AlignVCenter)
+        top_row.addWidget(title)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        divider = QtWidgets.QFrame()
+        divider.setStyleSheet(f"background-color: {UI_BORDER}; min-height:1px; max-height:1px; border:none;")
+        layout.addWidget(divider)
+
+        # Form layout for compact two-column display
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(5)
+        form.setContentsMargins(0, 4, 0, 0)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        _label_style = (
+            f"color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_SMALL};"
+        )
+        _value_style = (
+            f"color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD};"
+            f" font-family: {Typography.FONT_FAMILY_MONO};"
+        )
+
+        self._fields: Dict[str, QtWidgets.QLabel] = {}
+        for key, label_text in [
+            ("phase", "Phase Shift"),
+            ("ncc", "NCC"),
+            ("residual", "Residual"),
+            ("final", "Final Score"),
+            ("shift", "Shift (dx, dy)"),
+        ]:
+            lbl_name = QtWidgets.QLabel(label_text)
+            lbl_name.setStyleSheet(_label_style)
+            lbl_val = QtWidgets.QLabel("--")
+            lbl_val.setStyleSheet(_value_style)
+            form.addRow(lbl_name, lbl_val)
+            self._fields[key] = lbl_val
+
+        layout.addLayout(form)
+
+        # Status row with colored badge
+        status_row = QtWidgets.QHBoxLayout()
+        lbl_status_name = QtWidgets.QLabel("Status")
+        lbl_status_name.setStyleSheet(_label_style)
+        self._lbl_status = QtWidgets.QLabel(" -- ")
+        status_row.addWidget(lbl_status_name)
+        status_row.addStretch()
+        status_row.addWidget(self._lbl_status)
+        layout.addLayout(status_row)
+
+        layout.addStretch(1)
+        self.reset()
+
+    def update_alignment(self, phase: str, ncc: str, residual: str,
+                         final: str, shift: str, status: str, status_color: str):
+        self._fields["phase"].setText(phase)
+        self._fields["ncc"].setText(ncc)
+        self._fields["residual"].setText(residual)
+        self._fields["final"].setText(final)
+        self._fields["shift"].setText(shift)
+        self._lbl_status.setText(f" {status} ")
+        self._lbl_status.setStyleSheet(
+            f"color: #FFFFFF; background-color: {status_color}; border: 1px solid {status_color};"
+            f" border-radius: {BorderRadius.SM}; padding: 1px 8px;"
+            f" font-size: {Typography.FONT_SIZE_SMALL}; font-weight: {Typography.FONT_WEIGHT_BOLD};"
+        )
+
+    def reset(self):
+        for lbl in self._fields.values():
+            lbl.setText("--")
+        self._lbl_status.setText(" -- ")
+        self._lbl_status.setStyleSheet(
+            f"color: {UI_TEXT_MUTED}; background-color: {UI_BG_SUBTLE};"
+            f" border: 1px solid {UI_BORDER}; border-radius: {BorderRadius.SM};"
+            f" padding: 1px 8px; font-size: {Typography.FONT_SIZE_SMALL};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD};"
+        )
+
+
+class DiffROIAnalysisPanelWidget(QtWidgets.QFrame):
+    """Center panel for STATE B bottom row — Diff / ROI Analysis.
+
+    Two display states:
+    - ROI defined  : shows compact ROI quantification summary for the current result.
+    - No ROI       : shows a fallback message with button to open ROI Manager.
+
+    The [ROI Details...] button opens the full ROIIntensityProfileDialog.
+    The [Open ROI Manager] button opens the ROI Manager configuration dialog.
+    """
+
+    # Signals emitted by the embedded action buttons
+    open_roi_manager_requested = Signal()
+    roi_details_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DiffROICard")
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setStyleSheet(f"""
+            QFrame#DiffROICard {{
+                background-color: {UI_BG_CARD};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.MD};
+            }}
+            QFrame#DiffROICard QLabel {{
+                border: none;
+                background: transparent;
+            }}
+        """)
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(6)
+
+        # Card title row
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.setSpacing(8)
+        dot = QtWidgets.QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(f"background-color: {UI_INFO}; border-radius: 4px;")
+        title = QtWidgets.QLabel("Diff / ROI Analysis")
+        title.setStyleSheet(
+            f"color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD};"
+        )
+        top_row.addWidget(dot, 0, Qt.AlignVCenter)
+        top_row.addWidget(title)
+        top_row.addStretch()
+        outer.addLayout(top_row)
+
+        divider = QtWidgets.QFrame()
+        divider.setStyleSheet(f"background-color: {UI_BORDER}; min-height:1px; max-height:1px; border:none;")
+        outer.addWidget(divider)
+
+        # Stacked widget: page 0 = ROI summary, page 1 = no-ROI fallback
+        self._stack = QtWidgets.QStackedWidget()
+        outer.addWidget(self._stack, 1)
+
+        # ── Page 0: ROI summary ────────────────────────────────────────────
+        page_roi = QtWidgets.QWidget()
+        roi_layout = QtWidgets.QVBoxLayout(page_roi)
+        roi_layout.setContentsMargins(0, 2, 0, 0)
+        roi_layout.setSpacing(4)
+
+        _sec_style = (
+            f"color: {UI_TEXT_SECONDARY}; font-size: {Typography.FONT_SIZE_CAPTION};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD}; text-transform: uppercase;"
+        )
+        _label_style = (
+            f"color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_SMALL};"
+        )
+        _value_style = (
+            f"color: {UI_TEXT}; font-size: {Typography.FONT_SIZE_BODY};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD};"
+            f" font-family: {Typography.FONT_FAMILY_MONO};"
+        )
+        _value_accent = (
+            f"color: {UI_PRIMARY}; font-size: {Typography.FONT_SIZE_BODY};"
+            f" font-weight: {Typography.FONT_WEIGHT_BOLD};"
+            f" font-family: {Typography.FONT_FAMILY_MONO};"
+        )
+
+        def _make_form_row(label_text: str, value_style: str = _value_style):
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(6)
+            lbl = QtWidgets.QLabel(label_text)
+            lbl.setStyleSheet(_label_style)
+            val = QtWidgets.QLabel("--")
+            val.setStyleSheet(value_style)
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(lbl)
+            row.addStretch()
+            row.addWidget(val)
+            return row, val
+
+        # Section 1: ROI Summary
+        hdr1 = QtWidgets.QLabel("ROI Summary")
+        hdr1.setStyleSheet(_sec_style)
+        roi_layout.addWidget(hdr1)
+
+        row, self._lbl_target_count = _make_form_row("Target ROI")
+        roi_layout.addLayout(row)
+        row, self._lbl_ref_count = _make_form_row("Reference ROIs")
+        roi_layout.addLayout(row)
+        row, self._lbl_roi_mode = _make_form_row("Calibration Mode")
+        roi_layout.addLayout(row)
+
+        div1 = QtWidgets.QFrame()
+        div1.setStyleSheet(f"background-color: {UI_BORDER}; min-height:1px; max-height:1px; border:none;")
+        roi_layout.addWidget(div1)
+
+        # Section 2: Calibration
+        hdr2 = QtWidgets.QLabel("Calibration")
+        hdr2.setStyleSheet(_sec_style)
+        roi_layout.addWidget(hdr2)
+
+        row, self._lbl_alpha = _make_form_row("ROI-match α", _value_accent)
+        roi_layout.addLayout(row)
+
+        div2 = QtWidgets.QFrame()
+        div2.setStyleSheet(f"background-color: {UI_BORDER}; min-height:1px; max-height:1px; border:none;")
+        roi_layout.addWidget(div2)
+
+        # Section 3: Diff Quantification
+        hdr3 = QtWidgets.QLabel("Diff Quantification")
+        hdr3.setStyleSheet(_sec_style)
+        roi_layout.addWidget(hdr3)
+
+        row, self._lbl_target_mean = _make_form_row("Target Mean Diff")
+        roi_layout.addLayout(row)
+        row, self._lbl_ref_mean = _make_form_row("Ref Mean Diff")
+        roi_layout.addLayout(row)
+        row, self._lbl_ref_std = _make_form_row("Ref Std Diff")
+        roi_layout.addLayout(row)
+        row, self._lbl_delta = _make_form_row("Δ (Target − Ref)")
+        roi_layout.addLayout(row)
+        row, self._lbl_snr = _make_form_row("SNR (Δ / σ_ref)", _value_accent)
+        roi_layout.addLayout(row)
+
+        roi_layout.addStretch(1)
+
+        btn_details = QtWidgets.QPushButton("ROI Details…")
+        btn_details.setFixedHeight(26)
+        btn_details.setStyleSheet(
+            f"QPushButton {{ background-color: {UI_PRIMARY}; color: #FFFFFF;"
+            f" border: none; border-radius: {BorderRadius.SM};"
+            f" font-size: {Typography.FONT_SIZE_SMALL}; font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; }}"
+            f"QPushButton:hover {{ background-color: {UI_PRIMARY_HOVER}; }}"
+        )
+        btn_details.clicked.connect(self.roi_details_requested)
+        roi_layout.addWidget(btn_details)
+
+        self._stack.addWidget(page_roi)
+
+        # ── Page 1: No-ROI fallback ────────────────────────────────────────
+        page_no_roi = QtWidgets.QWidget()
+        no_roi_layout = QtWidgets.QVBoxLayout(page_no_roi)
+        no_roi_layout.setContentsMargins(0, 8, 0, 0)
+        no_roi_layout.setSpacing(8)
+        no_roi_layout.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+
+        icon_lbl = QtWidgets.QLabel("◻")
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet(
+            f"color: {UI_TEXT_MUTED}; font-size: 28px; border: none; background: transparent;"
+        )
+        no_roi_layout.addWidget(icon_lbl)
+
+        msg1 = QtWidgets.QLabel("No ROI defined.")
+        msg1.setAlignment(Qt.AlignCenter)
+        msg1.setStyleSheet(
+            f"color: {UI_TEXT_SECONDARY}; font-size: {Typography.FONT_SIZE_BODY};"
+            f" font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; border: none; background: transparent;"
+        )
+        no_roi_layout.addWidget(msg1)
+
+        msg2 = QtWidgets.QLabel("Define ROI in ROI Manager\nto enable defect quantification.")
+        msg2.setAlignment(Qt.AlignCenter)
+        msg2.setStyleSheet(
+            f"color: {UI_TEXT_MUTED}; font-size: {Typography.FONT_SIZE_SMALL};"
+            f" border: none; background: transparent;"
+        )
+        no_roi_layout.addWidget(msg2)
+
+        no_roi_layout.addStretch(1)
+
+        btn_open_roi = QtWidgets.QPushButton("Open ROI Manager")
+        btn_open_roi.setFixedHeight(26)
+        btn_open_roi.setStyleSheet(
+            f"QPushButton {{ background-color: {UI_BG_SUBTLE}; color: {UI_TEXT};"
+            f" border: 1px solid {UI_BORDER}; border-radius: {BorderRadius.SM};"
+            f" font-size: {Typography.FONT_SIZE_SMALL}; }}"
+            f"QPushButton:hover {{ border-color: {UI_PRIMARY}; color: {UI_PRIMARY}; }}"
+        )
+        btn_open_roi.clicked.connect(self.open_roi_manager_requested)
+        no_roi_layout.addWidget(btn_open_roi)
+
+        self._stack.addWidget(page_no_roi)
+
+        # Default: show no-ROI fallback
+        self._stack.setCurrentIndex(1)
+
+    # ------------------------------------------------------------------
+    # Public update API
+    # ------------------------------------------------------------------
+
+    def show_no_roi(self):
+        """Switch to the no-ROI fallback page."""
+        self._stack.setCurrentIndex(1)
+
+    def update_result(self, result: "SinglePairResult", roi_full: "Optional[ROIFullResult]",
+                      n_target: int, n_ref: int):
+        """Update the center panel for the currently displayed result.
+
+        Parameters
+        ----------
+        result:    The SinglePairResult for the displayed pair.
+        roi_full:  The ROIFullResult from the last ROI analysis run, or None.
+        n_target:  Number of target ROIs currently defined.
+        n_ref:     Number of reference ROIs currently defined.
+        """
+        if roi_full is None or (n_target == 0 and n_ref == 0):
+            self.show_no_roi()
+            return
+
+        self._stack.setCurrentIndex(0)
+
+        # Section 1: ROI summary
+        self._lbl_target_count.setText(str(n_target))
+        self._lbl_ref_count.setText(str(n_ref))
+        self._lbl_roi_mode.setText("Reference-only" if n_ref > 0 else "—")
+
+        # Section 2: Calibration alpha
+        alpha = result.roi_match_alpha
+        self._lbl_alpha.setText(f"{alpha:.4f}" if alpha is not None else "N/A (no ROI-match)")
+
+        # Section 3: Diff quantification — look up this pair's SNR entry
+        compare_label = result.compare_label
+        snr_entry = roi_full.snr_per_diff.get(compare_label)
+        if snr_entry is not None:
+            # Stored values are in [0, 1] normalized range; scale to GLV (0-255)
+            # for display so they match the visual diff image brightness.
+            mu_t = snr_entry.mu_target * 255.0
+            mu_r = snr_entry.mu_ref * 255.0
+            sigma_r = snr_entry.sigma_ref * 255.0
+            delta = mu_t - mu_r
+            snr_val = snr_entry.snr
+
+            self._lbl_target_mean.setText(f"{mu_t:.2f}")
+            self._lbl_ref_mean.setText(f"{mu_r:.2f}")
+            self._lbl_ref_std.setText(f"{sigma_r:.2f}")
+            self._lbl_delta.setText(f"{delta:+.2f}")
+            self._lbl_snr.setText(f"{snr_val:.3f}")
+        else:
+            for lbl in (self._lbl_target_mean, self._lbl_ref_mean,
+                        self._lbl_ref_std, self._lbl_delta, self._lbl_snr):
+                lbl.setText("--")
+
+    def reset(self):
+        """Reset to no-ROI fallback state."""
+        self.show_no_roi()
+
+
 class GLVMaskPreviewDialog(QtWidgets.QDialog):
     """Interactive dialog that visualises the GLV-Mask on the Base image.
 
@@ -2110,31 +2493,94 @@ class NormalizedCompareDialog(QtWidgets.QDialog):
         canvas.plot_histogram(counts, edges)
 
 
+class _NumericSortItem(QtWidgets.QTableWidgetItem):
+    """QTableWidgetItem that compares numerically when a sort_key is supplied."""
+
+    def __init__(self, text: str, sort_key=None):
+        super().__init__(text)
+        self._sort_key = sort_key  # float or None
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        if isinstance(other, _NumericSortItem):
+            a, b = self._sort_key, other._sort_key
+            if a is not None and b is not None:
+                return float(a) < float(b)
+            if a is None and b is not None:
+                return True   # None sorts before numbers
+            if a is not None and b is None:
+                return False
+        return super().__lt__(other)
+
+
 class ROIIntensityProfileDialog(QtWidgets.QDialog):
-    """Auto-popup dialog showing ROI statistics and SNR across Landing Energies.
+    """Detailed ROI analysis dialog — opened via [ROI Details…] button.
+
+    Supports multi-base results (auto-pair mode) by grouping per base_label.
 
     Tabs
     ----
-    1. SNR across LE    – line chart of SNR per diff image.
-    2. Per-ROI Mean     – selectable ROI; three lines: base / compare / diff mean.
-    3. Raw Table        – all layer × ROI stats in a scrollable table.
+    1. LE Summary     – engineering table (one row per pair) + CSV export.
+    2. SNR Chart      – bar chart with Δ subplot and σ_ref error bars.
+    3. Per-ROI Mean   – selectable ROI; base / compare / diff mean lines.
+    4. Raw Table      – all layer × ROI stats (original detailed view).
     """
 
-    def __init__(self, result: ROIFullResult, parent=None):
+    # Shared axis / spine style helpers
+    _BG_FIG  = '#1F2937'
+    _BG_AX   = '#111827'
+    _COL_TXT = '#D1D5DB'
+    _COL_MUT = '#9CA3AF'
+    _COL_SPL = '#4B5563'
+    _COL_GRD = '#374151'
+
+    # SNR quality thresholds for row color-coding
+    _SNR_GOOD  = 2.0   # ≥ this → green
+    _SNR_OK    = 1.0   # ≥ this → yellow; below → red
+
+    # Align status colors
+    _STATUS_COLOR = {
+        'ok':   '#4ADE80',
+        'warn': '#FCD34D',
+        'fail': '#F87171',
+    }
+
+    def __init__(
+        self,
+        roi_results: Dict[str, ROIFullResult],
+        all_results: List[SinglePairResult],
+        parent=None,
+    ):
         super().__init__(parent)
-        self._result = result
+        # roi_results: base_label → ROIFullResult
+        # all_results: full list of SinglePairResult for alpha / align_score lookup
+        self._roi_results = roi_results
+        self._all_results = all_results
+        self._base_labels = list(roi_results.keys())
+
         self.setWindowTitle("ROI Intensity Profiles")
         self.setWindowFlags(self.windowFlags() | Qt.Window)
-        self.resize(720, 520)
+        self.resize(860, 580)
         self._build_ui()
+
+    # ------------------------------------------------------------------
+    # Top-level layout
+    # ------------------------------------------------------------------
+
+    @property
+    def _is_auto_pair(self) -> bool:
+        """True when results come from auto-pair mode (multiple distinct base images)."""
+        return len(set(r.base_label for r in self._all_results)) > 1
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setSpacing(8)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(10, 10, 10, 10)
 
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self._build_snr_tab(), "SNR across LE")
+        tabs.addTab(self._build_summary_tab(), "LE Summary")
+        if self._is_auto_pair:
+            tabs.addTab(self._build_matrix_tab(), "Pair Matrix")
+        tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
         tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
         tabs.addTab(self._build_table_tab(), "Raw Table")
         root.addWidget(tabs, stretch=1)
@@ -2147,182 +2593,686 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         root.addLayout(bottom)
 
     # ------------------------------------------------------------------
-    # Tab 1 — SNR
+    # Helpers
     # ------------------------------------------------------------------
 
-    def _build_snr_tab(self) -> QtWidgets.QWidget:
+    def _make_base_selector(self, label: str = "Base:") -> Tuple[
+            QtWidgets.QHBoxLayout, Optional[QtWidgets.QComboBox]]:
+        """Return a (layout, combo) pair.  combo is None when only one base exists."""
+        row = QtWidgets.QHBoxLayout()
+        if len(self._base_labels) <= 1:
+            return row, None
+        row.addWidget(QtWidgets.QLabel(label))
+        cmb = QtWidgets.QComboBox()
+        cmb.addItems(self._base_labels)
+        row.addWidget(cmb)
+        row.addStretch()
+        return row, cmb
+
+    def _current_roi_result(self, cmb: Optional[QtWidgets.QComboBox]) -> Optional[ROIFullResult]:
+        key = cmb.currentText() if cmb is not None else (self._base_labels[0] if self._base_labels else None)
+        return self._roi_results.get(key) if key else None
+
+    def _style_ax(self, ax) -> None:
+        ax.set_facecolor(self._BG_AX)
+        ax.tick_params(colors=self._COL_TXT)
+        for spine in ('bottom', 'left'):
+            ax.spines[spine].set_color(self._COL_SPL)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color=self._COL_GRD, linewidth=0.5)
+
+    def _results_for_base(self, base_label: str) -> List[SinglePairResult]:
+        return [r for r in self._all_results if r.base_label == base_label]
+
+    def _save_figure(self, fig, default_stem: str = "roi_chart") -> None:
+        """Open a save dialog and write *fig* to PNG / PDF / SVG."""
+        if fig is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Chart", default_stem,
+            "PNG Image (*.png);;PDF Document (*.pdf);;SVG Vector (*.svg)"
+        )
+        if not path:
+            return
+        try:
+            fig.savefig(path, dpi=150, bbox_inches='tight',
+                        facecolor=self._BG_FIG, edgecolor='none')
+            QtWidgets.QMessageBox.information(self, "Save Chart", f"Saved to:\n{path}")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Save Chart", f"Failed:\n{exc}")
+
+    def _make_save_btn(self, get_fig_fn, stem: str = "chart") -> QtWidgets.QPushButton:
+        btn = QtWidgets.QPushButton("Save Chart…")
+        btn.setFixedHeight(24)
+        btn.setMaximumWidth(120)
+        btn.clicked.connect(lambda: self._save_figure(get_fig_fn(), stem))
+        return btn
+
+    # ------------------------------------------------------------------
+    # Tab 1 — LE Summary (engineering table + CSV export)
+    # ------------------------------------------------------------------
+
+    def _build_summary_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
-        fig = Figure(figsize=(5, 3), tight_layout=True)
-        fig.patch.set_facecolor('#1F2937')
-        ax = fig.add_subplot(111)
-        ax.set_facecolor('#111827')
+        lay.setSpacing(6)
 
-        snr_data = self._result.snr_per_diff
-        if snr_data:
-            labels = list(snr_data.keys())
-            snr_vals = [snr_data[k].snr for k in labels]
-            x = range(len(labels))
-            ax.plot(x, snr_vals, marker='o', color='#F59E0B', linewidth=2)
-            ax.set_xticks(list(x))
-            ax.set_xticklabels(labels, rotation=20, ha='right', color='#D1D5DB', fontsize=9)
-            ax.set_ylabel("SNR", color='#D1D5DB')
-            ax.tick_params(colors='#D1D5DB')
-            ax.spines['bottom'].set_color('#4B5563')
-            ax.spines['left'].set_color('#4B5563')
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.grid(True, color='#374151', linewidth=0.5)
-            ax.set_title("SNR = (μ_Target − μ_Ref) / σ_Ref", color='#9CA3AF', fontsize=9)
-            for i, label in enumerate(labels):
-                entry = snr_data[label]
-                ax.annotate(
-                    f"{entry.snr:.2f}\nT:{entry.mu_target:.3f} R:{entry.mu_ref:.3f} σR:{entry.sigma_ref:.3f}",
-                    (i, entry.snr),
-                    textcoords="offset points",
-                    xytext=(0, 8),
-                    ha='center',
-                    fontsize=7,
-                    color='#D1D5DB',
+        ctrl_row, self._cmb_summary_base = self._make_base_selector("Filter by Base:")
+        if self._cmb_summary_base is not None:
+            self._cmb_summary_base.currentTextChanged.connect(self._refresh_summary_table)
+        export_btn = QtWidgets.QPushButton("Export CSV…")
+        export_btn.setFixedHeight(26)
+        export_btn.clicked.connect(self._on_export_csv)
+        ctrl_row.addWidget(export_btn)
+        lay.addLayout(ctrl_row)
+
+        # Column indices (keep in sync with _SUMMARY_HEADERS below)
+        self._SUMMARY_HEADERS = [
+            'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
+            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR',
+        ]
+        self._COL_SNR    = self._SUMMARY_HEADERS.index('SNR')
+        self._COL_STATUS = self._SUMMARY_HEADERS.index('Align Status')
+
+        self._summary_table = QtWidgets.QTableWidget(0, len(self._SUMMARY_HEADERS))
+        self._summary_table.setHorizontalHeaderLabels(self._SUMMARY_HEADERS)
+        self._summary_table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents
+        )
+        self._summary_table.horizontalHeader().setStretchLastSection(True)
+        self._summary_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._summary_table.setAlternatingRowColors(True)
+        self._summary_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self._summary_table.setSortingEnabled(True)
+        self._summary_table.horizontalHeader().setSortIndicator(
+            self._COL_SNR, Qt.DescendingOrder
+        )
+        lay.addWidget(self._summary_table, stretch=1)
+
+        self._refresh_summary_table()
+        return w
+
+    def _get_summary_data(self, base_filter: Optional[str] = None) -> List[dict]:
+        """Return structured data dicts for each pair (used by table and CSV)."""
+        data = []
+        for r in self._all_results:
+            if base_filter is not None and r.base_label != base_filter:
+                continue
+            roi_full  = self._roi_results.get(r.base_label)
+            snr_entry = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
+            align_status  = (r.alignment.status if r.alignment else None) or '—'
+            align_score_v = r.alignment.final_score if r.alignment else None
+            alpha_str     = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
+            align_str     = f"{align_score_v:.1f}" if align_score_v is not None else "—"
+
+            if snr_entry is not None:
+                # Scale from [0,1] normalized range to GLV (0-255) for display.
+                mu_t_glv    = snr_entry.mu_target * 255.0
+                mu_r_glv    = snr_entry.mu_ref    * 255.0
+                sigma_r_glv = snr_entry.sigma_ref * 255.0
+                delta_v     = mu_t_glv - mu_r_glv
+                data.append({
+                    'base':         r.base_label,
+                    'compare':      r.compare_label,
+                    'align_status': align_status,
+                    'alpha':        alpha_str,
+                    'align_score':  align_str,
+                    'align_score_v': align_score_v,
+                    'mu_t':         f"{mu_t_glv:.2f}",
+                    'mu_r':         f"{mu_r_glv:.2f}",
+                    'sigma_r':      f"{sigma_r_glv:.2f}",
+                    'delta':        f"{delta_v:+.2f}",
+                    'delta_v':      delta_v,
+                    'snr':          f"{snr_entry.snr:.4f}",
+                    'snr_v':        snr_entry.snr,
+                })
+            else:
+                data.append({
+                    'base': r.base_label, 'compare': r.compare_label,
+                    'align_status': align_status,
+                    'alpha': alpha_str, 'align_score': align_str, 'align_score_v': align_score_v,
+                    'mu_t': '—', 'mu_r': '—', 'sigma_r': '—',
+                    'delta': '—', 'delta_v': None,
+                    'snr': '—',  'snr_v': None,
+                })
+        return data
+
+    def _get_summary_rows(self, base_filter: Optional[str] = None) -> List[List[str]]:
+        """Flat string rows in SUMMARY_HEADERS column order (for CSV export)."""
+        return [
+            [d['base'], d['compare'], d['align_status'], d['alpha'], d['align_score'],
+             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr']]
+            for d in self._get_summary_data(base_filter)
+        ]
+
+    @staticmethod
+    def _snr_bg(snr_v: Optional[float]) -> Optional[QtGui.QColor]:
+        if snr_v is None:
+            return None
+        if snr_v >= ROIIntensityProfileDialog._SNR_GOOD:
+            return QtGui.QColor('#166534')   # dark green bg
+        if snr_v >= ROIIntensityProfileDialog._SNR_OK:
+            return QtGui.QColor('#854D0E')   # dark yellow/amber bg
+        return QtGui.QColor('#7F1D1D')       # dark red bg
+
+    @staticmethod
+    def _status_bg(status: str) -> Optional[QtGui.QColor]:
+        color_hex = ROIIntensityProfileDialog._STATUS_COLOR.get(status.lower())
+        if color_hex is None:
+            return None
+        c = QtGui.QColor(color_hex)
+        # Darken for use as background (text stays light)
+        return QtGui.QColor(c.red() // 2, c.green() // 2, c.blue() // 2)
+
+    def _make_sort_item(self, text: str, sort_key=None) -> QtWidgets.QTableWidgetItem:
+        """QTableWidgetItem that sorts numerically when sort_key is a float."""
+        item = _NumericSortItem(text, sort_key)
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
+
+    def _refresh_summary_table(self) -> None:
+        base_filter: Optional[str] = None
+        if self._cmb_summary_base is not None:
+            base_filter = self._cmb_summary_base.currentText() or None
+
+        # Disable sorting while filling to avoid mid-insert reordering
+        self._summary_table.setSortingEnabled(False)
+        self._summary_table.setRowCount(0)
+
+        for d in self._get_summary_data(base_filter):
+            row_idx = self._summary_table.rowCount()
+            self._summary_table.insertRow(row_idx)
+
+            # Build items in column order matching _SUMMARY_HEADERS
+            items = [
+                self._make_sort_item(d['base']),
+                self._make_sort_item(d['compare']),
+                self._make_sort_item(d['align_status']),
+                self._make_sort_item(d['alpha']),
+                self._make_sort_item(d['align_score'], d['align_score_v']),
+                self._make_sort_item(d['mu_t']),
+                self._make_sort_item(d['mu_r']),
+                self._make_sort_item(d['sigma_r']),
+                self._make_sort_item(d['delta'], d['delta_v']),
+                self._make_sort_item(d['snr'], d['snr_v']),
+            ]
+
+            # Color: Align Status cell
+            status_bg = self._status_bg(d['align_status'])
+            if status_bg is not None:
+                items[self._COL_STATUS].setBackground(status_bg)
+                items[self._COL_STATUS].setForeground(
+                    QtGui.QColor(self._STATUS_COLOR.get(d['align_status'].lower(), '#D1D5DB'))
                 )
-        else:
-            ax.text(0.5, 0.5, "No Target ROI defined", ha='center', va='center',
-                    color='#9CA3AF', transform=ax.transAxes)
 
+            # Color: SNR cell
+            snr_bg = self._snr_bg(d['snr_v'])
+            if snr_bg is not None:
+                items[self._COL_SNR].setBackground(snr_bg)
+                items[self._COL_SNR].setForeground(QtGui.QColor('#D1D5DB'))
+
+            for col, item in enumerate(items):
+                self._summary_table.setItem(row_idx, col, item)
+
+        self._summary_table.setSortingEnabled(True)
+
+    def _on_export_csv(self) -> None:
+        """Export the LE Summary table to a CSV file chosen by the user."""
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export LE Summary", "", "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+        headers = [
+            'base', 'compare_le', 'align_status', 'roi_match_alpha', 'align_score',
+            'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv', 'snr',
+        ]
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                import csv
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(self._get_summary_rows())  # all bases
+            QtWidgets.QMessageBox.information(self, "Export CSV", f"Saved to:\n{path}")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Export CSV", f"Failed to save:\n{exc}")
+
+    # ------------------------------------------------------------------
+    # Tab 2 — SNR Chart (bar + Δ subplot; "All Bases" overlay mode)
+    # ------------------------------------------------------------------
+
+    # Colors used for multi-base line overlay (cycles if > 8 bases)
+    _MULTI_COLORS = [
+        '#F59E0B', '#60A5FA', '#34D399', '#F87171',
+        '#A78BFA', '#FB923C', '#2DD4BF', '#E879F9',
+    ]
+    _ALL_BASES_KEY = "All Bases"
+
+    def _build_snr_chart_tab(self) -> QtWidgets.QWidget:
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
+
+        ctrl_row = QtWidgets.QHBoxLayout()
+        self._cmb_chart_base: Optional[QtWidgets.QComboBox] = None
+        if len(self._base_labels) > 1:
+            ctrl_row.addWidget(QtWidgets.QLabel("Base:"))
+            self._cmb_chart_base = QtWidgets.QComboBox()
+            self._cmb_chart_base.addItem(self._ALL_BASES_KEY)
+            self._cmb_chart_base.addItems(self._base_labels)
+            self._cmb_chart_base.currentTextChanged.connect(self._refresh_snr_chart)
+            ctrl_row.addWidget(self._cmb_chart_base)
+        ctrl_row.addStretch()
+        ctrl_row.addWidget(self._make_save_btn(lambda: self._chart_canvas.figure, "roi_snr_chart"))
+        lay.addLayout(ctrl_row)
+
+        fig = Figure(figsize=(6, 4), tight_layout=True)
+        fig.patch.set_facecolor(self._BG_FIG)
+        self._chart_ax_snr, self._chart_ax_delta = fig.subplots(2, 1, sharex=True)
+        self._chart_canvas = FigureCanvas(fig)
+        lay.addWidget(self._chart_canvas, stretch=1)
+
+        self._refresh_snr_chart()
+        return w
+
+    def _refresh_snr_chart(self) -> None:
+        sel = self._cmb_chart_base.currentText() if self._cmb_chart_base else ""
+        if sel == self._ALL_BASES_KEY:
+            self._draw_snr_all_bases()
+        else:
+            self._draw_snr_single_base(sel or (self._base_labels[0] if self._base_labels else ""))
+
+    def _draw_snr_single_base(self, base_label: str) -> None:
+        """Bar chart mode — one base, bars per compare LE."""
+        roi_result = self._roi_results.get(base_label)
+        ax_snr, ax_delta = self._chart_ax_snr, self._chart_ax_delta
+        for ax in (ax_snr, ax_delta):
+            ax.cla()
+            self._style_ax(ax)
+
+        if roi_result is None or not roi_result.snr_per_diff:
+            ax_snr.text(0.5, 0.5, "No ROI data available",
+                        ha='center', va='center', color=self._COL_MUT,
+                        transform=ax_snr.transAxes)
+            self._chart_canvas.draw()
+            return
+
+        snr_data   = roi_result.snr_per_diff
+        labels     = list(snr_data.keys())
+        xs         = list(range(len(labels)))
+        snr_vals   = [snr_data[k].snr for k in labels]
+        # Scale to GLV (0-255) so chart y-axis matches displayed table values.
+        delta_vals = [(snr_data[k].mu_target - snr_data[k].mu_ref) * 255.0 for k in labels]
+        sigma_refs = [snr_data[k].sigma_ref * 255.0 for k in labels]
+        bar_w = 0.55
+
+        bars = ax_snr.bar(xs, snr_vals, width=bar_w, color='#F59E0B', alpha=0.85, zorder=3)
+        ax_snr.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_snr.set_ylabel("SNR", color=self._COL_TXT, fontsize=9)
+        ax_snr.set_title(f"SNR = Δ / σ_Ref   [Base: {base_label}]",
+                         color=self._COL_MUT, fontsize=9)
+        spread = max(snr_vals) - min(snr_vals) if snr_vals else 1
+        for i, (_, val) in enumerate(zip(bars, snr_vals)):
+            ax_snr.text(i, val + spread * 0.03, f"{val:.2f}",
+                        ha='center', va='bottom', fontsize=8, color=self._COL_TXT)
+
+        bar_colors = ['#34D399' if d >= 0 else '#F87171' for d in delta_vals]
+        ax_delta.bar(xs, delta_vals, width=bar_w, color=bar_colors, alpha=0.8, zorder=3, label='Δ (T−R)')
+        ax_delta.errorbar(xs, delta_vals, yerr=sigma_refs,
+                          fmt='none', color='#D1D5DB', capsize=5, linewidth=1.5, zorder=4, label='±σ_Ref')
+        ax_delta.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_delta.set_ylabel("Δ = T−R", color=self._COL_TXT, fontsize=9)
+        ax_delta.set_xticks(xs)
+        ax_delta.set_xticklabels(labels, rotation=20, ha='right', color=self._COL_TXT, fontsize=9)
+        ax_delta.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8, loc='upper right')
+        self._chart_canvas.draw()
+
+    def _draw_snr_all_bases(self) -> None:
+        """Overlay mode — one colored line per base, shared compare-LE x-axis."""
+        ax_snr, ax_delta = self._chart_ax_snr, self._chart_ax_delta
+        for ax in (ax_snr, ax_delta):
+            ax.cla()
+            self._style_ax(ax)
+
+        # Collect union of all compare labels (preserve insertion order)
+        seen: dict = {}
+        for base_lbl in self._base_labels:
+            roi_res = self._roi_results.get(base_lbl)
+            if roi_res:
+                for k in roi_res.snr_per_diff:
+                    seen[k] = None
+        all_compare = list(seen.keys())
+
+        if not all_compare:
+            ax_snr.text(0.5, 0.5, "No ROI data available",
+                        ha='center', va='center', color=self._COL_MUT,
+                        transform=ax_snr.transAxes)
+            self._chart_canvas.draw()
+            return
+
+        x_pos = {lbl: i for i, lbl in enumerate(all_compare)}
+        markers = ['o', 's', '^', 'D', 'v', 'P', 'X', '*']
+
+        for b_idx, base_lbl in enumerate(self._base_labels):
+            roi_res = self._roi_results.get(base_lbl)
+            if roi_res is None or not roi_res.snr_per_diff:
+                continue
+            color   = self._MULTI_COLORS[b_idx % len(self._MULTI_COLORS)]
+            marker  = markers[b_idx % len(markers)]
+            snr_d   = roi_res.snr_per_diff
+            xs_b    = [x_pos[k] for k in snr_d]
+            snr_b   = [snr_d[k].snr for k in snr_d]
+            delta_b = [(snr_d[k].mu_target - snr_d[k].mu_ref) * 255.0 for k in snr_d]
+            sigma_b = [snr_d[k].sigma_ref * 255.0 for k in snr_d]
+
+            ax_snr.plot(xs_b, snr_b, marker=marker, color=color,
+                        linewidth=1.8, markersize=7, label=base_lbl, zorder=3)
+            ax_delta.plot(xs_b, delta_b, marker=marker, color=color,
+                          linewidth=1.8, markersize=7, label=base_lbl, zorder=3)
+            ax_delta.errorbar(xs_b, delta_b, yerr=sigma_b,
+                              fmt='none', color=color, capsize=4,
+                              linewidth=1.2, alpha=0.6, zorder=2)
+
+        ax_snr.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_snr.set_ylabel("SNR", color=self._COL_TXT, fontsize=9)
+        ax_snr.set_title("SNR = Δ / σ_Ref   [All Bases overlay]",
+                         color=self._COL_MUT, fontsize=9)
+        ax_snr.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT,
+                      fontsize=8, loc='upper right')
+
+        ax_delta.axhline(0, color=self._COL_SPL, linewidth=0.8, linestyle='--')
+        ax_delta.set_ylabel("Δ = T−R  (err = ±σ_Ref)", color=self._COL_TXT, fontsize=9)
+        ax_delta.set_xticks(list(range(len(all_compare))))
+        ax_delta.set_xticklabels(all_compare, rotation=20, ha='right',
+                                 color=self._COL_TXT, fontsize=9)
+        self._chart_canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Tab 2b — Pair Matrix (auto-pair only)
+    # ------------------------------------------------------------------
+
+    def _build_matrix_tab(self) -> QtWidgets.QWidget:
+        """N×N SNR heatmap — rows = base, columns = compare."""
+        from matplotlib.colors import LinearSegmentedColormap
+        import matplotlib.ticker as mticker
+
+        w = QtWidgets.QWidget()
+        w.setStyleSheet("background: white;")
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(16, 12, 16, 8)
+        lay.setSpacing(6)
+
+        # ── Collect ordered labels ─────────────────────────────────────
+        all_labels = sorted(set(
+            [r.base_label    for r in self._all_results] +
+            [r.compare_label for r in self._all_results]
+        ))
+        n = len(all_labels)
+        label_idx = {lbl: i for i, lbl in enumerate(all_labels)}
+
+        matrix = np.full((n, n), np.nan)
+        for r in self._all_results:
+            roi_full = self._roi_results.get(r.base_label)
+            if roi_full:
+                entry = roi_full.snr_per_diff.get(r.compare_label)
+                if entry is not None:
+                    matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
+
+        # ── Pastel colormap: light-red → light-amber → light-green ────
+        pastel_cmap = LinearSegmentedColormap.from_list(
+            'snr_pastel',
+            [
+                (0.00, '#FECACA'),   # pastel red   (low SNR)
+                (0.35, '#FDE68A'),   # pastel amber (medium)
+                (0.65, '#BBF7D0'),   # pastel green (good)
+                (1.00, '#6EE7B7'),   # deeper mint  (excellent)
+            ]
+        )
+        pastel_cmap.set_bad(color='#F1F5F9')   # diagonal / missing → very light gray
+
+        valid = matrix[~np.isnan(matrix)]
+        vmin = 0.0
+        vmax = max(float(np.max(valid)) if valid.size else 0.0, self._SNR_GOOD) * 1.05
+
+        # ── Figure ────────────────────────────────────────────────────
+        cell_in = 1.1                                 # inches per cell
+        margin  = 2.4                                 # left/right margin for labels + colorbar
+        fig_w   = n * cell_in + margin
+        fig_h   = max(4.0, n * cell_in + 1.2)
+        fig = Figure(figsize=(fig_w, fig_h))
+        fig.patch.set_facecolor('white')
+
+        # Leave room: left=labels, right=colorbar
+        fig.subplots_adjust(left=0.18, right=0.82, top=0.88, bottom=0.18)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('white')
+
+        im = ax.imshow(matrix, cmap=pastel_cmap, aspect='equal',
+                       vmin=vmin, vmax=vmax, interpolation='nearest')
+
+        # ── Grid lines between cells ───────────────────────────────────
+        ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+        ax.grid(which='minor', color='#CBD5E1', linewidth=0.8)
+        ax.tick_params(which='minor', length=0)
+
+        # ── Colorbar ──────────────────────────────────────────────────
+        cbar = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.03)
+        cbar.set_label("SNR", color='#374151', fontsize=11, fontweight='bold', labelpad=8)
+        cbar.ax.tick_params(labelcolor='#374151', color='#CBD5E1', labelsize=10)
+        cbar.outline.set_edgecolor('#CBD5E1')
+        cbar.ax.set_facecolor('white')
+        # Threshold lines on colorbar
+        for thresh, color in [(self._SNR_OK, '#F59E0B'), (self._SNR_GOOD, '#10B981')]:
+            norm_pos = thresh / max(vmax, 1e-9)
+            if 0.0 < norm_pos < 1.0:
+                cbar.ax.axhline(norm_pos, color=color, linewidth=1.5, linestyle='--', alpha=0.85)
+                cbar.ax.text(1.25, norm_pos, f'{thresh:.0f}',
+                             transform=cbar.ax.transAxes,
+                             va='center', ha='left',
+                             color=color, fontsize=9, fontweight='bold')
+
+        # ── Cell annotations ──────────────────────────────────────────
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    # Diagonal: self-compare placeholder
+                    ax.add_patch(
+                        __import__('matplotlib.patches', fromlist=['FancyBboxPatch'])
+                        .FancyBboxPatch(
+                            (j - 0.45, i - 0.45), 0.90, 0.90,
+                            boxstyle='round,pad=0.05',
+                            facecolor='#E2E8F0', edgecolor='none', zorder=2,
+                        )
+                    )
+                    ax.text(j, i, '—', ha='center', va='center',
+                            fontsize=12, color='#94A3B8', zorder=3)
+                elif not np.isnan(matrix[i, j]):
+                    val = matrix[i, j]
+                    # Text always dark on the pastel background
+                    if val >= self._SNR_GOOD:
+                        txt_col = '#065F46'   # dark green
+                    elif val >= self._SNR_OK:
+                        txt_col = '#78350F'   # dark amber
+                    else:
+                        txt_col = '#7F1D1D'   # dark red
+                    ax.text(j, i, f"{val:.2f}", ha='center', va='center',
+                            fontsize=12, color=txt_col, fontweight='bold', zorder=3)
+                else:
+                    ax.text(j, i, 'n/a', ha='center', va='center',
+                            fontsize=10, color='#94A3B8', zorder=3)
+
+        # ── Axes labels ───────────────────────────────────────────────
+        ax.set_xticks(range(n))
+        ax.set_yticks(range(n))
+        ax.set_xticklabels(all_labels, rotation=35, ha='right',
+                           color='#1E293B', fontsize=11, fontweight='semibold')
+        ax.set_yticklabels(all_labels, color='#1E293B', fontsize=11,
+                           fontweight='semibold')
+        ax.set_xlabel("Compare (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_ylabel("Base (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_title("SNR Pair Matrix",
+                     color='#0F172A', fontsize=14, fontweight='bold', pad=14)
+        ax.tick_params(which='major', length=0, pad=6)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#E2E8F0')
+            spine.set_linewidth(1.0)
+
+        self._matrix_fig = fig
         canvas = FigureCanvas(fig)
-        lay.addWidget(canvas)
+        canvas.setStyleSheet("background: white;")
+
+        # Save button row
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(self._make_save_btn(lambda: self._matrix_fig, "roi_pair_matrix"))
+        lay.addWidget(canvas, stretch=1)
+        lay.addLayout(btn_row)
         return w
 
     # ------------------------------------------------------------------
-    # Tab 2 — Per-ROI Mean across LE
+    # Tab 3 — Per-ROI Mean across LE
     # ------------------------------------------------------------------
 
     def _build_mean_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
 
-        ctrl_row = QtWidgets.QHBoxLayout()
+        ctrl_row, self._cmb_mean_base = self._make_base_selector()
+        if self._cmb_mean_base is not None:
+            self._cmb_mean_base.currentTextChanged.connect(self._on_mean_base_changed)
+
         ctrl_row.addWidget(QtWidgets.QLabel("ROI:"))
         self._cmb_roi = QtWidgets.QComboBox()
-        for roi in self._result.roi_set.rois:
-            self._cmb_roi.addItem(roi.label, roi.id)
+        self._cmb_roi.setMinimumWidth(120)
         ctrl_row.addWidget(self._cmb_roi)
         ctrl_row.addStretch()
+        ctrl_row.addWidget(self._make_save_btn(lambda: self._mean_canvas.figure, "roi_per_roi_mean"))
         lay.addLayout(ctrl_row)
 
         fig = Figure(figsize=(5, 3), tight_layout=True)
-        fig.patch.set_facecolor('#1F2937')
+        fig.patch.set_facecolor(self._BG_FIG)
         self._mean_ax = fig.add_subplot(111)
         self._mean_canvas = FigureCanvas(fig)
-        lay.addWidget(self._mean_canvas)
+        lay.addWidget(self._mean_canvas, stretch=1)
 
         self._cmb_roi.currentIndexChanged.connect(self._refresh_mean_plot)
-        self._refresh_mean_plot()
+        self._on_mean_base_changed()
         return w
 
+    def _on_mean_base_changed(self) -> None:
+        """Repopulate ROI combo when base changes, then redraw."""
+        roi_result = self._current_roi_result(self._cmb_mean_base)
+        self._cmb_roi.blockSignals(True)
+        self._cmb_roi.clear()
+        if roi_result is not None:
+            for roi in roi_result.roi_set.rois:
+                self._cmb_roi.addItem(roi.label, roi.id)
+        self._cmb_roi.blockSignals(False)
+        self._refresh_mean_plot()
+
     def _refresh_mean_plot(self) -> None:
+        roi_result = self._current_roi_result(self._cmb_mean_base)
         ax = self._mean_ax
         ax.cla()
-        ax.set_facecolor('#111827')
-        ax.spines['bottom'].set_color('#4B5563')
-        ax.spines['left'].set_color('#4B5563')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.grid(True, color='#374151', linewidth=0.5)
-        ax.tick_params(colors='#D1D5DB')
-        ax.set_ylabel("Mean intensity (norm)", color='#D1D5DB')
+        self._style_ax(ax)
+        ax.set_ylabel("Mean intensity (norm)", color=self._COL_TXT)
 
         roi_id = self._cmb_roi.currentData()
-        if roi_id is None:
+        if roi_result is None or roi_id is None:
             self._mean_canvas.draw()
             return
 
-        compare_labels = self._result.compare_labels()
-        diff_labels = self._result.diff_labels()
-        base_layer = self._result.get_base_layer()
+        compare_labels = roi_result.compare_labels()
+        diff_labels    = roi_result.diff_labels()
+        base_layer     = roi_result.get_base_layer()
         x = range(len(compare_labels))
         le_labels = [lbl.replace('_compare', '') for lbl in compare_labels]
 
-        # Base mean (horizontal line)
         if base_layer and roi_id in base_layer.roi_stats:
-            base_mean = base_layer.roi_stats[roi_id].mean
-            ax.axhline(base_mean, color='#60A5FA', linewidth=1.5,
-                       linestyle='--', label='Base')
+            ax.axhline(base_layer.roi_stats[roi_id].mean,
+                       color='#60A5FA', linewidth=1.5, linestyle='--', label='Base')
 
-        # Compare means
-        comp_means = []
-        for lbl in compare_labels:
-            layer = self._result.get_layer(lbl)
-            if layer and roi_id in layer.roi_stats:
-                comp_means.append(layer.roi_stats[roi_id].mean)
-            else:
-                comp_means.append(None)
-        valid_x = [i for i, v in enumerate(comp_means) if v is not None]
-        valid_y = [v for v in comp_means if v is not None]
-        if valid_x:
-            ax.plot(valid_x, valid_y, marker='s', color='#34D399',
-                    linewidth=1.5, label='Compare')
+        comp_means = [
+            roi_result.get_layer(lbl).roi_stats[roi_id].mean
+            if roi_result.get_layer(lbl) and roi_id in roi_result.get_layer(lbl).roi_stats
+            else None
+            for lbl in compare_labels
+        ]
+        vx = [i for i, v in enumerate(comp_means) if v is not None]
+        vy = [v for v in comp_means if v is not None]
+        if vx:
+            ax.plot(vx, vy, marker='s', color='#34D399', linewidth=1.5, label='Compare')
 
-        # Diff means
-        diff_means = []
-        for lbl in diff_labels:
-            layer = self._result.get_layer(lbl)
-            if layer and roi_id in layer.roi_stats:
-                diff_means.append(layer.roi_stats[roi_id].mean)
-            else:
-                diff_means.append(None)
-        valid_xd = [i for i, v in enumerate(diff_means) if v is not None]
-        valid_yd = [v for v in diff_means if v is not None]
-        if valid_xd:
-            ax.plot(valid_xd, valid_yd, marker='^', color='#F87171',
-                    linewidth=1.5, label='Diff')
+        diff_means = [
+            roi_result.get_layer(lbl).roi_stats[roi_id].mean
+            if roi_result.get_layer(lbl) and roi_id in roi_result.get_layer(lbl).roi_stats
+            else None
+            for lbl in diff_labels
+        ]
+        vxd = [i for i, v in enumerate(diff_means) if v is not None]
+        vyd = [v for v in diff_means if v is not None]
+        if vxd:
+            ax.plot(vxd, vyd, marker='^', color='#F87171', linewidth=1.5, label='Diff')
 
         ax.set_xticks(list(x))
         ax.set_xticklabels(le_labels, rotation=20, ha='right',
-                           color='#D1D5DB', fontsize=9)
-        ax.legend(facecolor='#1F2937', labelcolor='#D1D5DB', fontsize=8)
+                           color=self._COL_TXT, fontsize=9)
+        ax.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
         self._mean_canvas.draw()
 
     # ------------------------------------------------------------------
-    # Tab 3 — Raw Table
+    # Tab 4 — Raw Table (all layer × ROI stats)
     # ------------------------------------------------------------------
 
     def _build_table_tab(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
+        lay.setSpacing(4)
+
+        ctrl_row, self._cmb_raw_base = self._make_base_selector()
+        if self._cmb_raw_base is not None:
+            self._cmb_raw_base.currentTextChanged.connect(self._refresh_raw_table)
+        lay.addLayout(ctrl_row)
+
         headers = ['Layer', 'Image', 'ROI', 'Type', 'Mean', 'Std', 'P2', 'P98', 'Median', 'Pixels']
-        table = QtWidgets.QTableWidget(0, len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.horizontalHeader().setStretchLastSection(False)
-        table.horizontalHeader().setSectionResizeMode(
+        self._raw_table = QtWidgets.QTableWidget(0, len(headers))
+        self._raw_table.setHorizontalHeaderLabels(headers)
+        self._raw_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeToContents
         )
-        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        table.setAlternatingRowColors(True)
+        self._raw_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._raw_table.setAlternatingRowColors(True)
+        lay.addWidget(self._raw_table, stretch=1)
 
-        roi_map = {r.id: r for r in self._result.roi_set.rois}
-        for layer in self._result.layers:
+        self._refresh_raw_table()
+        return w
+
+    def _refresh_raw_table(self) -> None:
+        roi_result = self._current_roi_result(self._cmb_raw_base)
+        self._raw_table.setRowCount(0)
+        if roi_result is None:
+            return
+        roi_map = {r.id: r for r in roi_result.roi_set.rois}
+        for layer in roi_result.layers:
             for roi_id, stats in layer.roi_stats.items():
                 roi = roi_map.get(roi_id)
-                row = table.rowCount()
-                table.insertRow(row)
+                row = self._raw_table.rowCount()
+                self._raw_table.insertRow(row)
                 values = [
-                    layer.layer_type,
-                    layer.image_label,
+                    layer.layer_type, layer.image_label,
                     roi.label if roi else roi_id,
                     roi.roi_type if roi else '',
-                    f"{stats.mean:.5f}",
-                    f"{stats.std:.5f}",
-                    f"{stats.p2:.5f}",
-                    f"{stats.p98:.5f}",
-                    f"{stats.median:.5f}",
-                    str(stats.pixel_count),
+                    f"{stats.mean:.5f}", f"{stats.std:.5f}",
+                    f"{stats.p2:.5f}", f"{stats.p98:.5f}",
+                    f"{stats.median:.5f}", str(stats.pixel_count),
                 ]
                 for col, val in enumerate(values):
-                    table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
-
-        lay.addWidget(table)
-        return w
+                    self._raw_table.setItem(row, col, QtWidgets.QTableWidgetItem(val))
 
 
 class MultiROIManagerWidget(QtWidgets.QDialog):
@@ -2734,6 +3684,230 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         super().closeEvent(event)
 
 
+def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
+                        _fill_bg, _add_text, _score_color,
+                        C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
+                        C_PRIMARY, C_SUCCESS, C_WARN,
+                        Inches, Pt):
+    """Append ROI Analysis slides to an existing pptx Presentation object.
+
+    Slide 1 (+ overflow): LE Summary engineering table.
+    Last slide: SNR Chart rendered from matplotlib to a PNG image.
+    """
+    from io import BytesIO
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    C_SNR_GOOD   = RGBColor(0x14, 0x53, 0x2D)   # dark green-900
+    C_SNR_MID    = RGBColor(0x78, 0x35, 0x07)   # dark amber-900
+    C_SNR_BAD    = RGBColor(0x7F, 0x1D, 0x1D)   # dark red-900
+    _STATUS_COLS = {'ok': C_SUCCESS, 'warn': C_PRIMARY, 'fail': C_WARN}
+
+    base_labels = list(roi_full_results.keys())
+
+    # ── Build row data ───────────────────────────────────────────────────
+    roi_rows = []
+    for r in roi_all_results:
+        roi_full = roi_full_results.get(r.base_label)
+        entry    = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
+        status   = (r.alignment.status if r.alignment else '—')
+        score_v  = r.alignment.final_score if r.alignment else None
+        alpha    = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else '—'
+        if entry is not None:
+            # Scale to GLV (0-255) for display.
+            mu_t_glv    = entry.mu_target * 255.0
+            mu_r_glv    = entry.mu_ref    * 255.0
+            sigma_glv   = entry.sigma_ref * 255.0
+            delta       = mu_t_glv - mu_r_glv
+            roi_rows.append({
+                'base': r.base_label, 'compare': r.compare_label,
+                'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
+                'alpha': alpha,
+                'score': f"{score_v:.1f}" if score_v is not None else '—', 'score_v': score_v,
+                'mu_t':  f"{mu_t_glv:.2f}",
+                'mu_r':  f"{mu_r_glv:.2f}",
+                'sigma': f"{sigma_glv:.2f}",
+                'delta': f"{delta:+.2f}",
+                'snr':   f"{entry.snr:.3f}", 'snr_v': entry.snr,
+            })
+        else:
+            roi_rows.append({
+                'base': r.base_label, 'compare': r.compare_label,
+                'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
+                'alpha': alpha,
+                'score': f"{score_v:.1f}" if score_v is not None else '—', 'score_v': score_v,
+                'mu_t': '—', 'mu_r': '—', 'sigma': '—', 'delta': '—', 'snr': '—', 'snr_v': None,
+            })
+
+    # ── Column layout (x in inches, width in inches) ─────────────────────
+    roi_cols = [
+        ("Base",     0.40, 1.85),
+        ("Compare",  2.30, 1.85),
+        ("Status",   4.20, 0.95),
+        ("α",        5.20, 0.80),
+        ("Score",    6.05, 0.80),
+        ("T Mean",   6.90, 1.05),
+        ("R Mean",   8.00, 1.05),
+        ("R Std",    9.10, 1.05),
+        ("Δ",       10.20, 1.05),
+        ("SNR",     11.30, 1.60),
+    ]
+
+    ROWS_PER = 20
+    for block_start in range(0, max(1, len(roi_rows)), ROWS_PER):
+        block = roi_rows[block_start:block_start + ROWS_PER]
+        sl = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_bg(sl, C_BG)
+
+        page_n  = block_start // ROWS_PER + 1
+        n_pages = max(1, (len(roi_rows) + ROWS_PER - 1) // ROWS_PER)
+        _add_text(sl, f"ROI Analysis — LE Summary  (page {page_n}/{n_pages})",
+                  Inches(0.4), Inches(0.18), Inches(12.5), Inches(0.45),
+                  size=15, bold=True, color=C_PRIMARY)
+
+        for ch, cx, cw in roi_cols:
+            _add_text(sl, ch, Inches(cx), Inches(0.70), Inches(cw), Inches(0.28),
+                      size=8.5, bold=True, color=C_TEXT_SEC)
+
+        sep = sl.shapes.add_shape(1, Inches(0.4), Inches(1.01), Inches(12.9), Inches(0.02))
+        sep.fill.solid()
+        sep.fill.fore_color.rgb = C_TEXT_SEC
+        sep.line.fill.background()
+
+        row_h = Inches(0.275)
+        for ri, d in enumerate(block):
+            y = Inches(1.07) + ri * row_h
+            bg = sl.shapes.add_shape(1, Inches(0.35), y, Inches(12.95), row_h)
+            bg.fill.solid()
+            bg.fill.fore_color.rgb = C_CARD if ri % 2 == 0 else C_BG
+            bg.line.fill.background()
+
+            snr_v = d['snr_v']
+            snr_c = (C_SNR_GOOD if snr_v is not None and snr_v >= 2.0 else
+                     C_SNR_MID  if snr_v is not None and snr_v >= 1.0 else
+                     C_SNR_BAD  if snr_v is not None else C_TEXT_SEC)
+
+            cell_vals = [
+                (d['base'],    C_TEXT),
+                (d['compare'], C_TEXT),
+                (d['status'],  d['status_col']),
+                (d['alpha'],   C_TEXT_SEC),
+                (d['score'],   _score_color(d['score_v']) if d['score_v'] is not None else C_TEXT_SEC),
+                (d['mu_t'],    C_TEXT),
+                (d['mu_r'],    C_TEXT),
+                (d['sigma'],   C_TEXT_SEC),
+                (d['delta'],   C_TEXT),
+                (d['snr'],     snr_c),
+            ]
+            for (val, col), (_, cx, cw) in zip(cell_vals, roi_cols):
+                _add_text(sl, val, Inches(cx), y + Inches(0.02), Inches(cw), row_h,
+                          size=8, color=col)
+
+    # ── SNR Chart slide ──────────────────────────────────────────────────
+    BG_FIG  = '#1F2937'
+    BG_AX   = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_MUT = '#9CA3AF'
+    COL_SPL = '#4B5563'
+    COL_GRD = '#374151'
+    COLORS  = ['#F59E0B', '#60A5FA', '#34D399', '#F87171', '#A78BFA', '#FB923C']
+    MARKERS = ['o', 's', '^', 'D', 'v', 'P']
+
+    def _style(ax):
+        ax.set_facecolor(BG_AX)
+        ax.tick_params(colors=COL_TXT)
+        for sp in ('bottom', 'left'):
+            ax.spines[sp].set_color(COL_SPL)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color=COL_GRD, linewidth=0.5)
+
+    is_multi = len(base_labels) > 1
+
+    if is_multi:
+        fig = _MplFig(figsize=(11, 5), tight_layout=True)
+        fig.patch.set_facecolor(BG_FIG)
+        ax_snr, ax_delta = fig.subplots(2, 1, sharex=True)
+        _style(ax_snr); _style(ax_delta)
+
+        seen: dict = {}
+        for bl in base_labels:
+            rr = roi_full_results.get(bl)
+            if rr:
+                for k in rr.snr_per_diff:
+                    seen[k] = None
+        all_cmp = list(seen.keys())
+        x_pos   = {lbl: i for i, lbl in enumerate(all_cmp)}
+
+        for b_idx, bl in enumerate(base_labels):
+            rr = roi_full_results.get(bl)
+            if not rr or not rr.snr_per_diff:
+                continue
+            col = COLORS[b_idx % len(COLORS)]
+            mk  = MARKERS[b_idx % len(MARKERS)]
+            sd  = rr.snr_per_diff
+            xs  = [x_pos[k] for k in sd]
+            ax_snr.plot(xs, [sd[k].snr for k in sd],
+                        marker=mk, color=col, linewidth=1.8, markersize=7, label=bl)
+            db = [(sd[k].mu_target - sd[k].mu_ref) * 255.0 for k in sd]
+            sb = [sd[k].sigma_ref * 255.0 for k in sd]
+            ax_delta.plot(xs, db, marker=mk, color=col, linewidth=1.8, markersize=7, label=bl)
+            ax_delta.errorbar(xs, db, yerr=sb, fmt='none', color=col,
+                              capsize=4, linewidth=1.2, alpha=0.6)
+
+        ax_snr.set_title("SNR = Δ / σ_Ref  — All Bases overlay", color=COL_MUT, fontsize=10)
+        ax_snr.legend(facecolor=BG_FIG, labelcolor=COL_TXT, fontsize=9)
+        ax_delta.set_xticks(range(len(all_cmp)))
+        ax_delta.set_xticklabels(all_cmp, rotation=20, ha='right', color=COL_TXT, fontsize=9)
+    else:
+        bl = base_labels[0]
+        rr = roi_full_results.get(bl)
+        if rr is None or not rr.snr_per_diff:
+            return
+        fig = _MplFig(figsize=(11, 5), tight_layout=True)
+        fig.patch.set_facecolor(BG_FIG)
+        ax_snr, ax_delta = fig.subplots(2, 1, sharex=True)
+        _style(ax_snr); _style(ax_delta)
+
+        sd     = rr.snr_per_diff
+        labels = list(sd.keys())
+        xs     = list(range(len(labels)))
+        sv     = [sd[k].snr for k in labels]
+        dv     = [(sd[k].mu_target - sd[k].mu_ref) * 255.0 for k in labels]
+        er     = [sd[k].sigma_ref * 255.0 for k in labels]
+
+        ax_snr.bar(xs, sv, width=0.55, color='#F59E0B', alpha=0.85)
+        sp = (max(sv) - min(sv)) * 0.03 if sv else 0
+        for i, v in enumerate(sv):
+            ax_snr.text(i, v + sp, f"{v:.2f}", ha='center', va='bottom', fontsize=8, color=COL_TXT)
+        bc = ['#34D399' if d >= 0 else '#F87171' for d in dv]
+        ax_delta.bar(xs, dv, width=0.55, color=bc, alpha=0.8)
+        ax_delta.errorbar(xs, dv, yerr=er, fmt='none', color='#D1D5DB', capsize=5, linewidth=1.5)
+        ax_snr.set_title(f"SNR = Δ / σ_Ref   [Base: {bl}]", color=COL_MUT, fontsize=10)
+        ax_delta.set_xticks(xs)
+        ax_delta.set_xticklabels(labels, rotation=20, ha='right', color=COL_TXT, fontsize=9)
+
+    for ax in (ax_snr, ax_delta):
+        ax.axhline(0, color=COL_SPL, linewidth=0.8, linestyle='--')
+    ax_snr.set_ylabel("SNR", color=COL_TXT, fontsize=9)
+    ax_delta.set_ylabel("Δ = T−R  (±σ_Ref)", color=COL_TXT, fontsize=9)
+
+    buf = BytesIO()
+    _MplAgg(fig).print_figure(buf, format='png', dpi=120, facecolor=BG_FIG)
+    buf.seek(0)
+
+    chart_sl = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_bg(chart_sl, C_BG)
+    _add_text(chart_sl, "ROI Analysis — SNR Chart",
+              Inches(0.4), Inches(0.12), Inches(12.5), Inches(0.45),
+              size=15, bold=True, color=C_PRIMARY)
+    chart_sl.shapes.add_picture(buf, Inches(0.4), Inches(0.65), width=Inches(12.5))
+
+
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
     """Dialog for multi-image perspective combination and defect detection."""
 
@@ -2773,6 +3947,21 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._multi_roi_set: MultiROISet = MultiROISet()
         self._roi_manager: Optional[MultiROIManagerWidget] = None
         self._roi_profile_dialog: Optional[ROIIntensityProfileDialog] = None
+        # Last ROI analysis results keyed by base_label.
+        # In auto-pair mode there are multiple base groups; standard mode has one.
+        self._roi_full_results: Dict[str, ROIFullResult] = {}
+
+        # The base-image label that was visible in the base viewer when the user
+        # last opened / modified the ROI Manager.  ROI norm_rect values are
+        # defined in this image's coordinate space and must be remapped for every
+        # other base group before computing ROI stats.
+        self._roi_ref_base_label: Optional[str] = None
+
+        # Per-base remapped ROI sets (populated by _run_roi_analysis).
+        # Key = base_label; value = MultiROISet with coords in that base's space.
+        # Used by _apply_roi_visibility so the visual ROI overlay stays correct
+        # when the user browses results with different base images.
+        self._roi_remapped_sets: Dict[str, MultiROISet] = {}
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -3748,11 +4937,21 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         bottom_row.setContentsMargins(0, 0, 0, 0)
         bottom_row.setSpacing(8)
 
-        # Card 1: Analysis — combined alignment + difference metrics
-        self.stats_widget = StatisticsWidget()
-        bottom_row.addWidget(self.stats_widget, 2)
+        # Card 1 (LEFT, ratio 1): Alignment — compact alignment-quality metrics only
+        self.align_panel = AlignmentPanelWidget()
+        bottom_row.addWidget(self.align_panel, 1)
 
-        # Card 2: Histogram (wider, positioned under the Difference Map)
+        # Card 2 (CENTER, ratio 2): Diff / ROI Analysis — ROI quantification summary
+        self.diff_roi_panel = DiffROIAnalysisPanelWidget()
+        self.diff_roi_panel.open_roi_manager_requested.connect(self._on_open_roi_manager)
+        self.diff_roi_panel.roi_details_requested.connect(self._on_show_roi_profile_dialog)
+        bottom_row.addWidget(self.diff_roi_panel, 2)
+
+        # Legacy StatisticsWidget — kept in memory for backward-compat, not shown in layout
+        self.stats_widget = StatisticsWidget()
+        self.stats_widget.setVisible(False)
+
+        # Card 3 (RIGHT, ratio 3): Histogram (wider, positioned under the Difference Map)
         hist_card = QtWidgets.QFrame()
         hist_card.setObjectName("BottomCard")
         hist_layout = QtWidgets.QVBoxLayout(hist_card)
@@ -4914,40 +6113,24 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_prev_result.setVisible(False)
         self.btn_next_result.setVisible(False)
         self.btn_export.setVisible(False)
+        # Reset bottom panels to empty state
+        self.align_panel.reset()
+        self.diff_roi_panel.reset()
+        self._roi_full_results = {}
+        self._roi_remapped_sets = {}
+        self._roi_ref_base_label = None
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
-        """Compute ROI full stats from the latest compute results and show profile dialog."""
-        base_label = self.cmb_base.currentText()
-        base_img = self._images.get(base_label)
-        if base_img is None:
-            return
+        """Compute ROI full stats, grouped by base_label to support auto-pair mode.
+
+        In standard mode all results share the same base_label → one ROIFullResult.
+        In auto-pair mode each distinct base_label gets its own ROIFullResult so
+        the ROI quantification is always computed against the correct base image.
+        """
+        from collections import defaultdict
 
         norm_mode = self.cmb_normalize_mode.currentIndex()
         use_roi_match = (norm_mode == 3)
-
-        # Build aligned_compares dict from results. In ROI-Match mode, re-apply the
-        # per-pair alpha scale so ROI analysis uses the same calibrated compare image
-        # that produced the displayed diff result.
-        aligned_compares: Dict[str, np.ndarray] = {}
-        for r in results:
-            comp = r.aligned_compare
-            if comp is None:
-                continue
-            if use_roi_match:
-                if r.roi_match_alpha is None:
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        "ROI Analysis",
-                        "ROI analysis is unavailable for this ROI-Match result because "
-                        "the ROI-match scale (α) was not found.",
-                    )
-                    return
-                comp = np.clip(
-                    comp.astype(np.float32) * float(r.roi_match_alpha),
-                    0,
-                    255,
-                ).astype(np.uint8)
-            aligned_compares[r.compare_label] = comp
 
         _method_map = {0: 'percentile', 1: 'glv_mask', 2: 'skip', 3: 'skip'}
         normalize_method = _method_map.get(norm_mode, 'percentile')
@@ -4960,31 +6143,138 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         preserve_positive = (sub_mode == 0)
         abs_diff = (sub_mode == 1)
 
-        try:
-            roi_result = compute_roi_full_stats(
-                base=base_img,
-                aligned_compares=aligned_compares,
-                roi_set=self._multi_roi_set,
-                normalize_method=normalize_method,
-                glv_range=glv_range,
-                clahe_clip_limit=clahe_clip,
-                preserve_positive_diff=preserve_positive,
-                abs_diff=abs_diff,
-            )
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "ROI Analysis", f"ROI analysis failed:\n{exc}")
+        # ── Group results by base_label ──────────────────────────────────
+        groups: Dict[str, List[SinglePairResult]] = defaultdict(list)
+        for r in results:
+            groups[r.base_label].append(r)
+
+        roi_full_results: Dict[str, ROIFullResult] = {}
+        roi_remapped_sets_build: Dict[str, MultiROISet] = {}
+
+        for base_lbl, group in groups.items():
+            base_img = self._images.get(base_lbl)
+            if base_img is None:
+                continue
+
+            # Build aligned_compares for this base group.
+            # In ROI-Match mode re-apply per-pair alpha so analysis uses the same
+            # calibrated compare image that produced the displayed diff result.
+            aligned_compares: Dict[str, np.ndarray] = {}
+            skip_group = False
+            for r in group:
+                comp = r.aligned_compare
+                if comp is None:
+                    continue
+                if use_roi_match:
+                    if r.roi_match_alpha is None:
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            "ROI Analysis",
+                            f"ROI analysis is unavailable for pair "
+                            f"'{r.base_label} → {r.compare_label}' because the "
+                            f"ROI-match scale (α) was not found.",
+                        )
+                        skip_group = True
+                        break
+                    comp = np.clip(
+                        comp.astype(np.float32) * float(r.roi_match_alpha),
+                        0, 255,
+                    ).astype(np.uint8)
+                aligned_compares[r.compare_label] = comp
+
+            if skip_group or not aligned_compares:
+                continue
+
+            # ── ROI coordinate remapping ─────────────────────────────────
+            # If the ROI was drawn while a *different* base image was shown in
+            # the base viewer, the norm_rect values are in that image's coordinate
+            # space.  We use the already-computed alignment offset between the
+            # ROI reference base and this base group to shift the ROI coordinates
+            # so they point to the correct physical region.
+            #
+            # pair (roi_ref_base → base_lbl) gives the shift applied to base_lbl
+            # to align it with roi_ref_base.  Under this convention:
+            #   aligned_compare[y, x] = compare[y - dy, x - dx]   (warpAffine -dx/-dy)
+            # → feature at (y, x) in roi_ref_base is at (y + dy, x + dx) in base_lbl
+            # → the ROI must move by (+dx, +dy) ... wait: we need the same region
+            #   in base_lbl that corresponds to the ROI in roi_ref_base.
+            #   base_lbl feature at (y, x)  ≈ roi_ref_base feature at (y - dy, x - dx)
+            #   so roi_ref_base ROI at (rx, ry) → base_lbl ROI at (rx + dx, ry + dy)
+            # Remap ROI from roi_ref_base coordinate space to base_lbl.
+            #
+            # _apply_alignment(compare, dx, dy) uses warpAffine with
+            #   M = [[1, 0, -dx], [0, 1, -dy]]  (forward mapping src→dst)
+            #   which gives:  aligned[y, x] = compare[y + dy, x + dx]
+            # For high NCC the pair (base=roi_ref_base, compare=base_lbl) satisfies:
+            #   base[y, x] ≈ compare[y + dy, x + dx]
+            # → the physical point at (rx, ry) in roi_ref_base is located at
+            #   (rx + dx, ry + dy) in base_lbl's original pixel space.
+            # Therefore the ROI must be shifted by (+dx, +dy).
+            roi_set_for_base = self._multi_roi_set
+            ref_lbl = self._roi_ref_base_label
+            if (ref_lbl and ref_lbl != base_lbl
+                    and len(self._multi_roi_set) > 0):
+                # Find pair: base=ref_lbl, compare=base_lbl
+                ref_to_base_pair = next(
+                    (r for r in results
+                     if r.base_label == ref_lbl and r.compare_label == base_lbl),
+                    None,
+                )
+                if ref_to_base_pair is not None and ref_to_base_pair.alignment is not None:
+                    dx = ref_to_base_pair.alignment.dx
+                    dy = ref_to_base_pair.alignment.dy
+                    ref_img = self._images.get(ref_lbl)
+                    if ref_img is not None:
+                        roi_set_for_base = self._multi_roi_set.shifted(
+                            dx, dy, ref_img.shape
+                        )
+
+            # Cache the (possibly remapped) ROI set so _apply_roi_visibility
+            # can display the correct overlay when this base is shown.
+            roi_remapped_sets_build[base_lbl] = roi_set_for_base
+
+            try:
+                roi_result = compute_roi_full_stats(
+                    base=base_img,
+                    aligned_compares=aligned_compares,
+                    roi_set=roi_set_for_base,
+                    normalize_method=normalize_method,
+                    glv_range=glv_range,
+                    clahe_clip_limit=clahe_clip,
+                    preserve_positive_diff=preserve_positive,
+                    abs_diff=abs_diff,
+                )
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    self, "ROI Analysis",
+                    f"ROI analysis failed for base '{base_lbl}':\n{exc}"
+                )
+                continue
+
+            roi_full_results[base_lbl] = roi_result
+
+        if not roi_full_results:
             return
 
-        # Pass result to manager for export
-        if self._roi_manager is not None:
-            # ROI manager is now configuration-only; ROI results are exported via main Export flow.
-            pass
+        # ── Store and refresh UI ─────────────────────────────────────────
+        self._roi_full_results = roi_full_results
+        self._roi_remapped_sets = roi_remapped_sets_build
 
-        # Auto-popup profile dialog
+        # Refresh the center Diff/ROI panel for the currently displayed result
+        if self._results:
+            current = self._results[self._current_result_idx]
+            self._update_diff_roi_panel(current)
+            # Re-apply ROI overlay so the base viewer shows the remapped ROI
+            # for the currently displayed base (not the ref-base coords).
+            self._apply_roi_visibility()
+
+        # Rebuild the ROI detail dialog with the new multi-base results.
+        # Do NOT auto-show — user opens via [ROI Details…] button.
         if self._roi_profile_dialog is not None:
             self._roi_profile_dialog.close()
-        self._roi_profile_dialog = ROIIntensityProfileDialog(roi_result, parent=self)
-        self._roi_profile_dialog.show()
+        self._roi_profile_dialog = ROIIntensityProfileDialog(
+            roi_full_results, results, parent=self
+        )
 
     def _on_compute_error(self, message: str):
         QtWidgets.QMessageBox.critical(self, "Error", f"Computation failed:\n{message}")
@@ -5268,6 +6558,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_stats_display(result)
         self._refresh_normalized_compare_dialog(result)
 
+        # ROI overlay: update to the remapped set for this result's base so the
+        # overlay position is correct when the user navigates between results.
+        self._apply_roi_visibility()
+
     def _update_blend_preview(self):
         if not self._results:
             return
@@ -5290,7 +6584,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.img_blend.set_divider(ratio)
 
     def _update_alignment_display(self, result: SinglePairResult):
-        """Update alignment metrics in the merged Analysis card."""
+        """Update alignment metrics in the LEFT Alignment panel."""
         a = result.alignment
 
         if a.final_score >= 75:
@@ -5303,6 +6597,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             status_text = "\u2717 FAIL"
             status_color = UI_WARNING
 
+        self.align_panel.update_alignment(
+            phase=f"{a.score_phase:.3f}",
+            ncc=f"{a.score_ncc:.3f}",
+            residual=f"{a.score_residual:.3f}",
+            final=f"{a.final_score:.1f}",
+            shift=f"({a.dx:+d}, {a.dy:+d})",
+            status=status_text,
+            status_color=status_color,
+        )
+        # Keep legacy stats_widget in sync (not visible, but used by some export paths)
         self.stats_widget.update_alignment(
             phase=f"{a.score_phase:.3f}",
             ncc=f"{a.score_ncc:.3f}",
@@ -5333,11 +6637,41 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         dy_f = s.get('dy_subpixel', float(result.alignment.dy))
         self.stats_widget.stats_labels["subpixel_shift"].setText(f"({dx_f:+.2f}, {dy_f:+.2f})")
 
-        # ROI-Match alpha readout
+        # ROI-Match alpha readout (STATE A sidebar label)
         if result.roi_match_alpha is not None:
             self.lbl_roi_alpha.setText(f"ROI-match \u03b1 = {result.roi_match_alpha:.4f}")
         else:
             self.lbl_roi_alpha.setText("")
+
+        # Refresh the CENTER Diff/ROI Analysis panel
+        self._update_diff_roi_panel(result)
+
+    def _update_diff_roi_panel(self, result: SinglePairResult) -> None:
+        """Refresh the DiffROIAnalysisPanelWidget for the given result.
+
+        Looks up the matching ROIFullResult by result.base_label so that
+        auto-pair results are always shown against the correct base group.
+        """
+        n_target = len([r for r in self._multi_roi_set.rois if r.roi_type == 'target'])
+        n_ref = len(self._multi_roi_set.get_references())
+        if n_target == 0 and n_ref == 0:
+            self.diff_roi_panel.show_no_roi()
+        else:
+            roi_full = self._roi_full_results.get(result.base_label)
+            self.diff_roi_panel.update_result(result, roi_full, n_target, n_ref)
+
+    def _on_show_roi_profile_dialog(self) -> None:
+        """Open or raise the ROI Intensity Profile dialog (from [ROI Details…] button)."""
+        if self._roi_profile_dialog is None:
+            QtWidgets.QMessageBox.information(
+                self, "ROI Details",
+                "ROI analysis has not been run yet.\n"
+                "Compute a result with ROI defined to enable the details view."
+            )
+            return
+        self._roi_profile_dialog.show()
+        self._roi_profile_dialog.raise_()
+        self._roi_profile_dialog.activateWindow()
 
     def _update_navigation(self):
         """Update navigation buttons and label."""
@@ -5433,21 +6767,53 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._roi_manager.set_image_shape(base_img.shape[:2])
             self._apply_roi_visibility()
 
+        # In auto-pair mode before any compute, img_base_mag may show stale or
+        # empty content because _on_base_changed() is not called when auto-pair
+        # is toggled on.  Force-display the cmb_base image so the user draws ROI
+        # on a known, labeled image, ensuring _roi_ref_base_label is correct.
+        if self.chk_auto_pair.isChecked() and not self._results and base_img is not None:
+            self.img_base_mag.setImage(base_img)
+
+        # Record which base image the ROI is being drawn on.
+        # In auto-pair mode, use the currently displayed result's base_label
+        # (that image is what img_base_mag shows).  In standard mode, use cmb_base.
+        self._capture_roi_ref_base()
+
         self._roi_manager.show()
         self._roi_manager.raise_()
         self._roi_manager.activateWindow()
+
+    def _capture_roi_ref_base(self) -> None:
+        """Record the base-image label currently shown in the base viewer."""
+        if self._results and 0 <= self._current_result_idx < len(self._results):
+            self._roi_ref_base_label = self._results[self._current_result_idx].base_label
+        elif self.cmb_base.currentText():
+            self._roi_ref_base_label = self.cmb_base.currentText()
 
     def _on_multi_rois_changed(self) -> None:
         """Refresh all image widgets when ROI set changes."""
         self._apply_roi_visibility()
         self._update_roi_status_label()
+        # Keep the ref-base up to date when the user adds/modifies ROIs
+        self._capture_roi_ref_base()
 
     def _on_roi_view_toggled(self, _checked: bool) -> None:
         self._apply_roi_visibility()
 
     def _apply_roi_visibility(self) -> None:
         show = getattr(self, 'chk_roi_view', None) is None or self.chk_roi_view.isChecked()
-        roi_set = self._multi_roi_set if show else None
+        if not show:
+            self.img_base_mag.set_multi_roi_set(None)
+            self.img_diff.set_multi_roi_set(None)
+            return
+
+        # In auto-pair mode, use the remapped ROI set for the currently
+        # displayed base so the overlay stays spatially correct on that image.
+        roi_set = self._multi_roi_set  # default (ref-base coords or no results)
+        if self._roi_remapped_sets and self._results:
+            cur = self._results[self._current_result_idx]
+            roi_set = self._roi_remapped_sets.get(cur.base_label, self._multi_roi_set)
+
         self.img_base_mag.set_multi_roi_set(roi_set)
         self.img_diff.set_multi_roi_set(roi_set)
 
@@ -5686,10 +7052,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             return chk.isChecked(), spn.value(), chk_gif.isChecked()
         return False, 512, False
 
+    # ------------------------------------------------------------------
+    # PPT ROI helper  (module-level, called from _export_ppt_report)
+    # ------------------------------------------------------------------
+
     def _export_ppt_report(self, out_dir: str, result_rows: List[Dict[str, object]],
                            settings: Dict[str, object],
                            do_center_crop: bool = False,
-                           crop_size: int = 512) -> Optional[str]:
+                           crop_size: int = 512,
+                           roi_full_results: Optional[Dict[str, object]] = None,
+                           roi_all_results: Optional[List[object]] = None) -> Optional[str]:
         """Build a dark-themed PPT report for all computed image pairs."""
         try:
             from pptx import Presentation
@@ -5993,6 +7365,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 # Image — inserted with aspect-ratio preservation
                 _add_picture_aspect(slide, paths[key], lft, top_y + LABEL_H, IMG_W, IMG_H)
 
+        # ── ROI Analysis slides ──────────────────────────────────────────────
+        if roi_full_results and roi_all_results:
+            _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
+                                _fill_bg, _add_text, _score_color,
+                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
+                                C_PRIMARY, C_SUCCESS, C_WARN,
+                                Inches, Pt)
+
         ppt_path = str(Path(out_dir) / "perspective_report.pptx")
         prs.save(ppt_path)
         return ppt_path
@@ -6144,7 +7524,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
                 ppt_path = self._export_ppt_report(out_dir, result_rows, settings,
                                                    do_center_crop=do_center_crop,
-                                                   crop_size=crop_size)
+                                                   crop_size=crop_size,
+                                                   roi_full_results=self._roi_full_results or {},
+                                                   roi_all_results=self._results or [])
                 if ppt_path:
                     QtWidgets.QMessageBox.information(
                         self,
