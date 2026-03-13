@@ -2491,6 +2491,25 @@ class NormalizedCompareDialog(QtWidgets.QDialog):
         canvas.plot_histogram(counts, edges)
 
 
+class _NumericSortItem(QtWidgets.QTableWidgetItem):
+    """QTableWidgetItem that compares numerically when a sort_key is supplied."""
+
+    def __init__(self, text: str, sort_key=None):
+        super().__init__(text)
+        self._sort_key = sort_key  # float or None
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        if isinstance(other, _NumericSortItem):
+            a, b = self._sort_key, other._sort_key
+            if a is not None and b is not None:
+                return float(a) < float(b)
+            if a is None and b is not None:
+                return True   # None sorts before numbers
+            if a is not None and b is None:
+                return False
+        return super().__lt__(other)
+
+
 class ROIIntensityProfileDialog(QtWidgets.QDialog):
     """Detailed ROI analysis dialog — opened via [ROI Details…] button.
 
@@ -2511,6 +2530,17 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
     _COL_MUT = '#9CA3AF'
     _COL_SPL = '#4B5563'
     _COL_GRD = '#374151'
+
+    # SNR quality thresholds for row color-coding
+    _SNR_GOOD  = 2.0   # ≥ this → green
+    _SNR_OK    = 1.0   # ≥ this → yellow; below → red
+
+    # Align status colors
+    _STATUS_COLOR = {
+        'ok':   '#4ADE80',
+        'warn': '#FCD34D',
+        'fail': '#F87171',
+    }
 
     def __init__(
         self,
@@ -2534,6 +2564,11 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
     # Top-level layout
     # ------------------------------------------------------------------
 
+    @property
+    def _is_auto_pair(self) -> bool:
+        """True when results come from auto-pair mode (multiple distinct base images)."""
+        return len(set(r.base_label for r in self._all_results)) > 1
+
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setSpacing(8)
@@ -2541,6 +2576,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(self._build_summary_tab(), "LE Summary")
+        if self._is_auto_pair:
+            tabs.addTab(self._build_matrix_tab(), "Pair Matrix")
         tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
         tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
         tabs.addTab(self._build_table_tab(), "Raw Table")
@@ -2604,12 +2641,16 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         ctrl_row.addWidget(export_btn)
         lay.addLayout(ctrl_row)
 
-        headers = [
-            'Base', 'Compare (LE)', 'ROI-match α', 'Align Score',
+        # Column indices (keep in sync with _SUMMARY_HEADERS below)
+        self._SUMMARY_HEADERS = [
+            'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
             'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR',
         ]
-        self._summary_table = QtWidgets.QTableWidget(0, len(headers))
-        self._summary_table.setHorizontalHeaderLabels(headers)
+        self._COL_SNR    = self._SUMMARY_HEADERS.index('SNR')
+        self._COL_STATUS = self._SUMMARY_HEADERS.index('Align Status')
+
+        self._summary_table = QtWidgets.QTableWidget(0, len(self._SUMMARY_HEADERS))
+        self._summary_table.setHorizontalHeaderLabels(self._SUMMARY_HEADERS)
         self._summary_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeToContents
         )
@@ -2617,62 +2658,134 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         self._summary_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self._summary_table.setAlternatingRowColors(True)
         self._summary_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self._summary_table.setSortingEnabled(True)
+        self._summary_table.horizontalHeader().setSortIndicator(
+            self._COL_SNR, Qt.DescendingOrder
+        )
         lay.addWidget(self._summary_table, stretch=1)
 
         self._refresh_summary_table()
         return w
 
-    def _get_summary_rows(self, base_filter: Optional[str] = None) -> List[List[str]]:
-        """Build list of row values for the LE Summary table."""
-        rows: List[List[str]] = []
-        # Iterate in order of all_results so display order matches result navigation
+    def _get_summary_data(self, base_filter: Optional[str] = None) -> List[dict]:
+        """Return structured data dicts for each pair (used by table and CSV)."""
+        data = []
         for r in self._all_results:
             if base_filter is not None and r.base_label != base_filter:
                 continue
-            roi_full = self._roi_results.get(r.base_label)
+            roi_full  = self._roi_results.get(r.base_label)
             snr_entry = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
-
-            alpha_str = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
-            align_str = f"{r.alignment.final_score:.1f}" if r.alignment else "—"
+            align_status  = (r.alignment.status if r.alignment else None) or '—'
+            align_score_v = r.alignment.final_score if r.alignment else None
+            alpha_str     = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
+            align_str     = f"{align_score_v:.1f}" if align_score_v is not None else "—"
 
             if snr_entry is not None:
-                mu_t = snr_entry.mu_target
-                mu_r = snr_entry.mu_ref
-                sigma_r = snr_entry.sigma_ref
-                delta = mu_t - mu_r
-                snr = snr_entry.snr
-                rows.append([
-                    r.base_label,
-                    r.compare_label,
-                    alpha_str,
-                    align_str,
-                    f"{mu_t:.5f}",
-                    f"{mu_r:.5f}",
-                    f"{sigma_r:.5f}",
-                    f"{delta:+.5f}",
-                    f"{snr:.4f}",
-                ])
+                delta_v = snr_entry.mu_target - snr_entry.mu_ref
+                data.append({
+                    'base':         r.base_label,
+                    'compare':      r.compare_label,
+                    'align_status': align_status,
+                    'alpha':        alpha_str,
+                    'align_score':  align_str,
+                    'align_score_v': align_score_v,
+                    'mu_t':         f"{snr_entry.mu_target:.5f}",
+                    'mu_r':         f"{snr_entry.mu_ref:.5f}",
+                    'sigma_r':      f"{snr_entry.sigma_ref:.5f}",
+                    'delta':        f"{delta_v:+.5f}",
+                    'delta_v':      delta_v,
+                    'snr':          f"{snr_entry.snr:.4f}",
+                    'snr_v':        snr_entry.snr,
+                })
             else:
-                rows.append([
-                    r.base_label, r.compare_label,
-                    alpha_str, align_str,
-                    "—", "—", "—", "—", "—",
-                ])
-        return rows
+                data.append({
+                    'base': r.base_label, 'compare': r.compare_label,
+                    'align_status': align_status,
+                    'alpha': alpha_str, 'align_score': align_str, 'align_score_v': align_score_v,
+                    'mu_t': '—', 'mu_r': '—', 'sigma_r': '—',
+                    'delta': '—', 'delta_v': None,
+                    'snr': '—',  'snr_v': None,
+                })
+        return data
+
+    def _get_summary_rows(self, base_filter: Optional[str] = None) -> List[List[str]]:
+        """Flat string rows in SUMMARY_HEADERS column order (for CSV export)."""
+        return [
+            [d['base'], d['compare'], d['align_status'], d['alpha'], d['align_score'],
+             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr']]
+            for d in self._get_summary_data(base_filter)
+        ]
+
+    @staticmethod
+    def _snr_bg(snr_v: Optional[float]) -> Optional[QtGui.QColor]:
+        if snr_v is None:
+            return None
+        if snr_v >= ROIIntensityProfileDialog._SNR_GOOD:
+            return QtGui.QColor('#166534')   # dark green bg
+        if snr_v >= ROIIntensityProfileDialog._SNR_OK:
+            return QtGui.QColor('#854D0E')   # dark yellow/amber bg
+        return QtGui.QColor('#7F1D1D')       # dark red bg
+
+    @staticmethod
+    def _status_bg(status: str) -> Optional[QtGui.QColor]:
+        color_hex = ROIIntensityProfileDialog._STATUS_COLOR.get(status.lower())
+        if color_hex is None:
+            return None
+        c = QtGui.QColor(color_hex)
+        # Darken for use as background (text stays light)
+        return QtGui.QColor(c.red() // 2, c.green() // 2, c.blue() // 2)
+
+    def _make_sort_item(self, text: str, sort_key=None) -> QtWidgets.QTableWidgetItem:
+        """QTableWidgetItem that sorts numerically when sort_key is a float."""
+        item = _NumericSortItem(text, sort_key)
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
 
     def _refresh_summary_table(self) -> None:
         base_filter: Optional[str] = None
         if self._cmb_summary_base is not None:
             base_filter = self._cmb_summary_base.currentText() or None
 
+        # Disable sorting while filling to avoid mid-insert reordering
+        self._summary_table.setSortingEnabled(False)
         self._summary_table.setRowCount(0)
-        for values in self._get_summary_rows(base_filter):
+
+        for d in self._get_summary_data(base_filter):
             row_idx = self._summary_table.rowCount()
             self._summary_table.insertRow(row_idx)
-            for col, val in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(val)
-                item.setTextAlignment(Qt.AlignCenter)
+
+            # Build items in column order matching _SUMMARY_HEADERS
+            items = [
+                self._make_sort_item(d['base']),
+                self._make_sort_item(d['compare']),
+                self._make_sort_item(d['align_status']),
+                self._make_sort_item(d['alpha']),
+                self._make_sort_item(d['align_score'], d['align_score_v']),
+                self._make_sort_item(d['mu_t']),
+                self._make_sort_item(d['mu_r']),
+                self._make_sort_item(d['sigma_r']),
+                self._make_sort_item(d['delta'], d['delta_v']),
+                self._make_sort_item(d['snr'], d['snr_v']),
+            ]
+
+            # Color: Align Status cell
+            status_bg = self._status_bg(d['align_status'])
+            if status_bg is not None:
+                items[self._COL_STATUS].setBackground(status_bg)
+                items[self._COL_STATUS].setForeground(
+                    QtGui.QColor(self._STATUS_COLOR.get(d['align_status'].lower(), '#D1D5DB'))
+                )
+
+            # Color: SNR cell
+            snr_bg = self._snr_bg(d['snr_v'])
+            if snr_bg is not None:
+                items[self._COL_SNR].setBackground(snr_bg)
+                items[self._COL_SNR].setForeground(QtGui.QColor('#D1D5DB'))
+
+            for col, item in enumerate(items):
                 self._summary_table.setItem(row_idx, col, item)
+
+        self._summary_table.setSortingEnabled(True)
 
     def _on_export_csv(self) -> None:
         """Export the LE Summary table to a CSV file chosen by the user."""
@@ -2682,7 +2795,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         if not path:
             return
         headers = [
-            'base', 'compare_le', 'roi_match_alpha', 'align_score',
+            'base', 'compare_le', 'align_status', 'roi_match_alpha', 'align_score',
             'target_mean_diff', 'ref_mean_diff', 'ref_std_diff', 'delta', 'snr',
         ]
         try:
@@ -2782,6 +2895,100 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                         fontsize=8, loc='upper right')
 
         self._chart_canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Tab 2b — Pair Matrix (auto-pair only)
+    # ------------------------------------------------------------------
+
+    def _build_matrix_tab(self) -> QtWidgets.QWidget:
+        """N×N SNR heatmap — rows = base, columns = compare."""
+        import matplotlib.cm as mpl_cm
+
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(4, 4, 4, 4)
+
+        # ── Collect ordered labels ─────────────────────────────────────
+        all_labels = sorted(set(
+            [r.base_label    for r in self._all_results] +
+            [r.compare_label for r in self._all_results]
+        ))
+        n = len(all_labels)
+        label_idx = {lbl: i for i, lbl in enumerate(all_labels)}
+
+        matrix = np.full((n, n), np.nan)
+        for r in self._all_results:
+            roi_full = self._roi_results.get(r.base_label)
+            if roi_full:
+                entry = roi_full.snr_per_diff.get(r.compare_label)
+                if entry is not None:
+                    matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
+
+        # ── Figure ────────────────────────────────────────────────────
+        cell_px = 90
+        fig_in = max(4.5, n * cell_px / 96)
+        fig = Figure(figsize=(fig_in + 1.2, fig_in), tight_layout=True)
+        fig.patch.set_facecolor(self._BG_FIG)
+        ax = fig.add_subplot(111)
+
+        cmap = mpl_cm.RdYlGn.copy()
+        cmap.set_bad(color='#374151')   # NaN cells (diagonal + missing pairs)
+
+        valid = matrix[~np.isnan(matrix)]
+        vmin = float(np.min(valid)) if valid.size else 0.0
+        vmax = float(np.max(valid)) if valid.size else 2.0
+        # Always include 0 and extend a bit so the colorbar is readable
+        vmin = min(vmin, 0.0)
+        vmax = max(vmax, self._SNR_GOOD)
+
+        im = ax.imshow(matrix, cmap=cmap, aspect='equal',
+                       vmin=vmin, vmax=vmax, interpolation='nearest')
+
+        # ── Colorbar ──────────────────────────────────────────────────
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("SNR", color=self._COL_TXT, fontsize=9)
+        cbar.ax.tick_params(labelcolor=self._COL_TXT, color=self._COL_TXT)
+        # Mark threshold lines
+        for thresh, lbl in [(self._SNR_OK, f"≥{self._SNR_OK:.0f}"),
+                             (self._SNR_GOOD, f"≥{self._SNR_GOOD:.0f}")]:
+            if vmin < thresh < vmax:
+                cbar.ax.axhline((thresh - vmin) / (vmax - vmin), color='white',
+                                linewidth=0.8, linestyle='--')
+
+        # ── Cell annotations ──────────────────────────────────────────
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    ax.text(j, i, '—', ha='center', va='center',
+                            fontsize=9, color='#6B7280')
+                elif not np.isnan(matrix[i, j]):
+                    val = matrix[i, j]
+                    # Choose text color for readability against RdYlGn background
+                    norm_v = (val - vmin) / max(vmax - vmin, 1e-9)
+                    txt_col = '#111827' if norm_v > 0.25 else '#F9FAFB'
+                    ax.text(j, i, f"{val:.2f}", ha='center', va='center',
+                            fontsize=8, color=txt_col, fontweight='bold')
+                else:
+                    ax.text(j, i, 'n/a', ha='center', va='center',
+                            fontsize=8, color='#6B7280')
+
+        # ── Axes labels ───────────────────────────────────────────────
+        ax.set_xticks(range(n))
+        ax.set_yticks(range(n))
+        ax.set_xticklabels(all_labels, rotation=30, ha='right',
+                           color=self._COL_TXT, fontsize=9)
+        ax.set_yticklabels(all_labels, color=self._COL_TXT, fontsize=9)
+        ax.set_xlabel("Compare (LE)  →", color=self._COL_TXT, fontsize=9)
+        ax.set_ylabel("Base  ↓", color=self._COL_TXT, fontsize=9)
+        ax.set_title("SNR Pair Matrix  (row = Base, col = Compare LE)",
+                     color=self._COL_MUT, fontsize=9)
+        ax.tick_params(colors=self._COL_TXT, length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        canvas = FigureCanvas(fig)
+        lay.addWidget(canvas, stretch=1)
+        return w
 
     # ------------------------------------------------------------------
     # Tab 3 — Per-ROI Mean across LE
