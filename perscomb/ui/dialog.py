@@ -3200,12 +3200,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                             h, w_img = img.shape[:2]
                             from matplotlib.patches import Rectangle as MplRect
                             for roi in roi_set.rois:
-                                rx = roi.norm_rect.x() * w_img
-                                ry = roi.norm_rect.y() * h
-                                rw = roi.norm_rect.width() * w_img
-                                rh = roi.norm_rect.height() * h
+                                nx, ny, nw, nh = roi.norm_rect
                                 ax.add_patch(MplRect(
-                                    (rx, ry), rw, rh,
+                                    (nx * w_img, ny * h), nw * w_img, nh * h,
                                     linewidth=0.8, edgecolor='#F59E0B',
                                     facecolor='none', zorder=4,
                                 ))
