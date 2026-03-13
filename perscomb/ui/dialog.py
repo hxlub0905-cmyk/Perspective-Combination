@@ -3902,6 +3902,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # other base group before computing ROI stats.
         self._roi_ref_base_label: Optional[str] = None
 
+        # Per-base remapped ROI sets (populated by _run_roi_analysis).
+        # Key = base_label; value = MultiROISet with coords in that base's space.
+        # Used by _apply_roi_visibility so the visual ROI overlay stays correct
+        # when the user browses results with different base images.
+        self._roi_remapped_sets: Dict[str, MultiROISet] = {}
+
         self._setup_ui()
         self._apply_toolbar_icons()
         self._connect_signals()
@@ -6056,6 +6062,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_panel.reset()
         self.diff_roi_panel.reset()
         self._roi_full_results = {}
+        self._roi_remapped_sets = {}
         self._roi_ref_base_label = None
 
     def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
@@ -6087,6 +6094,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             groups[r.base_label].append(r)
 
         roi_full_results: Dict[str, ROIFullResult] = {}
+        roi_remapped_sets_build: Dict[str, MultiROISet] = {}
 
         for base_lbl, group in groups.items():
             base_img = self._images.get(base_lbl)
@@ -6164,6 +6172,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                             -dx, -dy, ref_img.shape
                         )
 
+            # Cache the (possibly remapped) ROI set so _apply_roi_visibility
+            # can display the correct overlay when this base is shown.
+            roi_remapped_sets_build[base_lbl] = roi_set_for_base
+
             try:
                 roi_result = compute_roi_full_stats(
                     base=base_img,
@@ -6189,11 +6201,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # ── Store and refresh UI ─────────────────────────────────────────
         self._roi_full_results = roi_full_results
+        self._roi_remapped_sets = roi_remapped_sets_build
 
         # Refresh the center Diff/ROI panel for the currently displayed result
         if self._results:
             current = self._results[self._current_result_idx]
             self._update_diff_roi_panel(current)
+            # Re-apply ROI overlay so the base viewer shows the remapped ROI
+            # for the currently displayed base (not the ref-base coords).
+            self._apply_roi_visibility()
 
         # Rebuild the ROI detail dialog with the new multi-base results.
         # Do NOT auto-show — user opens via [ROI Details…] button.
@@ -6485,6 +6501,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_stats_display(result)
         self._refresh_normalized_compare_dialog(result)
 
+        # ROI overlay: update to the remapped set for this result's base so the
+        # overlay position is correct when the user navigates between results.
+        self._apply_roi_visibility()
+
     def _update_blend_preview(self):
         if not self._results:
             return
@@ -6725,7 +6745,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _apply_roi_visibility(self) -> None:
         show = getattr(self, 'chk_roi_view', None) is None or self.chk_roi_view.isChecked()
-        roi_set = self._multi_roi_set if show else None
+        if not show:
+            self.img_base_mag.set_multi_roi_set(None)
+            self.img_diff.set_multi_roi_set(None)
+            return
+
+        # In auto-pair mode, use the remapped ROI set for the currently
+        # displayed base so the overlay stays spatially correct on that image.
+        roi_set = self._multi_roi_set  # default (ref-base coords or no results)
+        if self._roi_remapped_sets and self._results:
+            cur = self._results[self._current_result_idx]
+            roi_set = self._roi_remapped_sets.get(cur.base_label, self._multi_roi_set)
+
         self.img_base_mag.set_multi_roi_set(roi_set)
         self.img_diff.set_multi_roi_set(roi_set)
 
