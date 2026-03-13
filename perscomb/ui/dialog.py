@@ -6145,14 +6145,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             #   in base_lbl that corresponds to the ROI in roi_ref_base.
             #   base_lbl feature at (y, x)  ≈ roi_ref_base feature at (y - dy, x - dx)
             #   so roi_ref_base ROI at (rx, ry) → base_lbl ROI at (rx + dx, ry + dy)
-            # BUT alignment is COMPARE=base_lbl aligned to BASE=roi_ref_base, so
-            #   aligned_base_lbl[y, x] = base_lbl[y - dy, x - dx]
-            #   aligned_base_lbl[y, x] ≈ roi_ref_base[y, x]
-            #   → base_lbl[y - dy, x - dx] ≈ roi_ref_base[y, x]
-            #   → base_lbl[y, x]           ≈ roi_ref_base[y + dy, x + dx]
-            #   → ROI at (rx, ry) in roi_ref_base → base_lbl coords: (rx - dx, ry - dy)
+            # Remap ROI from roi_ref_base coordinate space to base_lbl.
             #
-            # Therefore shift = (-dx, -dy).
+            # _apply_alignment(compare, dx, dy) uses warpAffine with
+            #   M = [[1, 0, -dx], [0, 1, -dy]]  (forward mapping src→dst)
+            #   which gives:  aligned[y, x] = compare[y + dy, x + dx]
+            # For high NCC the pair (base=roi_ref_base, compare=base_lbl) satisfies:
+            #   base[y, x] ≈ compare[y + dy, x + dx]
+            # → the physical point at (rx, ry) in roi_ref_base is located at
+            #   (rx + dx, ry + dy) in base_lbl's original pixel space.
+            # Therefore the ROI must be shifted by (+dx, +dy).
             roi_set_for_base = self._multi_roi_set
             ref_lbl = self._roi_ref_base_label
             if (ref_lbl and ref_lbl != base_lbl
@@ -6169,7 +6171,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     ref_img = self._images.get(ref_lbl)
                     if ref_img is not None:
                         roi_set_for_base = self._multi_roi_set.shifted(
-                            -dx, -dy, ref_img.shape
+                            dx, dy, ref_img.shape
                         )
 
             # Cache the (possibly remapped) ROI set so _apply_roi_visibility
