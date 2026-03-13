@@ -2624,6 +2624,30 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
     def _results_for_base(self, base_label: str) -> List[SinglePairResult]:
         return [r for r in self._all_results if r.base_label == base_label]
 
+    def _save_figure(self, fig, default_stem: str = "roi_chart") -> None:
+        """Open a save dialog and write *fig* to PNG / PDF / SVG."""
+        if fig is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Chart", default_stem,
+            "PNG Image (*.png);;PDF Document (*.pdf);;SVG Vector (*.svg)"
+        )
+        if not path:
+            return
+        try:
+            fig.savefig(path, dpi=150, bbox_inches='tight',
+                        facecolor=self._BG_FIG, edgecolor='none')
+            QtWidgets.QMessageBox.information(self, "Save Chart", f"Saved to:\n{path}")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Save Chart", f"Failed:\n{exc}")
+
+    def _make_save_btn(self, get_fig_fn, stem: str = "chart") -> QtWidgets.QPushButton:
+        btn = QtWidgets.QPushButton("Save Chart…")
+        btn.setFixedHeight(24)
+        btn.setMaximumWidth(120)
+        btn.clicked.connect(lambda: self._save_figure(get_fig_fn(), stem))
+        return btn
+
     # ------------------------------------------------------------------
     # Tab 1 — LE Summary (engineering table + CSV export)
     # ------------------------------------------------------------------
@@ -2835,6 +2859,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             self._cmb_chart_base.currentTextChanged.connect(self._refresh_snr_chart)
             ctrl_row.addWidget(self._cmb_chart_base)
         ctrl_row.addStretch()
+        ctrl_row.addWidget(self._make_save_btn(lambda: self._chart_canvas.figure, "roi_snr_chart"))
         lay.addLayout(ctrl_row)
 
         fig = Figure(figsize=(6, 4), tight_layout=True)
@@ -2982,6 +3007,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             self._cmb_drift_base.currentTextChanged.connect(self._refresh_drift_chart)
             ctrl_row.addWidget(self._cmb_drift_base)
         ctrl_row.addStretch()
+        ctrl_row.addWidget(self._make_save_btn(lambda: self._drift_canvas.figure, "roi_align_drift"))
         lay.addLayout(ctrl_row)
 
         fig = Figure(figsize=(6, 4), tight_layout=True)
@@ -3183,8 +3209,15 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         for spine in ax.spines.values():
             spine.set_visible(False)
 
+        self._matrix_fig = fig   # keep ref for Save Chart
         canvas = FigureCanvas(fig)
+
+        # Save button row
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(self._make_save_btn(lambda: self._matrix_fig, "roi_pair_matrix"))
         lay.addWidget(canvas, stretch=1)
+        lay.addLayout(btn_row)
         return w
 
     # ------------------------------------------------------------------
@@ -3205,6 +3238,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         self._cmb_roi.setMinimumWidth(120)
         ctrl_row.addWidget(self._cmb_roi)
         ctrl_row.addStretch()
+        ctrl_row.addWidget(self._make_save_btn(lambda: self._mean_canvas.figure, "roi_per_roi_mean"))
         lay.addLayout(ctrl_row)
 
         fig = Figure(figsize=(5, 3), tight_layout=True)
@@ -3735,6 +3769,226 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._clear_multi_add_markers()
         super().closeEvent(event)
+
+
+def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
+                        _fill_bg, _add_text, _score_color,
+                        C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
+                        C_PRIMARY, C_SUCCESS, C_WARN,
+                        Inches, Pt):
+    """Append ROI Analysis slides to an existing pptx Presentation object.
+
+    Slide 1 (+ overflow): LE Summary engineering table.
+    Last slide: SNR Chart rendered from matplotlib to a PNG image.
+    """
+    from io import BytesIO
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    C_SNR_GOOD   = RGBColor(0x14, 0x53, 0x2D)   # dark green-900
+    C_SNR_MID    = RGBColor(0x78, 0x35, 0x07)   # dark amber-900
+    C_SNR_BAD    = RGBColor(0x7F, 0x1D, 0x1D)   # dark red-900
+    _STATUS_COLS = {'ok': C_SUCCESS, 'warn': C_PRIMARY, 'fail': C_WARN}
+
+    base_labels = list(roi_full_results.keys())
+
+    # ── Build row data ───────────────────────────────────────────────────
+    roi_rows = []
+    for r in roi_all_results:
+        roi_full = roi_full_results.get(r.base_label)
+        entry    = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
+        status   = (r.alignment.status if r.alignment else '—')
+        score_v  = r.alignment.final_score if r.alignment else None
+        alpha    = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else '—'
+        if entry is not None:
+            delta = entry.mu_target - entry.mu_ref
+            roi_rows.append({
+                'base': r.base_label, 'compare': r.compare_label,
+                'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
+                'alpha': alpha,
+                'score': f"{score_v:.1f}" if score_v is not None else '—', 'score_v': score_v,
+                'mu_t':  f"{entry.mu_target:.4f}",
+                'mu_r':  f"{entry.mu_ref:.4f}",
+                'sigma': f"{entry.sigma_ref:.4f}",
+                'delta': f"{delta:+.4f}",
+                'snr':   f"{entry.snr:.3f}", 'snr_v': entry.snr,
+            })
+        else:
+            roi_rows.append({
+                'base': r.base_label, 'compare': r.compare_label,
+                'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
+                'alpha': alpha,
+                'score': f"{score_v:.1f}" if score_v is not None else '—', 'score_v': score_v,
+                'mu_t': '—', 'mu_r': '—', 'sigma': '—', 'delta': '—', 'snr': '—', 'snr_v': None,
+            })
+
+    # ── Column layout (x in inches, width in inches) ─────────────────────
+    roi_cols = [
+        ("Base",     0.40, 1.85),
+        ("Compare",  2.30, 1.85),
+        ("Status",   4.20, 0.95),
+        ("α",        5.20, 0.80),
+        ("Score",    6.05, 0.80),
+        ("T Mean",   6.90, 1.05),
+        ("R Mean",   8.00, 1.05),
+        ("R Std",    9.10, 1.05),
+        ("Δ",       10.20, 1.05),
+        ("SNR",     11.30, 1.60),
+    ]
+
+    ROWS_PER = 20
+    for block_start in range(0, max(1, len(roi_rows)), ROWS_PER):
+        block = roi_rows[block_start:block_start + ROWS_PER]
+        sl = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_bg(sl, C_BG)
+
+        page_n  = block_start // ROWS_PER + 1
+        n_pages = max(1, (len(roi_rows) + ROWS_PER - 1) // ROWS_PER)
+        _add_text(sl, f"ROI Analysis — LE Summary  (page {page_n}/{n_pages})",
+                  Inches(0.4), Inches(0.18), Inches(12.5), Inches(0.45),
+                  size=15, bold=True, color=C_PRIMARY)
+
+        for ch, cx, cw in roi_cols:
+            _add_text(sl, ch, Inches(cx), Inches(0.70), Inches(cw), Inches(0.28),
+                      size=8.5, bold=True, color=C_TEXT_SEC)
+
+        sep = sl.shapes.add_shape(1, Inches(0.4), Inches(1.01), Inches(12.9), Inches(0.02))
+        sep.fill.solid()
+        sep.fill.fore_color.rgb = C_TEXT_SEC
+        sep.line.fill.background()
+
+        row_h = Inches(0.275)
+        for ri, d in enumerate(block):
+            y = Inches(1.07) + ri * row_h
+            bg = sl.shapes.add_shape(1, Inches(0.35), y, Inches(12.95), row_h)
+            bg.fill.solid()
+            bg.fill.fore_color.rgb = C_CARD if ri % 2 == 0 else C_BG
+            bg.line.fill.background()
+
+            snr_v = d['snr_v']
+            snr_c = (C_SNR_GOOD if snr_v is not None and snr_v >= 2.0 else
+                     C_SNR_MID  if snr_v is not None and snr_v >= 1.0 else
+                     C_SNR_BAD  if snr_v is not None else C_TEXT_SEC)
+
+            cell_vals = [
+                (d['base'],    C_TEXT),
+                (d['compare'], C_TEXT),
+                (d['status'],  d['status_col']),
+                (d['alpha'],   C_TEXT_SEC),
+                (d['score'],   _score_color(d['score_v']) if d['score_v'] is not None else C_TEXT_SEC),
+                (d['mu_t'],    C_TEXT),
+                (d['mu_r'],    C_TEXT),
+                (d['sigma'],   C_TEXT_SEC),
+                (d['delta'],   C_TEXT),
+                (d['snr'],     snr_c),
+            ]
+            for (val, col), (_, cx, cw) in zip(cell_vals, roi_cols):
+                _add_text(sl, val, Inches(cx), y + Inches(0.02), Inches(cw), row_h,
+                          size=8, color=col)
+
+    # ── SNR Chart slide ──────────────────────────────────────────────────
+    BG_FIG  = '#1F2937'
+    BG_AX   = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_MUT = '#9CA3AF'
+    COL_SPL = '#4B5563'
+    COL_GRD = '#374151'
+    COLORS  = ['#F59E0B', '#60A5FA', '#34D399', '#F87171', '#A78BFA', '#FB923C']
+    MARKERS = ['o', 's', '^', 'D', 'v', 'P']
+
+    def _style(ax):
+        ax.set_facecolor(BG_AX)
+        ax.tick_params(colors=COL_TXT)
+        for sp in ('bottom', 'left'):
+            ax.spines[sp].set_color(COL_SPL)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color=COL_GRD, linewidth=0.5)
+
+    is_multi = len(base_labels) > 1
+
+    if is_multi:
+        fig = _MplFig(figsize=(11, 5), tight_layout=True)
+        fig.patch.set_facecolor(BG_FIG)
+        ax_snr, ax_delta = fig.subplots(2, 1, sharex=True)
+        _style(ax_snr); _style(ax_delta)
+
+        seen: dict = {}
+        for bl in base_labels:
+            rr = roi_full_results.get(bl)
+            if rr:
+                for k in rr.snr_per_diff:
+                    seen[k] = None
+        all_cmp = list(seen.keys())
+        x_pos   = {lbl: i for i, lbl in enumerate(all_cmp)}
+
+        for b_idx, bl in enumerate(base_labels):
+            rr = roi_full_results.get(bl)
+            if not rr or not rr.snr_per_diff:
+                continue
+            col = COLORS[b_idx % len(COLORS)]
+            mk  = MARKERS[b_idx % len(MARKERS)]
+            sd  = rr.snr_per_diff
+            xs  = [x_pos[k] for k in sd]
+            ax_snr.plot(xs, [sd[k].snr for k in sd],
+                        marker=mk, color=col, linewidth=1.8, markersize=7, label=bl)
+            db = [sd[k].mu_target - sd[k].mu_ref for k in sd]
+            sb = [sd[k].sigma_ref for k in sd]
+            ax_delta.plot(xs, db, marker=mk, color=col, linewidth=1.8, markersize=7, label=bl)
+            ax_delta.errorbar(xs, db, yerr=sb, fmt='none', color=col,
+                              capsize=4, linewidth=1.2, alpha=0.6)
+
+        ax_snr.set_title("SNR = Δ / σ_Ref  — All Bases overlay", color=COL_MUT, fontsize=10)
+        ax_snr.legend(facecolor=BG_FIG, labelcolor=COL_TXT, fontsize=9)
+        ax_delta.set_xticks(range(len(all_cmp)))
+        ax_delta.set_xticklabels(all_cmp, rotation=20, ha='right', color=COL_TXT, fontsize=9)
+    else:
+        bl = base_labels[0]
+        rr = roi_full_results.get(bl)
+        if rr is None or not rr.snr_per_diff:
+            return
+        fig = _MplFig(figsize=(11, 5), tight_layout=True)
+        fig.patch.set_facecolor(BG_FIG)
+        ax_snr, ax_delta = fig.subplots(2, 1, sharex=True)
+        _style(ax_snr); _style(ax_delta)
+
+        sd     = rr.snr_per_diff
+        labels = list(sd.keys())
+        xs     = list(range(len(labels)))
+        sv     = [sd[k].snr for k in labels]
+        dv     = [sd[k].mu_target - sd[k].mu_ref for k in labels]
+        er     = [sd[k].sigma_ref for k in labels]
+
+        ax_snr.bar(xs, sv, width=0.55, color='#F59E0B', alpha=0.85)
+        sp = (max(sv) - min(sv)) * 0.03 if sv else 0
+        for i, v in enumerate(sv):
+            ax_snr.text(i, v + sp, f"{v:.2f}", ha='center', va='bottom', fontsize=8, color=COL_TXT)
+        bc = ['#34D399' if d >= 0 else '#F87171' for d in dv]
+        ax_delta.bar(xs, dv, width=0.55, color=bc, alpha=0.8)
+        ax_delta.errorbar(xs, dv, yerr=er, fmt='none', color='#D1D5DB', capsize=5, linewidth=1.5)
+        ax_snr.set_title(f"SNR = Δ / σ_Ref   [Base: {bl}]", color=COL_MUT, fontsize=10)
+        ax_delta.set_xticks(xs)
+        ax_delta.set_xticklabels(labels, rotation=20, ha='right', color=COL_TXT, fontsize=9)
+
+    for ax in (ax_snr, ax_delta):
+        ax.axhline(0, color=COL_SPL, linewidth=0.8, linestyle='--')
+    ax_snr.set_ylabel("SNR", color=COL_TXT, fontsize=9)
+    ax_delta.set_ylabel("Δ = T−R  (±σ_Ref)", color=COL_TXT, fontsize=9)
+
+    buf = BytesIO()
+    _MplAgg(fig).print_figure(buf, format='png', dpi=120, facecolor=BG_FIG)
+    buf.seek(0)
+
+    chart_sl = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_bg(chart_sl, C_BG)
+    _add_text(chart_sl, "ROI Analysis — SNR Chart",
+              Inches(0.4), Inches(0.12), Inches(12.5), Inches(0.45),
+              size=15, bold=True, color=C_PRIMARY)
+    chart_sl.shapes.add_picture(buf, Inches(0.4), Inches(0.65), width=Inches(12.5))
 
 
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
@@ -6778,10 +7032,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             return chk.isChecked(), spn.value(), chk_gif.isChecked()
         return False, 512, False
 
+    # ------------------------------------------------------------------
+    # PPT ROI helper  (module-level, called from _export_ppt_report)
+    # ------------------------------------------------------------------
+
     def _export_ppt_report(self, out_dir: str, result_rows: List[Dict[str, object]],
                            settings: Dict[str, object],
                            do_center_crop: bool = False,
-                           crop_size: int = 512) -> Optional[str]:
+                           crop_size: int = 512,
+                           roi_full_results: Optional[Dict[str, object]] = None,
+                           roi_all_results: Optional[List[object]] = None) -> Optional[str]:
         """Build a dark-themed PPT report for all computed image pairs."""
         try:
             from pptx import Presentation
@@ -7085,6 +7345,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 # Image — inserted with aspect-ratio preservation
                 _add_picture_aspect(slide, paths[key], lft, top_y + LABEL_H, IMG_W, IMG_H)
 
+        # ── ROI Analysis slides ──────────────────────────────────────────────
+        if roi_full_results and roi_all_results:
+            _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
+                                _fill_bg, _add_text, _score_color,
+                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
+                                C_PRIMARY, C_SUCCESS, C_WARN,
+                                Inches, Pt)
+
         ppt_path = str(Path(out_dir) / "perspective_report.pptx")
         prs.save(ppt_path)
         return ppt_path
@@ -7236,7 +7504,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
                 ppt_path = self._export_ppt_report(out_dir, result_rows, settings,
                                                    do_center_crop=do_center_crop,
-                                                   crop_size=crop_size)
+                                                   crop_size=crop_size,
+                                                   roi_full_results=self._roi_full_results or {},
+                                                   roi_all_results=self._results or [])
                 if ppt_path:
                     QtWidgets.QMessageBox.information(
                         self,
