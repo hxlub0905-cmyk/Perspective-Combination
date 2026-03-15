@@ -93,6 +93,19 @@ def implement_with_claude(suggestion: dict, file_contents: dict[str, str]) -> di
             "- 在 PR body 詳細說明每個改動的理由\n"
         )
 
+    # User feedback — may override or refine the original suggestion
+    user_feedback = suggestion.get("user_feedback", "").strip()
+    feedback_block = ""
+    if user_feedback:
+        feedback_block = f"""
+## ⭐ 使用者的修改方向（優先遵守）
+使用者看了 AI 建議後，提供了以下意見，請依此方向實作，而非原始建議：
+
+> {user_feedback}
+
+請理解使用者的意圖，靈活調整實作方式。
+"""
+
     prompt = f"""你是 Fusi³ 專案的資深 Python 工程師。請根據以下建議實作程式碼修改。
 
 ## 建議
@@ -101,6 +114,7 @@ def implement_with_claude(suggestion: dict, file_contents: dict[str, str]) -> di
 說明：{suggestion['description']}
 實作提示：{suggestion.get('implementation_hint', '')}
 {core_note}
+{feedback_block}
 
 ## 現有程式碼
 {files_block}
@@ -316,7 +330,11 @@ def main():
 
     gh_token = os.environ["GITHUB_TOKEN"]
     repo = os.environ["REPO_FULL_NAME"]
-    suggestion = json.loads(os.environ["SUGGESTION_JSON"])
+    payload = json.loads(os.environ["SUGGESTION_JSON"])
+
+    # payload 可能是單一 suggestion（舊格式）或含 choice 的新格式
+    # 新格式：payload 本身就是被選的那個 suggestion（Worker 已從陣列取出）
+    suggestion = payload
     print(f"📋 Suggestion: [{suggestion.get('category')}] {suggestion.get('title')}")
 
     # Git identity
