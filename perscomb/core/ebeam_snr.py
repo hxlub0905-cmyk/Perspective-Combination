@@ -300,9 +300,9 @@ def calculate_roi_snr(
     if defect_region.size == 0:
         return None
     
-    # Calculate defect statistics
-    defect_mean = float(np.mean(defect_region))
-    defect_std = float(np.std(defect_region))
+    # Calculate defect statistics with numerical overflow protection
+    defect_mean = float(np.clip(np.mean(defect_region), -1e6, 1e6))
+    defect_std = float(np.clip(np.std(defect_region), 0, 1e6))
     
     # Define background region (expanded area around ROI, excluding ROI itself)
     bg_x1 = max(0, x1 - background_margin)
@@ -328,18 +328,20 @@ def calculate_roi_snr(
         # Not enough background pixels, use whole expanded region
         background_values = background_region.flatten()
     
-    background_mean = float(np.mean(background_values))
-    background_std = float(np.std(background_values))
+    # Calculate background statistics with numerical overflow protection
+    background_mean = float(np.clip(np.mean(background_values), -1e6, 1e6))
+    background_std = float(np.clip(np.std(background_values), 0, 1e6))
     
-    # Calculate SNR
-    if background_std < 1e-6:
+    # Calculate SNR with enhanced boundary condition handling
+    if background_std < 1e-8 or not np.isfinite(background_std):
         snr = 0.0
     else:
-        snr = abs(defect_mean - background_mean) / background_std
+        contrast_value = abs(defect_mean - background_mean)
+        snr = float(np.clip(contrast_value / background_std, 0, 1e6))
     
-    # Calculate Contrast Ratio
-    if background_mean > 1e-6:
-        contrast_ratio = defect_mean / background_mean
+    # Calculate Contrast Ratio with numerical stability
+    if abs(background_mean) > 1e-8 and np.isfinite(background_mean):
+        contrast_ratio = float(np.clip(defect_mean / background_mean, -1e6, 1e6))
     else:
         contrast_ratio = 0.0
     
@@ -347,15 +349,28 @@ def calculate_roi_snr(
     try:
         # Get the defect patch for edge analysis
         defect_patch = image[y1:y2, x1:x2]
-        sobel_x = cv2.Sobel(defect_patch, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(defect_patch, cv2.CV_64F, 0, 1, ksize=3)
-        gradient_mag = np.sqrt(sobel_x**2 + sobel_y**2)
-        edge_sharpness = float(np.mean(gradient_mag))
+        if defect_patch.size > 0 and defect_patch.shape[0] >= 3 and defect_patch.shape[1] >= 3:
+            sobel_x = cv2.Sobel(defect_patch, cv2.CV_64F, 1, 0, ksize=3)
+            sobel_y = cv2.Sobel(defect_patch, cv2.CV_64F, 0, 1, ksize=3)
+            gradient_mag = np.sqrt(sobel_x**2 + sobel_y**2)
+            edge_sharpness = float(np.clip(np.mean(gradient_mag), 0, 1e6))
+        else:
+            edge_sharpness = 0.0
     except Exception:
         edge_sharpness = 0.0
     
-    # Calculate DVI (Defect Visibility Index) = SNR * sqrt(contrast_ratio)
-    dvi = snr * np.sqrt(abs(contrast_ratio)) if contrast_ratio > 0 else snr
+    # Calculate DVI (Defect Visibility Index) with numerical protection
+    try:
+        if contrast_ratio > 0 and np.isfinite(contrast_ratio):
+            sqrt_contrast = np.sqrt(abs(contrast_ratio))
+            dvi = float(np.clip(snr * sqrt_contrast, 0, 1e6))
+        else:
+            dvi = float(np.clip(snr, 0, 1e6))
+    except (ValueError, OverflowError):
+        dvi = float(np.clip(snr, 0, 1e6))
+    
+    # Final validation of all return values
+    contrast = float(np.clip(abs(defect_mean - background_mean), 0, 1e6))
     
     return {
         'snr': snr,
@@ -363,7 +378,7 @@ def calculate_roi_snr(
         'defect_std': defect_std,
         'background_mean': background_mean,
         'background_std': background_std,
-        'contrast': abs(defect_mean - background_mean),
+        'contrast': contrast,
         'contrast_ratio': contrast_ratio,
         'edge_sharpness': edge_sharpness,
         'dvi': dvi,
