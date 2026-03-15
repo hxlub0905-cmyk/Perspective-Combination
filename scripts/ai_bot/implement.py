@@ -111,17 +111,27 @@ def implement_with_claude(suggestion: dict, file_contents: dict[str, str]) -> di
 3. UI 修改使用 design_tokens.py 的 Colors / Typography 等常數
 4. 不破壞任何現有功能
 
-## 輸出格式
+## ⚠️ 輸出規則（嚴格遵守）
+- 修改現有檔案：用 "patch" action + patches 陣列（str_replace 格式）
+- 建立全新檔案：用 "create" action + content 欄位
+- old_str 必須是檔案中獨一無二的片段（前後含 2 行 context）
+- 絕對不要回傳整個大型檔案的完整內容
+
 只輸出以下 JSON，不要其他文字：
 {{
-  "commit_message": "type: short description in English (e.g. feat: add onboarding tooltip)",
+  "commit_message": "type: short description in English",
   "pr_title": "PR 標題（中英混合）",
-  "pr_body": "## 改動說明\\n\\n（繁體中文 Markdown，說明做了什麼、為什麼、如何測試）",
+  "pr_body": "## 改動說明\\n\\n（繁體中文 Markdown）",
   "changes": [
     {{
       "file": "perscomb/ui/dialog.py",
-      "action": "modify",
-      "content": "完整的新版檔案內容（完整內容，非 diff）"
+      "action": "patch",
+      "patches": [
+        {{
+          "old_str": "原始程式碼片段（含上下文確保唯一性）",
+          "new_str": "新的程式碼片段"
+        }}
+      ]
     }}
   ]
 }}"""
@@ -177,20 +187,39 @@ def apply_changes(changes: list[dict]) -> list[str]:
     root = Path(".")
     for change in changes:
         filepath = change["file"]
-        # Skip context-only entries
         if filepath.startswith("[context]"):
             continue
         p = root / filepath
         p.parent.mkdir(parents=True, exist_ok=True)
         action = change.get("action", "modify")
-        if action in ("modify", "create"):
+
+        if action == "patch":
+            # Apply str_replace patches one by one
+            if not p.exists():
+                print(f"  ⚠️  patch target not found: {filepath}")
+                continue
+            content = p.read_text(encoding="utf-8")
+            for i, patch in enumerate(change.get("patches", [])):
+                old = patch.get("old_str", "")
+                new = patch.get("new_str", "")
+                if old not in content:
+                    print(f"  ⚠️  patch {i+1}: old_str not found in {filepath} — skipping")
+                    continue
+                content = content.replace(old, new, 1)
+                print(f"  🩹  patch {i+1} applied: {filepath}")
+            p.write_text(content, encoding="utf-8")
+            modified.append(filepath)
+
+        elif action in ("modify", "create"):
             p.write_text(change["content"], encoding="utf-8")
             print(f"  ✏️  {action}: {filepath}")
             modified.append(filepath)
+
         elif action == "delete" and p.exists():
             p.unlink()
             print(f"  🗑️  deleted: {filepath}")
             modified.append(filepath)
+
     return modified
 
 
