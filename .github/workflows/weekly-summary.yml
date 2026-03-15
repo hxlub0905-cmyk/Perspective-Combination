@@ -1,12 +1,12 @@
-name: Daily AI Suggestion
+name: Weekly Summary
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 09:00 Taiwan time (UTC+8)
-  workflow_dispatch:        # Manual trigger for testing
+    - cron: '0 1 * * 1'   # 週一 09:00 Taiwan time (UTC+8 = UTC+0 01:00)
+  workflow_dispatch:
 
 jobs:
-  suggest:
+  summary:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Need full history for git log
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,16 +25,14 @@ jobs:
       - name: Install dependencies
         run: pip install anthropic requests
 
-      - name: Generate and send suggestion
+      - name: Generate and send weekly summary
         env:
           ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN:       ${{ secrets.GH_PAT }}
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           NOTIFY_EMAIL:       ${{ secrets.NOTIFY_EMAIL }}
-          WORKER_URL:         ${{ secrets.WORKER_URL }}
-          HISTORY_GIST_ID:    ${{ secrets.HISTORY_GIST_ID }}
           LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
           LINE_USER_ID:       ${{ secrets.LINE_USER_ID }}
           REPO_FULL_NAME:     ${{ github.repository }}
-        run: python scripts/ai_bot/suggest.py
+        run: python scripts/ai_bot/weekly_summary.py

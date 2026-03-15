@@ -37,6 +37,8 @@ jobs:
           NOTIFY_EMAIL:       ${{ secrets.NOTIFY_EMAIL }}
           REPO_FULL_NAME:     ${{ github.repository }}
           SUGGESTION_JSON:    ${{ toJson(github.event.client_payload) }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID:       ${{ secrets.LINE_USER_ID }}
         run: python scripts/ai_bot/implement.py
 
       - name: Notify error if failed

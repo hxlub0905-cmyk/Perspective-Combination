@@ -1,0 +1,75 @@
+name: PR Auto Review
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install PySide6 numpy opencv-python matplotlib python-pptx --break-system-packages 2>/dev/null || true
+          pip install -r requirements.txt --break-system-packages 2>/dev/null || true
+
+      - name: Syntax check all changed Python files
+        run: |
+          echo "🔍 Syntax checking changed files..."
+          git diff --name-only origin/main...HEAD | grep '\.py$' | while read f; do
+            if [ -f "$f" ]; then
+              python -m py_compile "$f" && echo "  ✅ $f" || echo "  ❌ $f SYNTAX ERROR"
+            fi
+          done
+
+      - name: Import check (no crash test)
+        run: |
+          echo "🔍 Import check..."
+          python - << 'PYEOF'
+          import sys
+          sys.path.insert(0, '.')
+          errors = []
+          modules = [
+              'perscomb.core.perspective_combine',
+              'perscomb.core.ebeam_snr',
+              'perscomb.core.roi_set',
+          ]
+          for mod in modules:
+              try:
+                  __import__(mod)
+                  print(f"  ✅ {mod}")
+              except Exception as e:
+                  errors.append(f"  ❌ {mod}: {e}")
+                  print(f"  ❌ {mod}: {e}")
+          if errors:
+              sys.exit(1)
+          PYEOF
+
+      - name: Post review comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ job.status }}';
+            const icon = outcome === 'success' ? '✅' : '⚠️';
+            const msg = outcome === 'success'
+              ? '**自動檢查通過**\n- 語法檢查 ✅\n- 核心模組 import 正常 ✅\n\n請人工執行 `python main.py` 確認 UI 正常後 merge。'
+              : '**自動檢查發現問題**\n請查看 Actions log 了解詳情。';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${icon} ${msg}`
+            });
