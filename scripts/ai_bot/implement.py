@@ -411,6 +411,10 @@ def main():
 
     # Notify
     send_completion_email(suggestion, pr_url, branch)
+
+    # LINE notification
+    from line_utils import send_line_message, format_pr_message
+    send_line_message(format_pr_message(suggestion, pr_url))
     print("✅ All done!")
 
 

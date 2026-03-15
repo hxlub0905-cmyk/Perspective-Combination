@@ -37,6 +37,10 @@ def main():
     )
     print("📧 Error notification sent.")
 
+    # LINE notification
+    from line_utils import send_line_message, format_error_message
+    send_line_message(format_error_message(suggestion, run_url))
+
 
 if __name__ == "__main__":
     main()

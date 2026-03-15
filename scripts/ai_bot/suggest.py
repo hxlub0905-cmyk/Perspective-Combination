@@ -288,6 +288,15 @@ def main():
         gmail_password=os.environ["GMAIL_APP_PASSWORD"],
     )
     print(f"📧 Email sent → {os.environ['NOTIFY_EMAIL']}")
+
+    # LINE notification (optional — only if secrets are set)
+    from line_utils import send_line_message
+    titles = "\n".join(f"  {i+1}. {s['title']}" for i, s in enumerate(suggestions))
+    line_text = (
+        f"🤖 Fusi³ AI 今日建議\n{'─'*20}\n{titles}\n\n"
+        f"➡️ 請至 Gmail 選擇要做哪個"
+    )
+    send_line_message(line_text)
     print("✅ Done!")
 
 
