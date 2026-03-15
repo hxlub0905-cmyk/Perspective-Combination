@@ -359,7 +359,10 @@ def compute_snr_map(
         cv2.filter2D uses BORDER_REFLECT_101 by default, which causes
         artificially low variance (and therefore inflated SNR) near
         image edges. Setting this to >= window_size avoids false peaks.
+        Will be automatically increased to max(exclude_border, window_size).
     """
+    # Dynamically adjust border exclusion based on window size
+    exclude_border = max(exclude_border, window_size)
     if diff_image is None or diff_image.size == 0:
         return np.zeros((100, 100), dtype=np.uint8), 0.0
 
