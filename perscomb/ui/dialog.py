@@ -36,6 +36,7 @@ from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
+from .welcome_tutorial import WelcomeTutorialOverlay, should_show_tutorial, mark_tutorial_completed
 
 UI_PRIMARY = Colors.BRAND_PRIMARY
 UI_PRIMARY_HOVER = Colors.BRAND_PRIMARY_HOVER
@@ -4130,6 +4131,31 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         button.style().polish(button)
         button.update()
 
+    def _setup_tutorial_overlay(self):
+        """Setup welcome tutorial overlay."""
+        self.tutorial_overlay = WelcomeTutorialOverlay(self)
+        self.tutorial_overlay.tutorial_finished.connect(self._on_tutorial_finished)
+        self.tutorial_overlay.tutorial_skipped.connect(self._on_tutorial_skipped)
+    
+    def _show_welcome_tutorial(self):
+        """Show welcome tutorial for first-time users."""
+        if self.tutorial_overlay:
+            self.tutorial_overlay.show_tutorial()
+    
+    def _on_tutorial_finished(self):
+        """Handle tutorial completion."""
+        mark_tutorial_completed()
+        # Optional: Show a brief success message
+        QtWidgets.QMessageBox.information(
+            self, 
+            "導覽完成", 
+            "歡迎使用 Fusi³！您現在可以開始進行 SEM 影像融合分析了。"
+        )
+    
+    def _on_tutorial_skipped(self):
+        """Handle tutorial skip."""
+        mark_tutorial_completed()
+    
     def _apply_toolbar_icons(self):
         self._set_button_icon(self.btn_load_folder, QtWidgets.QStyle.SP_DirOpenIcon, "Load Folder")
         self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
