@@ -111,11 +111,12 @@ def implement_with_claude(suggestion: dict, file_contents: dict[str, str]) -> di
 3. UI 修改使用 design_tokens.py 的 Colors / Typography 等常數
 4. 不破壞任何現有功能
 
-## ⚠️ 輸出規則（嚴格遵守）
-- 修改現有檔案：用 "patch" action + patches 陣列（str_replace 格式）
-- 建立全新檔案：用 "create" action + content 欄位
-- old_str 必須是檔案中獨一無二的片段（前後含 2 行 context）
-- 絕對不要回傳整個大型檔案的完整內容
+## ⚠️ 重要策略（針對大型檔案如 dialog.py）
+由於 dialog.py 超過 7000 行，你只能看到前 400 行和函數簽名。
+請採用以下策略：
+1. **新功能寫在新的獨立檔案**（例如 perscomb/ui/welcome_dialog.py）
+2. **只在 dialog.py 的前 400 行插入必要的 import 或呼叫**（這部分你看得到）
+3. 不要嘗試修改 dialog.py 後半段你看不到的部分
 
 只輸出以下 JSON，不要其他文字：
 {{
@@ -124,12 +125,17 @@ def implement_with_claude(suggestion: dict, file_contents: dict[str, str]) -> di
   "pr_body": "## 改動說明\\n\\n（繁體中文 Markdown）",
   "changes": [
     {{
+      "file": "perscomb/ui/welcome_dialog.py",
+      "action": "create",
+      "content": "完整的新檔案內容"
+    }},
+    {{
       "file": "perscomb/ui/dialog.py",
       "action": "patch",
       "patches": [
         {{
-          "old_str": "原始程式碼片段（含上下文確保唯一性）",
-          "new_str": "新的程式碼片段"
+          "old_str": "只修改前400行內看得到的片段，確保 old_str 完全吻合",
+          "new_str": "新的片段"
         }}
       ]
     }}
@@ -362,6 +368,12 @@ def main():
     # Commit & push
     for f in modified:
         run(f'git add "{f}"')
+
+    # Check if there's anything to commit
+    status = run("git status --porcelain", check=False)
+    if not status.strip():
+        raise RuntimeError("No changes were made to any files — patches may not have matched. Aborting.")
+
     run(f'git commit -m "{result["commit_message"]}"')
     run(f"git push https://x-access-token:{gh_token}@github.com/{repo}.git {branch}")
     print(f"⬆️  Pushed: {branch}")
