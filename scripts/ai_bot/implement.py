@@ -22,15 +22,35 @@ from email_utils import send_email
 
 # ─── File reader ──────────────────────────────────────────────────────────────
 
+MAX_FILE_CHARS = 60_000  # ~15k tokens; dialog.py is 7600 lines ≈ 280k chars → truncate
+
+
 def read_files_for_impl(files_affected: list[str]) -> dict[str, str]:
-    """Read full contents of files that need modification, plus design context."""
+    """Read full contents of files that need modification, plus design context.
+
+    Large files (> MAX_FILE_CHARS) are truncated: first 400 lines + all
+    def/class signatures so Claude knows the full structure without blowing
+    the context window.
+    """
     root = Path(".")
     out: dict[str, str] = {}
 
     for filepath in files_affected:
         p = root / filepath
         if p.exists():
-            out[filepath] = p.read_text(encoding="utf-8")
+            raw = p.read_text(encoding="utf-8")
+            if len(raw) > MAX_FILE_CHARS:
+                lines = raw.splitlines()
+                header = "\n".join(lines[:400])
+                sigs = [l.rstrip() for l in lines if l.lstrip().startswith(("def ", "class "))]
+                raw = (
+                    f"# ⚠️ File truncated ({len(lines)} lines). First 400 lines + all signatures shown.\n\n"
+                    + header
+                    + "\n\n# ── All def/class signatures ──\n"
+                    + "\n".join(sigs)
+                )
+                print(f"  ✂️  Truncated large file: {filepath} ({len(lines)} lines)")
+            out[filepath] = raw
         else:
             print(f"  ⚠️  File not found: {filepath}")
 
@@ -109,16 +129,44 @@ def implement_with_claude(suggestion: dict, file_contents: dict[str, str]) -> di
     print("  🧠 Calling Claude API...")
     msg = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=8192,
+        max_tokens=16000,
         messages=[{"role": "user", "content": prompt}],
     )
 
     text = msg.content[0].text.strip()
+
+    # Strip markdown fences
     if text.startswith("```"):
-        text = text.split("```")[1]
+        parts = text.split("```")
+        text = parts[1] if len(parts) > 1 else text
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text.strip())
+    text = text.strip()
+
+    # Try parsing; if truncated JSON, ask Claude to fix it
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"  ⚠️  JSON parse error: {e} — retrying with fix prompt...")
+        fix_msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=16000,
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": (
+                    "The JSON you returned was truncated or malformed. "
+                    "Please output ONLY the complete, valid JSON object. "
+                    "No markdown fences, no explanation."
+                )},
+            ],
+        )
+        fixed = fix_msg.content[0].text.strip()
+        if fixed.startswith("```"):
+            fixed = fixed.split("```")[1]
+            if fixed.startswith("json"):
+                fixed = fixed[4:]
+        return json.loads(fixed.strip())
 
 
 # ─── Apply changes ────────────────────────────────────────────────────────────
@@ -260,6 +308,27 @@ def main():
     modified = apply_changes(result["changes"])
     if not modified:
         raise RuntimeError("No files were modified — aborting.")
+
+    # Syntax check — catch obvious errors before committing
+    print("🔍 Syntax checking modified Python files...")
+    syntax_errors = []
+    for f in modified:
+        if f.endswith(".py"):
+            check = subprocess.run(
+                f'python -m py_compile "{f}"',
+                shell=True, capture_output=True, text=True
+            )
+            if check.returncode != 0:
+                syntax_errors.append(f"{f}: {check.stderr.strip()}")
+                print(f"  ❌ Syntax error: {f}\n     {check.stderr.strip()}")
+            else:
+                print(f"  ✅ OK: {f}")
+
+    if syntax_errors:
+        raise RuntimeError(
+            "Syntax errors found — aborting commit:\n" + "\n".join(syntax_errors)
+        )
+    print("✅ All files passed syntax check")
 
     # Commit & push
     for f in modified:
