@@ -33,6 +33,7 @@ from ..core.perspective_combine import (
     QuadrantFusionResult,
 )
 from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
+from .welcome_overlay import WelcomeOverlayWidget
 
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
