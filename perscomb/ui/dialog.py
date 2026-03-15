@@ -36,6 +36,7 @@ from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
+from .welcome_tutorial import WelcomeTutorialOverlay, should_show_tutorial, mark_tutorial_completed
 
 UI_PRIMARY = Colors.BRAND_PRIMARY
 UI_PRIMARY_HOVER = Colors.BRAND_PRIMARY_HOVER
@@ -4110,10 +4111,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Used by _apply_roi_visibility so the visual ROI overlay stays correct
         # when the user browses results with different base images.
         self._roi_remapped_sets: Dict[str, MultiROISet] = {}
+        self.tutorial_overlay: Optional[WelcomeTutorialOverlay] = None
+        self._tutorial_checked = False
 
         self._setup_ui()
         self._apply_toolbar_icons()
         self._connect_signals()
+        self._setup_tutorial_overlay()
         self._load_images()
 
     def _set_button_icon(self, button: QtWidgets.QPushButton, pixmap_enum, text: str = None, size: int = 16):
@@ -4130,6 +4134,31 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         button.style().polish(button)
         button.update()
 
+    def _setup_tutorial_overlay(self):
+        """Setup welcome tutorial overlay."""
+        self.tutorial_overlay = WelcomeTutorialOverlay(self)
+        self.tutorial_overlay.tutorial_finished.connect(self._on_tutorial_finished)
+        self.tutorial_overlay.tutorial_skipped.connect(self._on_tutorial_skipped)
+    
+    def _show_welcome_tutorial(self):
+        """Show welcome tutorial for first-time users."""
+        if self.tutorial_overlay:
+            self.tutorial_overlay.show_tutorial()
+    
+    def _on_tutorial_finished(self):
+        """Handle tutorial completion."""
+        mark_tutorial_completed()
+        # Optional: Show a brief success message
+        QtWidgets.QMessageBox.information(
+            self, 
+            "導覽完成", 
+            "歡迎使用 Fusi³！您現在可以開始進行 SEM 影像融合分析了。"
+        )
+    
+    def _on_tutorial_skipped(self):
+        """Handle tutorial skip."""
+        mark_tutorial_completed()
+    
     def _apply_toolbar_icons(self):
         self._set_button_icon(self.btn_load_folder, QtWidgets.QStyle.SP_DirOpenIcon, "Load Folder")
         self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
@@ -4150,6 +4179,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._compute_thread.quit()
             self._compute_worker = None
         event.accept()
+
+    def showEvent(self, event):
+        """Show tutorial overlay on first launch after dialog is visible."""
+        super().showEvent(event)
+        if self._tutorial_checked:
+            return
+
+        self._tutorial_checked = True
+        if should_show_tutorial():
+            QtCore.QTimer.singleShot(0, self._show_welcome_tutorial)
 
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts for navigation."""
