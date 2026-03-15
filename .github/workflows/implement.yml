@@ -1,0 +1,76 @@
+name: AI Implement
+
+on:
+  repository_dispatch:
+    types: [ai-implement, ai-skip]
+
+jobs:
+  # ── 實作建議 ────────────────────────────────────────────────────────────────
+  implement:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'ai-implement'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install anthropic requests
+
+      - name: Implement suggestion & open PR
+        env:
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN:       ${{ secrets.GH_PAT }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL:       ${{ secrets.NOTIFY_EMAIL }}
+          REPO_FULL_NAME:     ${{ github.repository }}
+          SUGGESTION_JSON:    ${{ toJson(github.event.client_payload) }}
+        run: python scripts/ai_bot/implement.py
+
+      - name: Notify error if failed
+        if: failure()
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL:       ${{ secrets.NOTIFY_EMAIL }}
+          SUGGESTION_JSON:    ${{ toJson(github.event.client_payload) }}
+          RUN_URL:            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python scripts/ai_bot/notify_error.py
+
+  # ── 記錄 Skip（一個月後再提）────────────────────────────────────────────────
+  record-skip:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'ai-skip'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Record skip to history gist
+        env:
+          GITHUB_TOKEN:    ${{ secrets.GH_PAT }}
+          SUGGESTION_JSON: ${{ toJson(github.event.client_payload) }}
+          HISTORY_GIST_ID: ${{ secrets.HISTORY_GIST_ID }}
+        run: python scripts/ai_bot/record_skip.py
