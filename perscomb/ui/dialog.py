@@ -5323,9 +5323,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         qf_bottom_row.addWidget(qf_stats_grp, 1)
         qf_right_layout.addLayout(qf_bottom_row)
 
+        # Standard mode onboarding overlay (shown when no images are loaded)
+        self.welcome_overlay = WelcomeOverlayWidget()
+        self.welcome_overlay.setVisible(False)
+
+        standard_panel_container = QtWidgets.QWidget()
+        standard_panel_stack = QtWidgets.QStackedLayout(standard_panel_container)
+        standard_panel_stack.setStackingMode(QtWidgets.QStackedLayout.StackAll)
+        standard_panel_stack.setContentsMargins(0, 0, 0, 0)
+        standard_panel_stack.addWidget(right_panel)
+        standard_panel_stack.addWidget(self.welcome_overlay)
+
         # === RIGHT PANEL STACKED WIDGET ===
         self.stk_right_panel = QtWidgets.QStackedWidget()
-        self.stk_right_panel.addWidget(right_panel)  # index 0 = Standard
+        self.stk_right_panel.addWidget(standard_panel_container)  # index 0 = Standard
         self.stk_right_panel.addWidget(qf_right_panel)  # index 1 = Quadrant Fusion
         self.stk_right_panel.setCurrentIndex(0)
 
@@ -5408,6 +5419,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _connect_signals(self):
         """Connect UI signals."""
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
+        self.welcome_overlay.load_folder_requested.connect(self._on_load_image_folder)
         self.btn_compute.clicked.connect(self._on_compute)
         self.btn_export.clicked.connect(self._on_export)
         self.btn_select_all.clicked.connect(self._select_all_compare)
@@ -5552,6 +5564,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.grp_align.setVisible(not is_qf)
         # Keep using the existing embedded pages; never create/detach viewers here.
         self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
+        self._update_welcome_overlay_visibility()
 
         if is_qf:
             self.setWindowTitle("Fusi³ — Quadrant Fusion")
@@ -5728,6 +5741,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_select_none.setEnabled(has_images)
         if not has_images:
             self.lbl_compare_title.setText("Compare Images (0)")
+
+        self._update_welcome_overlay_visibility(has_images)
+
+    def _update_welcome_overlay_visibility(self, has_images: Optional[bool] = None):
+        """Show onboarding overlay only in standard mode when no images are loaded."""
+        if not hasattr(self, "welcome_overlay"):
+            return
+
+        if has_images is None:
+            has_images = self.cmb_base.count() > 0 if hasattr(self, "cmb_base") else False
+
+        in_standard_mode = self.cmb_input_mode.currentIndex() == 0 if hasattr(self, "cmb_input_mode") else True
+        should_show = (not has_images) and in_standard_mode
+        self.welcome_overlay.setVisible(should_show)
+
+        if should_show:
+            self.welcome_overlay.raise_()
 
     def _on_base_changed(self):
         """Update compare checkboxes when base changes and display base image immediately."""
