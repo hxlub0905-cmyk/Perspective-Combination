@@ -2580,6 +2580,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         tabs.addTab(self._build_summary_tab(), "LE Summary")
         if self._is_auto_pair:
             tabs.addTab(self._build_matrix_tab(), "Pair Matrix")
+            tabs.addTab(self._build_diff_matrix_tab(), "Diff Matrix")
         tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
         tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
         tabs.addTab(self._build_table_tab(), "Raw Table")
@@ -3129,6 +3130,153 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addStretch()
         btn_row.addWidget(self._make_save_btn(lambda: self._matrix_fig, "roi_pair_matrix"))
+        lay.addWidget(canvas, stretch=1)
+        lay.addLayout(btn_row)
+        return w
+
+    # ------------------------------------------------------------------
+    # Tab 2c — Diff Image Matrix (auto-pair only)
+    # ------------------------------------------------------------------
+
+    def _build_diff_matrix_tab(self) -> QtWidgets.QWidget:
+        """N×N grid of center-cropped (128×128) diff images — rows=base, cols=compare."""
+        CROP = 128  # pixels to show per cell
+
+        def _center_crop(img: np.ndarray, size: int) -> np.ndarray:
+            """Return a square centre-crop of *img* at *size*×*size* pixels."""
+            h, w = img.shape[:2]
+            if h < size or w < size:
+                # Pad with zeros if image is smaller than crop window
+                pad_h = max(0, size - h)
+                pad_w = max(0, size - w)
+                img = np.pad(img,
+                             ((pad_h // 2, pad_h - pad_h // 2),
+                              (pad_w // 2, pad_w - pad_w // 2)),
+                             mode='constant', constant_values=0)
+                h, w = img.shape[:2]
+            cy, cx = h // 2, w // 2
+            half = size // 2
+            return img[cy - half: cy - half + size, cx - half: cx - half + size]
+
+        w = QtWidgets.QWidget()
+        w.setStyleSheet("background: white;")
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(20, 14, 20, 10)
+        lay.setSpacing(8)
+
+        # ── Collect ordered labels ─────────────────────────────────────
+        all_labels = sorted(set(
+            [r.base_label    for r in self._all_results] +
+            [r.compare_label for r in self._all_results]
+        ))
+        n = len(all_labels)
+
+        # Build lookup: (base_label, compare_label) → cropped image
+        pair_image: dict = {}
+        for r in self._all_results:
+            if r.result_image is not None:
+                pair_image[(r.base_label, r.compare_label)] = \
+                    _center_crop(r.result_image, CROP)
+
+        # ── Figure geometry ───────────────────────────────────────────
+        CELL  = 1.6          # inches per image cell
+        LPAD  = 1.0          # left margin for row labels
+        TPAD  = 0.7          # top margin for col labels + suptitle
+        BPAD  = 0.3          # bottom margin
+        fig_w = n * CELL + LPAD + 0.2
+        fig_h = n * CELL + TPAD + BPAD
+
+        fig = Figure(figsize=(fig_w, fig_h), dpi=100)
+        fig.patch.set_facecolor('white')
+
+        # Manual margins so labels never overlap cells
+        fig.subplots_adjust(
+            left=LPAD / fig_w,
+            right=1.0 - 0.05,
+            top=1.0 - TPAD / fig_h,
+            bottom=BPAD / fig_h,
+            wspace=0.06,
+            hspace=0.06,
+        )
+
+        lbl_fs  = max(7, min(10, 72 // n))   # label font size
+        cell_fs = max(9, min(13, 96 // n))   # diagonal "—" size
+
+        for i, base_lbl in enumerate(all_labels):
+            for j, cmp_lbl in enumerate(all_labels):
+                ax = fig.add_subplot(n, n, i * n + j + 1)
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+                if i == j:
+                    # ── Diagonal: styled placeholder ───────────────────
+                    ax.set_facecolor('#EEF2F7')
+                    for spine in ax.spines.values():
+                        spine.set_visible(False)
+                    ax.text(0.5, 0.5, base_lbl,
+                            ha='center', va='center',
+                            transform=ax.transAxes,
+                            fontsize=lbl_fs, color='#64748B',
+                            fontweight='semibold',
+                            wrap=True)
+                else:
+                    img = pair_image.get((base_lbl, cmp_lbl))
+                    if img is not None:
+                        ax.imshow(img, cmap='inferno', vmin=0, vmax=255,
+                                  aspect='equal', interpolation='lanczos')
+                        for spine in ax.spines.values():
+                            spine.set_edgecolor('#94A3B8')
+                            spine.set_linewidth(0.7)
+                    else:
+                        ax.set_facecolor('#F8FAFC')
+                        for spine in ax.spines.values():
+                            spine.set_edgecolor('#E2E8F0')
+                            spine.set_linewidth(0.5)
+                        ax.text(0.5, 0.5, 'n/a', ha='center', va='center',
+                                transform=ax.transAxes,
+                                fontsize=8, color='#CBD5E1')
+
+                # Column label — top row only
+                if i == 0:
+                    ax.set_title(cmp_lbl,
+                                 fontsize=lbl_fs, color='#334155',
+                                 fontweight='bold', pad=4)
+                # Row label — left column only
+                if j == 0:
+                    ax.set_ylabel(base_lbl,
+                                  fontsize=lbl_fs, color='#334155',
+                                  fontweight='bold',
+                                  rotation=0, ha='right',
+                                  va='center', labelpad=6)
+
+        # ── Axis labels ───────────────────────────────────────────────
+        fig.text(0.5, 0.01, "Compare  →",
+                 ha='center', va='bottom',
+                 color='#475569', fontsize=10, fontstyle='italic')
+        fig.text(0.01, 0.5, "←  Base",
+                 ha='left', va='center',
+                 color='#475569', fontsize=10, fontstyle='italic',
+                 rotation=90)
+
+        fig.suptitle(f"Diff Image Matrix   (center {CROP}×{CROP} px crop)",
+                     color='#0F172A', fontsize=13, fontweight='bold', y=0.985)
+
+        self._diff_matrix_fig = fig
+        canvas = FigureCanvas(fig)
+        canvas.setMinimumSize(400, 400)
+        canvas.setStyleSheet("background: white; border-radius: 6px;")
+
+        # ── Save button row ───────────────────────────────────────────
+        btn_row = QtWidgets.QHBoxLayout()
+        lbl_info = QtWidgets.QLabel(
+            f"Showing center {CROP}×{CROP} px  |  colormap: inferno")
+        lbl_info.setStyleSheet(
+            "color: #94A3B8; font-size: 11px; font-style: italic;")
+        btn_row.addWidget(lbl_info)
+        btn_row.addStretch()
+        btn_row.addWidget(
+            self._make_save_btn(lambda: self._diff_matrix_fig, "roi_diff_matrix"))
+
         lay.addWidget(canvas, stretch=1)
         lay.addLayout(btn_row)
         return w
