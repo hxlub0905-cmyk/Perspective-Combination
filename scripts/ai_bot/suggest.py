@@ -127,6 +127,8 @@ def generate_suggestions(context: dict, skip_titles: list[str], reject_lines: li
 - 3 個建議方向各異（例如：一個 UX、一個 Bug、一個 Feature）
 - 每個建議具體且可在 1-3 小時內實作
 - 若涉及核心演算法（ebeam_snr.py、perspective_combine.py、roi_set.py），requires_core_review = true
+- ⚠️ dialog.py 有 7800 行，實作時只能看到前 400 行。若建議需改 dialog.py 後半段，請改為「新增獨立檔案」策略：把新功能寫在新的 .py 檔案，只在 dialog.py 前 400 行加一行 import。請在 implementation_hint 明確說明這個策略。
+- 優先建議「新增獨立檔案」或「只改 core/ 檔案」的方向，避免大量修改 dialog.py 深處
 
 只輸出 JSON 陣列，不要其他文字：
 [
