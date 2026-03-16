@@ -37,6 +37,7 @@ from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
 from .welcome_tutorial import WelcomeTutorialOverlay, should_show_tutorial, mark_tutorial_completed
+from .roi_feedback import create_roi_feedback_manager, apply_roi_feedback
 
 UI_PRIMARY = Colors.BRAND_PRIMARY
 UI_PRIMARY_HOVER = Colors.BRAND_PRIMARY_HOVER
