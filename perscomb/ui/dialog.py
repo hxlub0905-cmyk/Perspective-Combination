@@ -3884,7 +3884,7 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
             fig = _MplFig(figsize=(12, max(3.0, nrows_this * 2.8)), dpi=120)
             fig.patch.set_facecolor(BG_FIG)
             fig.subplots_adjust(
-                left=0.07, right=0.97, top=0.88, bottom=0.12,
+                left=0.07, right=0.97, top=0.97, bottom=0.12,
                 wspace=0.32, hspace=0.48,
             )
 
@@ -3949,10 +3949,7 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
             n_pages = (n_rois + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
             page_n  = page_start // ITEMS_PER_PAGE + 1
             suffix  = f"  ({page_n}/{n_pages})" if n_pages > 1 else ""
-            fig.suptitle(
-                f"Per-ROI Intensity Profile  —  Base: {base_lbl}{suffix}",
-                color='#F1F5F9', fontsize=13, fontweight='bold', y=0.97
-            )
+            # No suptitle — PPT slide title already covers it
 
             buf = BytesIO()
             _MplAgg(fig).print_figure(buf, format='png', dpi=120, facecolor=BG_FIG)
@@ -3961,9 +3958,10 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
             sl = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(sl, C_BG)
             _add_text(sl, f"Per-ROI Intensity Profile — Base: {base_lbl}{suffix}",
-                      Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.46),
+                      Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.44),
                       size=15, bold=True, color=C_PRIMARY)
-            sl.shapes.add_picture(buf, Inches(0.2), Inches(0.62), width=Inches(12.9))
+            # Place chart immediately below title (0.54") to minimise gap
+            sl.shapes.add_picture(buf, Inches(0.2), Inches(0.54), width=Inches(12.9))
 
 
 def _ppt_add_roi_position_slides(prs, roi_full_results, images_dict,
@@ -4017,13 +4015,14 @@ def _ppt_add_roi_position_slides(prs, roi_full_results, images_dict,
             # Inner shadow for contrast on bright backgrounds
             cv2.rectangle(vis, (rx + 1, ry + 1),
                           (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
-            # Label text
+            # Short label: "ROI_001" → "1", "ROI_3" → "3"
+            short_lbl = roi.label.split('_')[-1].lstrip('0') or '0'
             font_scale = max(0.35, min(0.65, w / 1200))
             tx = rx + 3
             ty = max(ry - 4, 10)
-            cv2.putText(vis, roi.label, (tx + 1, ty + 1), FONT,
+            cv2.putText(vis, short_lbl, (tx + 1, ty + 1), FONT,
                         font_scale, (0, 0, 0), 2, cv2.LINE_AA)
-            cv2.putText(vis, roi.label, (tx, ty), FONT,
+            cv2.putText(vis, short_lbl, (tx, ty), FONT,
                         font_scale, col, 1, cv2.LINE_AA)
 
         # Encode to PNG via PIL
@@ -4047,9 +4046,20 @@ def _ppt_add_roi_position_slides(prs, roi_full_results, images_dict,
                   Inches(0.3), Inches(0.08), Inches(10.0), Inches(0.46),
                   size=15, bold=True, color=C_PRIMARY)
 
-        # Image — centred, leaving room for legend on right
-        sl.shapes.add_picture(buf, Inches(0.2), Inches(0.62),
-                              width=Inches(10.5))
+        # Image — aspect-ratio fit within available area (10.3" × 6.78")
+        AVAIL_W = Inches(10.3)
+        AVAIL_H = Inches(6.78)   # 7.5 - 0.62 title - 0.10 margin
+        nat_h, nat_w = vis.shape[:2]
+        if nat_w == 0 or nat_h == 0:
+            disp_w, disp_h = AVAIL_W, AVAIL_H
+        elif (nat_w / nat_h) >= (AVAIL_W / AVAIL_H):
+            disp_w = AVAIL_W
+            disp_h = int(AVAIL_W * nat_h / nat_w)
+        else:
+            disp_h = AVAIL_H
+            disp_w = int(AVAIL_H * nat_w / nat_h)
+        img_y = Inches(0.62) + (AVAIL_H - disp_h) // 2
+        sl.shapes.add_picture(buf, Inches(0.2), img_y, width=disp_w, height=disp_h)
 
         # ── Legend (right side) ───────────────────────────────────────
         LEG_X = Inches(11.0)
@@ -4373,11 +4383,10 @@ def _ppt_add_condition_gallery(prs, result_rows, crop_size,
                       cell_w - Inches(0.08), LBL_H,
                       size=9, bold=True, color=C_PRIMARY)
 
-            # Image thumbnail
+            # Image thumbnail — specify only width to preserve square aspect ratio
             buf = _load_crop_png(path, crop_size)
             if buf is not None:
-                sl.shapes.add_picture(buf, x, y + LBL_H,
-                                      width=cell_w, height=cell_img_h)
+                sl.shapes.add_picture(buf, x, y + LBL_H, width=cell_w)
             else:
                 ph = sl.shapes.add_shape(1, x, y + LBL_H, cell_w, cell_img_h)
                 ph.fill.solid()
