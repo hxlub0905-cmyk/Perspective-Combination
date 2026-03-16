@@ -3187,17 +3187,21 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         fig_w = n * CELL + LPAD + 0.2
         fig_h = n * CELL + TPAD + BPAD
 
+        # ── Figure: use dark background as grid lines ─────────────────
+        # Cells butt up against each other (wspace/hspace ≈ 0); the tiny gap
+        # reveals the figure facecolor, which acts as a clean black grid line.
+        GRID_CLR = '#1E293B'   # near-black → grid line colour
         fig = Figure(figsize=(fig_w, fig_h), dpi=100)
-        fig.patch.set_facecolor('white')
+        fig.patch.set_facecolor(GRID_CLR)
 
-        # Manual margins so labels never overlap cells
+        GAP = 0.012            # gap between cells (fraction of cell size)
         fig.subplots_adjust(
             left=LPAD / fig_w,
             right=1.0 - 0.05,
             top=1.0 - TPAD / fig_h,
             bottom=BPAD / fig_h,
-            wspace=0.06,
-            hspace=0.06,
+            wspace=GAP,
+            hspace=GAP,
         )
 
         lbl_fs  = max(7, min(10, 72 // n))   # label font size
@@ -3208,59 +3212,59 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 ax = fig.add_subplot(n, n, i * n + j + 1)
                 ax.set_xticks([])
                 ax.set_yticks([])
-
-                # Consistent white background + black border for every cell
-                ax.set_facecolor('white')
+                # Hide individual spines — the figure background serves as the border
                 for spine in ax.spines.values():
-                    spine.set_edgecolor('#1E293B')
-                    spine.set_linewidth(0.8)
+                    spine.set_visible(False)
 
                 if i == j:
-                    # ── Diagonal: white cell with subtle dash ──────────
+                    # ── Diagonal: distinct light-gray fill + clear dash ─
+                    ax.set_facecolor('#E2E8F0')
                     ax.text(0.5, 0.5, '—',
                             ha='center', va='center',
                             transform=ax.transAxes,
-                            fontsize=cell_fs, color='#CBD5E1',
+                            fontsize=cell_fs + 2, color='#94A3B8',
                             fontweight='bold')
                 else:
                     img = pair_image.get((base_lbl, cmp_lbl))
                     if img is not None:
+                        ax.set_facecolor('white')
                         ax.imshow(img, cmap='gray', vmin=0, vmax=255,
                                   aspect='equal', interpolation='lanczos')
                     else:
+                        ax.set_facecolor('#F8FAFC')
                         ax.text(0.5, 0.5, 'n/a', ha='center', va='center',
                                 transform=ax.transAxes,
-                                fontsize=8, color='#CBD5E1')
+                                fontsize=8, color='#94A3B8')
 
                 # Column label — bottom row only
                 if i == n - 1:
                     ax.set_xlabel(cmp_lbl,
-                                  fontsize=lbl_fs, color='#1E293B',
-                                  fontweight='semibold', labelpad=4)
+                                  fontsize=lbl_fs, color='#F8FAFC',
+                                  fontweight='semibold', labelpad=5)
                 # Row label — left column only
                 if j == 0:
                     ax.set_ylabel(base_lbl,
-                                  fontsize=lbl_fs, color='#1E293B',
+                                  fontsize=lbl_fs, color='#F8FAFC',
                                   fontweight='semibold',
                                   rotation=0, ha='right',
                                   va='center', labelpad=6)
 
-        # ── Axis labels ───────────────────────────────────────────────
-        fig.text(0.5, 0.01, "Compare  →",
+        # ── Axis direction labels ──────────────────────────────────────
+        fig.text(0.5, 0.005, "Compare  →",
                  ha='center', va='bottom',
-                 color='#475569', fontsize=10, fontstyle='italic')
-        fig.text(0.01, 0.5, "←  Base",
+                 color='#94A3B8', fontsize=10, fontstyle='italic')
+        fig.text(0.005, 0.5, "←  Base",
                  ha='left', va='center',
-                 color='#475569', fontsize=10, fontstyle='italic',
+                 color='#94A3B8', fontsize=10, fontstyle='italic',
                  rotation=90)
 
         fig.suptitle(f"Diff Image Matrix   (center {CROP}×{CROP} px crop)",
-                     color='#0F172A', fontsize=13, fontweight='bold', y=0.985)
+                     color='#F1F5F9', fontsize=13, fontweight='bold', y=0.998)
 
         self._diff_matrix_fig = fig
         canvas = FigureCanvas(fig)
         canvas.setMinimumSize(400, 400)
-        canvas.setStyleSheet("background: white; border-radius: 6px;")
+        canvas.setStyleSheet("background: #1E293B; border-radius: 6px;")
 
         # ── Save button row ───────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
