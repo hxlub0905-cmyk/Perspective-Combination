@@ -3832,6 +3832,260 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         super().closeEvent(event)
 
 
+def _ppt_add_roi_profile_slides(prs, roi_full_results,
+                                _fill_bg, _add_text,
+                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                Inches, Pt):
+    """Per-ROI Intensity Profile slides — one slide per base label.
+
+    Each slide shows a subplot grid (one subplot per ROI) with three lines:
+    Base (dashed blue), Compare (green), Diff (red triangles).
+    """
+    from io import BytesIO
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+
+    BG_FIG = '#1F2937'
+    BG_AX  = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_GRD = '#374151'
+    COL_SPL = '#4B5563'
+
+    def _style(ax):
+        ax.set_facecolor(BG_AX)
+        ax.tick_params(colors=COL_TXT, labelsize=7)
+        for side in ('bottom', 'left'):
+            ax.spines[side].set_color(COL_SPL)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color=COL_GRD, linewidth=0.4, linestyle='--')
+
+    for base_lbl, roi_full in roi_full_results.items():
+        rois = roi_full.roi_set.rois
+        if not rois:
+            continue
+
+        compare_labels = roi_full.compare_labels()
+        diff_labels    = [l.image_label for l in roi_full.layers if l.layer_type == 'diff']
+        base_layer     = roi_full.get_base_layer()
+        le_labels      = [lbl.replace('_compare', '') for lbl in compare_labels]
+        xs             = list(range(len(compare_labels)))
+
+        n_rois = len(rois)
+        NCOLS  = min(n_rois, 3)
+        NROWS  = (n_rois + NCOLS - 1) // NCOLS
+        ITEMS_PER_PAGE = NCOLS * NROWS  # all on one slide for now
+
+        # chunk by ITEMS_PER_PAGE (in case many ROIs)
+        for page_start in range(0, n_rois, ITEMS_PER_PAGE):
+            chunk = rois[page_start: page_start + ITEMS_PER_PAGE]
+            nrows_this = (len(chunk) + NCOLS - 1) // NCOLS
+
+            fig = _MplFig(figsize=(12, max(3.0, nrows_this * 2.8)), dpi=120)
+            fig.patch.set_facecolor(BG_FIG)
+            fig.subplots_adjust(
+                left=0.07, right=0.97, top=0.88, bottom=0.12,
+                wspace=0.32, hspace=0.48,
+            )
+
+            axes = []
+            for ri in range(len(chunk)):
+                axes.append(fig.add_subplot(nrows_this, NCOLS, ri + 1))
+
+            for ax, roi in zip(axes, chunk):
+                _style(ax)
+                ax.set_title(roi.label, color=COL_TXT, fontsize=8, fontweight='bold', pad=3)
+
+                # Base — horizontal dashed line
+                if base_layer and roi.id in base_layer.roi_stats:
+                    bv = base_layer.roi_stats[roi.id].mean
+                    ax.axhline(bv, color='#60A5FA', linewidth=1.4,
+                               linestyle='--', label='Base')
+
+                # Compare
+                c_means = []
+                for lbl in compare_labels:
+                    lay = roi_full.get_layer(lbl)
+                    c_means.append(
+                        lay.roi_stats[roi.id].mean
+                        if lay and roi.id in lay.roi_stats else None
+                    )
+                vx = [i for i, v in enumerate(c_means) if v is not None]
+                vy = [v for v in c_means if v is not None]
+                if vx:
+                    ax.plot(vx, vy, marker='s', markersize=4,
+                            color='#34D399', linewidth=1.3, label='Compare')
+
+                # Diff
+                d_means = []
+                for lbl in diff_labels:
+                    lay = roi_full.get_layer(lbl)
+                    d_means.append(
+                        lay.roi_stats[roi.id].mean
+                        if lay and roi.id in lay.roi_stats else None
+                    )
+                vxd = [i for i, v in enumerate(d_means) if v is not None]
+                vyd = [v for v in d_means if v is not None]
+                if vxd:
+                    ax.plot(vxd, vyd, marker='^', markersize=4,
+                            color='#F87171', linewidth=1.3, label='Diff')
+
+                ax.set_xticks(xs)
+                ax.set_xticklabels(le_labels, rotation=20, ha='right',
+                                   color=COL_TXT, fontsize=7)
+                # ROI type badge colour on y-axis label
+                type_col = '#F87171' if roi.roi_type == 'target' else '#60A5FA'
+                ax.set_ylabel("Mean (norm)", color=type_col, fontsize=7, labelpad=3)
+
+            # Shared legend in first subplot
+            if axes:
+                axes[0].legend(facecolor=BG_FIG, labelcolor=COL_TXT,
+                               fontsize=7, loc='best')
+
+            # Hide unused subplot slots
+            for ax in axes[len(chunk):]:
+                ax.set_visible(False)
+
+            n_pages = (n_rois + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            page_n  = page_start // ITEMS_PER_PAGE + 1
+            suffix  = f"  ({page_n}/{n_pages})" if n_pages > 1 else ""
+            fig.suptitle(
+                f"Per-ROI Intensity Profile  —  Base: {base_lbl}{suffix}",
+                color='#F1F5F9', fontsize=13, fontweight='bold', y=0.97
+            )
+
+            buf = BytesIO()
+            _MplAgg(fig).print_figure(buf, format='png', dpi=120, facecolor=BG_FIG)
+            buf.seek(0)
+
+            sl = prs.slides.add_slide(prs.slide_layouts[6])
+            _fill_bg(sl, C_BG)
+            _add_text(sl, f"Per-ROI Intensity Profile — Base: {base_lbl}{suffix}",
+                      Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.46),
+                      size=15, bold=True, color=C_PRIMARY)
+            sl.shapes.add_picture(buf, Inches(0.2), Inches(0.62), width=Inches(12.9))
+
+
+def _ppt_add_roi_position_slides(prs, roi_full_results, images_dict,
+                                  _fill_bg, _add_text,
+                                  C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                  Inches, Pt):
+    """ROI Position slides — base image with target/reference ROI boxes overlaid.
+
+    One slide per base label. Each slide shows the full base image with coloured
+    ROI rectangles and labels drawn on it, plus a small legend.
+    """
+    from io import BytesIO
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    FONT     = cv2.FONT_HERSHEY_SIMPLEX
+    TGT_COL  = (60,  80, 220)   # BGR red-ish  (target)
+    REF_COL  = (200, 200,  40)  # BGR cyan-ish (reference)
+
+    for base_lbl, roi_full in roi_full_results.items():
+        rois = roi_full.roi_set.rois
+        if not rois:
+            continue
+
+        # Load base image (prefer in-memory, fall back gracefully)
+        base_img = images_dict.get(base_lbl)
+        if base_img is None:
+            continue
+
+        # Convert to BGR colour so ROI colours are visible
+        if len(base_img.shape) == 2:
+            vis = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR)
+        else:
+            vis = base_img.copy()
+
+        h, w = vis.shape[:2]
+
+        # Draw each ROI
+        for roi in rois:
+            nx, ny, nw, nh = roi.norm_rect
+            rx  = int(nx * w)
+            ry  = int(ny * h)
+            rpw = max(1, int(nw * w))
+            rph = max(1, int(nh * h))
+            col       = TGT_COL if roi.roi_type == 'target' else REF_COL
+            thickness = 3       if roi.roi_type == 'target' else 2
+            # Outer rectangle
+            cv2.rectangle(vis, (rx, ry), (rx + rpw, ry + rph), col, thickness)
+            # Inner shadow for contrast on bright backgrounds
+            cv2.rectangle(vis, (rx + 1, ry + 1),
+                          (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
+            # Label text
+            font_scale = max(0.35, min(0.65, w / 1200))
+            tx = rx + 3
+            ty = max(ry - 4, 10)
+            cv2.putText(vis, roi.label, (tx + 1, ty + 1), FONT,
+                        font_scale, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(vis, roi.label, (tx, ty), FONT,
+                        font_scale, col, 1, cv2.LINE_AA)
+
+        # Encode to PNG via PIL
+        try:
+            from PIL import Image as _PilImg
+            pil = _PilImg.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+            buf = BytesIO()
+            pil.save(buf, format='PNG')
+            buf.seek(0)
+        except ImportError:
+            ok, enc = cv2.imencode('.png', vis)
+            if not ok:
+                continue
+            buf = BytesIO(enc.tobytes())
+
+        # ── Slide layout ─────────────────────────────────────────────
+        sl = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_bg(sl, C_BG)
+
+        _add_text(sl, f"ROI Position Map — Base: {base_lbl}",
+                  Inches(0.3), Inches(0.08), Inches(10.0), Inches(0.46),
+                  size=15, bold=True, color=C_PRIMARY)
+
+        # Image — centred, leaving room for legend on right
+        sl.shapes.add_picture(buf, Inches(0.2), Inches(0.62),
+                              width=Inches(10.5))
+
+        # ── Legend (right side) ───────────────────────────────────────
+        LEG_X = Inches(11.0)
+        LEG_Y = Inches(1.5)
+
+        def _legend_row(y_off, color_rgb, label, thick_str):
+            box = sl.shapes.add_shape(
+                1, LEG_X, LEG_Y + y_off, Inches(0.28), Inches(0.22))
+            box.fill.solid()
+            box.fill.fore_color.rgb = color_rgb
+            box.line.fill.background()
+            _add_text(sl, f"{label}  ({thick_str})",
+                      LEG_X + Inches(0.34), LEG_Y + y_off,
+                      Inches(2.0), Inches(0.28),
+                      size=9, color=C_TEXT)
+
+        _add_text(sl, "Legend", LEG_X, LEG_Y - Inches(0.32),
+                  Inches(2.2), Inches(0.30),
+                  size=10, bold=True, color=C_TEXT_SEC)
+        _legend_row(Inches(0.00),
+                    RGBColor(220, 80, 60),   "Target",    "thick border")
+        _legend_row(Inches(0.35),
+                    RGBColor(40, 200, 200),  "Reference", "thin border")
+
+        # ROI count summary
+        n_tgt = sum(1 for r in rois if r.roi_type == 'target')
+        n_ref = sum(1 for r in rois if r.roi_type == 'reference')
+        _add_text(sl,
+                  f"Total: {len(rois)} ROIs\n"
+                  f"  Target: {n_tgt}\n"
+                  f"  Reference: {n_ref}",
+                  LEG_X, LEG_Y + Inches(0.8),
+                  Inches(2.2), Inches(0.85),
+                  size=9, color=C_TEXT_SEC)
+
+
 def _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
                           _fill_bg, _add_text,
                           C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
@@ -7868,6 +8122,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                                 C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
                                 C_PRIMARY, C_SUCCESS, C_WARN,
                                 Inches, Pt)
+
+            # ── ROI Position Map (base image + overlaid ROI boxes) ───────────
+            _ppt_add_roi_position_slides(prs, roi_full_results, self._images,
+                                         _fill_bg, _add_text,
+                                         C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                         Inches, Pt)
+
+            # ── Per-ROI Intensity Profile (line chart per base) ──────────────
+            _ppt_add_roi_profile_slides(prs, roi_full_results,
+                                        _fill_bg, _add_text,
+                                        C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                        Inches, Pt)
 
         # ── Image Gallery — By Condition (final slide) ───────────────────────
         _ppt_add_condition_gallery(prs, result_rows, crop_size,
