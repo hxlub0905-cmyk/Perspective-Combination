@@ -3162,8 +3162,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         w = QtWidgets.QWidget()
         w.setStyleSheet("background: white;")
         lay = QtWidgets.QVBoxLayout(w)
-        lay.setContentsMargins(20, 14, 20, 10)
-        lay.setSpacing(8)
+        lay.setContentsMargins(16, 12, 16, 8)
+        lay.setSpacing(6)
 
         # ── Collect ordered labels ─────────────────────────────────────
         all_labels = sorted(set(
@@ -3179,33 +3179,31 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 pair_image[(r.base_label, r.compare_label)] = \
                     _center_crop(r.result_image, CROP)
 
-        # ── Figure geometry ───────────────────────────────────────────
-        CELL  = 1.6          # inches per image cell
-        LPAD  = 1.0          # left margin for row labels
-        TPAD  = 0.5          # top margin for suptitle only
-        BPAD  = 0.8          # bottom margin for col labels
-        fig_w = n * CELL + LPAD + 0.2
-        fig_h = n * CELL + TPAD + BPAD
+        # ── Figure geometry — same proportions as SNR Pair Matrix ─────
+        cell_in = 1.1          # inches per cell
+        margin  = 2.4          # left/right margin for labels
+        fig_w   = n * cell_in + margin
+        fig_h   = max(4.0, n * cell_in + 1.2)
 
-        # ── Figure: use dark background as grid lines ─────────────────
-        # Cells butt up against each other (wspace/hspace ≈ 0); the tiny gap
-        # reveals the figure facecolor, which acts as a clean black grid line.
-        GRID_CLR = '#1E293B'   # near-black → grid line colour
+        # ── Figure: light-gray background acts as subtle grid lines ───
+        # Cells butt up against each other; the tiny gap reveals the figure
+        # facecolor (#CBD5E1), matching the SNR Pair Matrix grid line colour.
+        GRID_CLR = '#CBD5E1'   # light blue-gray → grid line colour
         fig = Figure(figsize=(fig_w, fig_h), dpi=100)
         fig.patch.set_facecolor(GRID_CLR)
 
-        GAP = 0.012            # gap between cells (fraction of cell size)
+        GAP = 0.012            # gap between cells (fraction of total figure)
         fig.subplots_adjust(
-            left=LPAD / fig_w,
-            right=1.0 - 0.05,
-            top=1.0 - TPAD / fig_h,
-            bottom=BPAD / fig_h,
+            left=0.18,
+            right=0.95,
+            top=0.88,
+            bottom=0.18,
             wspace=GAP,
             hspace=GAP,
         )
 
-        lbl_fs  = max(7, min(10, 72 // n))   # label font size
-        cell_fs = max(9, min(13, 96 // n))   # diagonal "—" size
+        lbl_fs  = max(7, min(11, 72 // n))    # label font size
+        cell_fs = max(9, min(13, 96 // n))    # diagonal "—" size
 
         for i, base_lbl in enumerate(all_labels):
             for j, cmp_lbl in enumerate(all_labels):
@@ -3231,47 +3229,49 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                         ax.imshow(img, cmap='gray', vmin=0, vmax=255,
                                   aspect='equal', interpolation='lanczos')
                     else:
-                        ax.set_facecolor('#F8FAFC')
+                        ax.set_facecolor('#F1F5F9')
                         ax.text(0.5, 0.5, 'n/a', ha='center', va='center',
                                 transform=ax.transAxes,
                                 fontsize=8, color='#94A3B8')
 
-                # Column label — bottom row only
+                # Column label — bottom row only (rotated to match SNR matrix)
                 if i == n - 1:
                     ax.set_xlabel(cmp_lbl,
-                                  fontsize=lbl_fs, color='#F8FAFC',
+                                  fontsize=lbl_fs, color='#1E293B',
                                   fontweight='semibold', labelpad=5)
+                    ax.xaxis.label.set_rotation(35)
+                    ax.xaxis.label.set_ha('right')
                 # Row label — left column only
                 if j == 0:
                     ax.set_ylabel(base_lbl,
-                                  fontsize=lbl_fs, color='#F8FAFC',
+                                  fontsize=lbl_fs, color='#1E293B',
                                   fontweight='semibold',
                                   rotation=0, ha='right',
                                   va='center', labelpad=6)
 
-        # ── Axis direction labels ──────────────────────────────────────
-        fig.text(0.5, 0.005, "Compare  →",
+        # ── Axis direction labels — styled like SNR Pair Matrix ────────
+        fig.text(0.565, 0.02, "Compare (LE)",
                  ha='center', va='bottom',
-                 color='#94A3B8', fontsize=10, fontstyle='italic')
-        fig.text(0.005, 0.5, "←  Base",
+                 color='#475569', fontsize=11, fontweight='bold')
+        fig.text(0.02, 0.53, "Base (LE)",
                  ha='left', va='center',
-                 color='#94A3B8', fontsize=10, fontstyle='italic',
+                 color='#475569', fontsize=11, fontweight='bold',
                  rotation=90)
 
         fig.suptitle(f"Diff Image Matrix   (center {CROP}×{CROP} px crop)",
-                     color='#F1F5F9', fontsize=13, fontweight='bold', y=0.998)
+                     color='#0F172A', fontsize=14, fontweight='bold', y=0.998)
 
         self._diff_matrix_fig = fig
         canvas = FigureCanvas(fig)
         canvas.setMinimumSize(400, 400)
-        canvas.setStyleSheet("background: #1E293B; border-radius: 6px;")
+        canvas.setStyleSheet("background: white;")
 
         # ── Save button row ───────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
         lbl_info = QtWidgets.QLabel(
             f"Showing center {CROP}×{CROP} px  |  colormap: gray")
         lbl_info.setStyleSheet(
-            "color: #94A3B8; font-size: 11px; font-style: italic;")
+            "color: #64748B; font-size: 11px; font-style: italic;")
         btn_row.addWidget(lbl_info)
         btn_row.addStretch()
         btn_row.addWidget(
@@ -4225,19 +4225,17 @@ def _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
         if r.result_image is not None:
             pair_image[(r.base_label, r.compare_label)] = _ccrop(r.result_image, CROP)
 
-    GRID_CLR = '#1E293B'
+    # Light-gray background acts as subtle grid lines, matching SNR Pair Matrix style
+    GRID_CLR_DIFF = '#CBD5E1'
     GAP = 0.012
-    CELL = 1.2
-    LPAD = 0.8
-    TPAD = 0.35
-    BPAD = 0.6
-    fw2 = n * CELL + LPAD + 0.2
-    fh2 = n * CELL + TPAD + BPAD
-    fig_diff = _MplFig(figsize=(fw2, fh2), dpi=100)
-    fig_diff.patch.set_facecolor(GRID_CLR)
+    cell_in2 = 0.9
+    fw2 = n * cell_in2 + 1.8
+    fh2 = max(3.8, n * cell_in2 + 1.0)
+    fig_diff = _MplFig(figsize=(fw2, fh2), dpi=130)
+    fig_diff.patch.set_facecolor(GRID_CLR_DIFF)
     fig_diff.subplots_adjust(
-        left=LPAD / fw2, right=1.0 - 0.05,
-        top=1.0 - TPAD / fh2, bottom=BPAD / fh2,
+        left=0.18, right=0.95,
+        top=0.88, bottom=0.20,
         wspace=GAP, hspace=GAP,
     )
     d_lbl_fs = max(6, min(9, 70 // n))
@@ -4261,18 +4259,27 @@ def _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
                     ax2.imshow(img2, cmap='gray', vmin=0, vmax=255,
                                aspect='equal', interpolation='lanczos')
                 else:
-                    ax2.set_facecolor('#F8FAFC')
+                    ax2.set_facecolor('#F1F5F9')
                     ax2.text(0.5, 0.5, 'n/a', ha='center', va='center',
                              transform=ax2.transAxes, fontsize=7, color='#94A3B8')
             if i == n - 1:
-                ax2.set_xlabel(cmp_lbl, fontsize=d_lbl_fs, color='#F8FAFC',
+                ax2.set_xlabel(cmp_lbl, fontsize=d_lbl_fs, color='#1E293B',
                                fontweight='semibold', labelpad=3)
+                ax2.xaxis.label.set_rotation(35)
+                ax2.xaxis.label.set_ha('right')
             if j == 0:
-                ax2.set_ylabel(base_lbl, fontsize=d_lbl_fs, color='#F8FAFC',
+                ax2.set_ylabel(base_lbl, fontsize=d_lbl_fs, color='#1E293B',
                                fontweight='semibold', rotation=0,
                                ha='right', va='center', labelpad=5)
+    fig_diff.text(0.565, 0.02, "Compare (LE)",
+                  ha='center', va='bottom',
+                  color='#475569', fontsize=8, fontweight='bold')
+    fig_diff.text(0.02, 0.54, "Base (LE)",
+                  ha='left', va='center',
+                  color='#475569', fontsize=8, fontweight='bold',
+                  rotation=90)
     buf_diff = BytesIO()
-    _MplAgg(fig_diff).print_figure(buf_diff, format='png', dpi=100, facecolor=GRID_CLR)
+    _MplAgg(fig_diff).print_figure(buf_diff, format='png', dpi=130, facecolor=GRID_CLR_DIFF)
     buf_diff.seek(0)
     sl.shapes.add_picture(buf_diff, Inches(6.8), Inches(0.6), width=Inches(6.35))
 
