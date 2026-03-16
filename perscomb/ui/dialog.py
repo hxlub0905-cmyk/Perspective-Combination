@@ -3182,22 +3182,26 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         # ── Figure geometry ───────────────────────────────────────────
         CELL  = 1.6          # inches per image cell
         LPAD  = 1.0          # left margin for row labels
-        TPAD  = 0.7          # top margin for col labels + suptitle
-        BPAD  = 0.3          # bottom margin
+        TPAD  = 0.5          # top margin for suptitle only
+        BPAD  = 0.8          # bottom margin for col labels
         fig_w = n * CELL + LPAD + 0.2
         fig_h = n * CELL + TPAD + BPAD
 
+        # ── Figure: use dark background as grid lines ─────────────────
+        # Cells butt up against each other (wspace/hspace ≈ 0); the tiny gap
+        # reveals the figure facecolor, which acts as a clean black grid line.
+        GRID_CLR = '#1E293B'   # near-black → grid line colour
         fig = Figure(figsize=(fig_w, fig_h), dpi=100)
-        fig.patch.set_facecolor('white')
+        fig.patch.set_facecolor(GRID_CLR)
 
-        # Manual margins so labels never overlap cells
+        GAP = 0.012            # gap between cells (fraction of cell size)
         fig.subplots_adjust(
             left=LPAD / fig_w,
             right=1.0 - 0.05,
             top=1.0 - TPAD / fig_h,
             bottom=BPAD / fig_h,
-            wspace=0.06,
-            hspace=0.06,
+            wspace=GAP,
+            hspace=GAP,
         )
 
         lbl_fs  = max(7, min(10, 72 // n))   # label font size
@@ -3208,69 +3212,64 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 ax = fig.add_subplot(n, n, i * n + j + 1)
                 ax.set_xticks([])
                 ax.set_yticks([])
+                # Hide individual spines — the figure background serves as the border
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
 
                 if i == j:
-                    # ── Diagonal: styled placeholder ───────────────────
-                    ax.set_facecolor('#EEF2F7')
-                    for spine in ax.spines.values():
-                        spine.set_visible(False)
-                    ax.text(0.5, 0.5, base_lbl,
+                    # ── Diagonal: distinct light-gray fill + clear dash ─
+                    ax.set_facecolor('#E2E8F0')
+                    ax.text(0.5, 0.5, '—',
                             ha='center', va='center',
                             transform=ax.transAxes,
-                            fontsize=lbl_fs, color='#64748B',
-                            fontweight='semibold',
-                            wrap=True)
+                            fontsize=cell_fs + 2, color='#94A3B8',
+                            fontweight='bold')
                 else:
                     img = pair_image.get((base_lbl, cmp_lbl))
                     if img is not None:
-                        ax.imshow(img, cmap='inferno', vmin=0, vmax=255,
+                        ax.set_facecolor('white')
+                        ax.imshow(img, cmap='gray', vmin=0, vmax=255,
                                   aspect='equal', interpolation='lanczos')
-                        for spine in ax.spines.values():
-                            spine.set_edgecolor('#94A3B8')
-                            spine.set_linewidth(0.7)
                     else:
                         ax.set_facecolor('#F8FAFC')
-                        for spine in ax.spines.values():
-                            spine.set_edgecolor('#E2E8F0')
-                            spine.set_linewidth(0.5)
                         ax.text(0.5, 0.5, 'n/a', ha='center', va='center',
                                 transform=ax.transAxes,
-                                fontsize=8, color='#CBD5E1')
+                                fontsize=8, color='#94A3B8')
 
-                # Column label — top row only
-                if i == 0:
-                    ax.set_title(cmp_lbl,
-                                 fontsize=lbl_fs, color='#334155',
-                                 fontweight='bold', pad=4)
+                # Column label — bottom row only
+                if i == n - 1:
+                    ax.set_xlabel(cmp_lbl,
+                                  fontsize=lbl_fs, color='#F8FAFC',
+                                  fontweight='semibold', labelpad=5)
                 # Row label — left column only
                 if j == 0:
                     ax.set_ylabel(base_lbl,
-                                  fontsize=lbl_fs, color='#334155',
-                                  fontweight='bold',
+                                  fontsize=lbl_fs, color='#F8FAFC',
+                                  fontweight='semibold',
                                   rotation=0, ha='right',
                                   va='center', labelpad=6)
 
-        # ── Axis labels ───────────────────────────────────────────────
-        fig.text(0.5, 0.01, "Compare  →",
+        # ── Axis direction labels ──────────────────────────────────────
+        fig.text(0.5, 0.005, "Compare  →",
                  ha='center', va='bottom',
-                 color='#475569', fontsize=10, fontstyle='italic')
-        fig.text(0.01, 0.5, "←  Base",
+                 color='#94A3B8', fontsize=10, fontstyle='italic')
+        fig.text(0.005, 0.5, "←  Base",
                  ha='left', va='center',
-                 color='#475569', fontsize=10, fontstyle='italic',
+                 color='#94A3B8', fontsize=10, fontstyle='italic',
                  rotation=90)
 
         fig.suptitle(f"Diff Image Matrix   (center {CROP}×{CROP} px crop)",
-                     color='#0F172A', fontsize=13, fontweight='bold', y=0.985)
+                     color='#F1F5F9', fontsize=13, fontweight='bold', y=0.998)
 
         self._diff_matrix_fig = fig
         canvas = FigureCanvas(fig)
         canvas.setMinimumSize(400, 400)
-        canvas.setStyleSheet("background: white; border-radius: 6px;")
+        canvas.setStyleSheet("background: #1E293B; border-radius: 6px;")
 
         # ── Save button row ───────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
         lbl_info = QtWidgets.QLabel(
-            f"Showing center {CROP}×{CROP} px  |  colormap: inferno")
+            f"Showing center {CROP}×{CROP} px  |  colormap: gray")
         lbl_info.setStyleSheet(
             "color: #94A3B8; font-size: 11px; font-style: italic;")
         btn_row.addWidget(lbl_info)
@@ -3833,6 +3832,573 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         super().closeEvent(event)
 
 
+def _ppt_add_roi_profile_slides(prs, roi_full_results,
+                                _fill_bg, _add_text,
+                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                Inches, Pt):
+    """Per-ROI Intensity Profile slides — one slide per base label.
+
+    Each slide shows a subplot grid (one subplot per ROI) with three lines:
+    Base (dashed blue), Compare (green), Diff (red triangles).
+    """
+    from io import BytesIO
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+
+    BG_FIG = '#1F2937'
+    BG_AX  = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_GRD = '#374151'
+    COL_SPL = '#4B5563'
+
+    def _style(ax):
+        ax.set_facecolor(BG_AX)
+        ax.tick_params(colors=COL_TXT, labelsize=7)
+        for side in ('bottom', 'left'):
+            ax.spines[side].set_color(COL_SPL)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, color=COL_GRD, linewidth=0.4, linestyle='--')
+
+    for base_lbl, roi_full in roi_full_results.items():
+        rois = roi_full.roi_set.rois
+        if not rois:
+            continue
+
+        compare_labels = roi_full.compare_labels()
+        diff_labels    = [l.image_label for l in roi_full.layers if l.layer_type == 'diff']
+        base_layer     = roi_full.get_base_layer()
+        le_labels      = [lbl.replace('_compare', '') for lbl in compare_labels]
+        xs             = list(range(len(compare_labels)))
+
+        n_rois = len(rois)
+        NCOLS  = min(n_rois, 3)
+        NROWS  = (n_rois + NCOLS - 1) // NCOLS
+        ITEMS_PER_PAGE = NCOLS * NROWS  # all on one slide for now
+
+        # chunk by ITEMS_PER_PAGE (in case many ROIs)
+        for page_start in range(0, n_rois, ITEMS_PER_PAGE):
+            chunk = rois[page_start: page_start + ITEMS_PER_PAGE]
+            nrows_this = (len(chunk) + NCOLS - 1) // NCOLS
+
+            fig = _MplFig(figsize=(12, max(3.0, nrows_this * 2.8)), dpi=120)
+            fig.patch.set_facecolor(BG_FIG)
+            fig.subplots_adjust(
+                left=0.07, right=0.97, top=0.97, bottom=0.12,
+                wspace=0.32, hspace=0.48,
+            )
+
+            axes = []
+            for ri in range(len(chunk)):
+                axes.append(fig.add_subplot(nrows_this, NCOLS, ri + 1))
+
+            for ax, roi in zip(axes, chunk):
+                _style(ax)
+                ax.set_title(roi.label, color=COL_TXT, fontsize=8, fontweight='bold', pad=3)
+
+                # Base — horizontal dashed line
+                if base_layer and roi.id in base_layer.roi_stats:
+                    bv = base_layer.roi_stats[roi.id].mean
+                    ax.axhline(bv, color='#60A5FA', linewidth=1.4,
+                               linestyle='--', label='Base')
+
+                # Compare
+                c_means = []
+                for lbl in compare_labels:
+                    lay = roi_full.get_layer(lbl)
+                    c_means.append(
+                        lay.roi_stats[roi.id].mean
+                        if lay and roi.id in lay.roi_stats else None
+                    )
+                vx = [i for i, v in enumerate(c_means) if v is not None]
+                vy = [v for v in c_means if v is not None]
+                if vx:
+                    ax.plot(vx, vy, marker='s', markersize=4,
+                            color='#34D399', linewidth=1.3, label='Compare')
+
+                # Diff
+                d_means = []
+                for lbl in diff_labels:
+                    lay = roi_full.get_layer(lbl)
+                    d_means.append(
+                        lay.roi_stats[roi.id].mean
+                        if lay and roi.id in lay.roi_stats else None
+                    )
+                vxd = [i for i, v in enumerate(d_means) if v is not None]
+                vyd = [v for v in d_means if v is not None]
+                if vxd:
+                    ax.plot(vxd, vyd, marker='^', markersize=4,
+                            color='#F87171', linewidth=1.3, label='Diff')
+
+                ax.set_xticks(xs)
+                ax.set_xticklabels(le_labels, rotation=20, ha='right',
+                                   color=COL_TXT, fontsize=7)
+                # ROI type badge colour on y-axis label
+                type_col = '#F87171' if roi.roi_type == 'target' else '#60A5FA'
+                ax.set_ylabel("Mean (norm)", color=type_col, fontsize=7, labelpad=3)
+
+            # Shared legend in first subplot
+            if axes:
+                axes[0].legend(facecolor=BG_FIG, labelcolor=COL_TXT,
+                               fontsize=7, loc='best')
+
+            # Hide unused subplot slots
+            for ax in axes[len(chunk):]:
+                ax.set_visible(False)
+
+            n_pages = (n_rois + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            page_n  = page_start // ITEMS_PER_PAGE + 1
+            suffix  = f"  ({page_n}/{n_pages})" if n_pages > 1 else ""
+            # No suptitle — PPT slide title already covers it
+
+            buf = BytesIO()
+            _MplAgg(fig).print_figure(buf, format='png', dpi=120, facecolor=BG_FIG)
+            buf.seek(0)
+
+            sl = prs.slides.add_slide(prs.slide_layouts[6])
+            _fill_bg(sl, C_BG)
+            _add_text(sl, f"Per-ROI Intensity Profile — Base: {base_lbl}{suffix}",
+                      Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.44),
+                      size=15, bold=True, color=C_PRIMARY)
+            # Place chart immediately below title (0.54") to minimise gap
+            sl.shapes.add_picture(buf, Inches(0.2), Inches(0.54), width=Inches(12.9))
+
+
+def _ppt_add_roi_position_slides(prs, roi_full_results, images_dict,
+                                  _fill_bg, _add_text,
+                                  C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                  Inches, Pt):
+    """ROI Position slides — base image with target/reference ROI boxes overlaid.
+
+    One slide per base label. Each slide shows the full base image with coloured
+    ROI rectangles and labels drawn on it, plus a small legend.
+    """
+    from io import BytesIO
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    FONT     = cv2.FONT_HERSHEY_SIMPLEX
+    TGT_COL  = (60,  80, 220)   # BGR red-ish  (target)
+    REF_COL  = (200, 200,  40)  # BGR cyan-ish (reference)
+
+    for base_lbl, roi_full in roi_full_results.items():
+        rois = roi_full.roi_set.rois
+        if not rois:
+            continue
+
+        # Load base image (prefer in-memory, fall back gracefully)
+        base_img = images_dict.get(base_lbl)
+        if base_img is None:
+            continue
+
+        # Convert to BGR colour so ROI colours are visible
+        if len(base_img.shape) == 2:
+            vis = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR)
+        else:
+            vis = base_img.copy()
+
+        h, w = vis.shape[:2]
+
+        # Draw each ROI
+        for roi in rois:
+            nx, ny, nw, nh = roi.norm_rect
+            rx  = int(nx * w)
+            ry  = int(ny * h)
+            rpw = max(1, int(nw * w))
+            rph = max(1, int(nh * h))
+            col       = TGT_COL if roi.roi_type == 'target' else REF_COL
+            thickness = 3       if roi.roi_type == 'target' else 2
+            # Outer rectangle
+            cv2.rectangle(vis, (rx, ry), (rx + rpw, ry + rph), col, thickness)
+            # Inner shadow for contrast on bright backgrounds
+            cv2.rectangle(vis, (rx + 1, ry + 1),
+                          (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
+            # Short label: "ROI_001" → "1", "ROI_3" → "3"
+            short_lbl = roi.label.split('_')[-1].lstrip('0') or '0'
+            font_scale = max(0.35, min(0.65, w / 1200))
+            tx = rx + 3
+            ty = max(ry - 4, 10)
+            cv2.putText(vis, short_lbl, (tx + 1, ty + 1), FONT,
+                        font_scale, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(vis, short_lbl, (tx, ty), FONT,
+                        font_scale, col, 1, cv2.LINE_AA)
+
+        # Encode to PNG via PIL
+        try:
+            from PIL import Image as _PilImg
+            pil = _PilImg.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+            buf = BytesIO()
+            pil.save(buf, format='PNG')
+            buf.seek(0)
+        except ImportError:
+            ok, enc = cv2.imencode('.png', vis)
+            if not ok:
+                continue
+            buf = BytesIO(enc.tobytes())
+
+        # ── Slide layout ─────────────────────────────────────────────
+        sl = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_bg(sl, C_BG)
+
+        _add_text(sl, f"ROI Position Map — Base: {base_lbl}",
+                  Inches(0.3), Inches(0.08), Inches(10.0), Inches(0.46),
+                  size=15, bold=True, color=C_PRIMARY)
+
+        # Image — aspect-ratio fit within available area (10.3" × 6.78")
+        AVAIL_W = Inches(10.3)
+        AVAIL_H = Inches(6.78)   # 7.5 - 0.62 title - 0.10 margin
+        nat_h, nat_w = vis.shape[:2]
+        if nat_w == 0 or nat_h == 0:
+            disp_w, disp_h = AVAIL_W, AVAIL_H
+        elif (nat_w / nat_h) >= (AVAIL_W / AVAIL_H):
+            disp_w = AVAIL_W
+            disp_h = int(AVAIL_W * nat_h / nat_w)
+        else:
+            disp_h = AVAIL_H
+            disp_w = int(AVAIL_H * nat_w / nat_h)
+        img_y = Inches(0.62) + (AVAIL_H - disp_h) // 2
+        sl.shapes.add_picture(buf, Inches(0.2), img_y, width=disp_w, height=disp_h)
+
+        # ── Legend (right side) ───────────────────────────────────────
+        LEG_X = Inches(11.0)
+        LEG_Y = Inches(1.5)
+
+        def _legend_row(y_off, color_rgb, label, thick_str):
+            box = sl.shapes.add_shape(
+                1, LEG_X, LEG_Y + y_off, Inches(0.28), Inches(0.22))
+            box.fill.solid()
+            box.fill.fore_color.rgb = color_rgb
+            box.line.fill.background()
+            _add_text(sl, f"{label}  ({thick_str})",
+                      LEG_X + Inches(0.34), LEG_Y + y_off,
+                      Inches(2.0), Inches(0.28),
+                      size=9, color=C_TEXT)
+
+        _add_text(sl, "Legend", LEG_X, LEG_Y - Inches(0.32),
+                  Inches(2.2), Inches(0.30),
+                  size=10, bold=True, color=C_TEXT_SEC)
+        _legend_row(Inches(0.00),
+                    RGBColor(220, 80, 60),   "Target",    "thick border")
+        _legend_row(Inches(0.35),
+                    RGBColor(40, 200, 200),  "Reference", "thin border")
+
+        # ROI count summary
+        n_tgt = sum(1 for r in rois if r.roi_type == 'target')
+        n_ref = sum(1 for r in rois if r.roi_type == 'reference')
+        _add_text(sl,
+                  f"Total: {len(rois)} ROIs\n"
+                  f"  Target: {n_tgt}\n"
+                  f"  Reference: {n_ref}",
+                  LEG_X, LEG_Y + Inches(0.8),
+                  Inches(2.2), Inches(0.85),
+                  size=9, color=C_TEXT_SEC)
+
+
+def _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
+                          _fill_bg, _add_text,
+                          C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                          Inches, Pt):
+    """One slide: SNR Pair Matrix (left) | Diff Image Matrix (right), each with own title."""
+    from io import BytesIO
+    import numpy as np
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+    from matplotlib.colors import LinearSegmentedColormap
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    SNR_OK, SNR_GOOD, CROP = 1.0, 2.0, 128
+
+    def _ccrop(img, size):
+        h, w = img.shape[:2]
+        if h < size or w < size:
+            ph, pw = max(0, size - h), max(0, size - w)
+            img = np.pad(img, ((ph // 2, ph - ph // 2), (pw // 2, pw - pw // 2)),
+                         mode='constant', constant_values=0)
+            h, w = img.shape[:2]
+        cy, cx = h // 2, w // 2
+        half = size // 2
+        return img[cy - half: cy - half + size, cx - half: cx - half + size]
+
+    all_labels = sorted(set(
+        [r.base_label for r in roi_all_results] +
+        [r.compare_label for r in roi_all_results]
+    ))
+    n = len(all_labels)
+    if n == 0:
+        return
+    label_idx = {lbl: i for i, lbl in enumerate(all_labels)}
+
+    sl = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_bg(sl, C_BG)
+
+    # Vertical divider
+    div = sl.shapes.add_shape(1, Inches(6.63), Inches(0.05), Inches(0.03), Inches(7.4))
+    div.fill.solid()
+    div.fill.fore_color.rgb = RGBColor(0x33, 0x41, 0x55)
+    div.line.fill.background()
+
+    # ── Left: SNR Pair Matrix ─────────────────────────────────────────
+    _add_text(sl, "SNR Pair Matrix",
+              Inches(0.2), Inches(0.05), Inches(6.3), Inches(0.48),
+              size=16, bold=True, color=C_PRIMARY)
+
+    matrix = np.full((n, n), np.nan)
+    for r in roi_all_results:
+        roi_full = roi_full_results.get(r.base_label)
+        if roi_full:
+            entry = roi_full.snr_per_diff.get(r.compare_label)
+            if entry is not None:
+                matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
+
+    pastel_cmap = LinearSegmentedColormap.from_list(
+        'snr_pastel',
+        [(0.00, '#FECACA'), (0.35, '#FDE68A'), (0.65, '#BBF7D0'), (1.00, '#6EE7B7')]
+    )
+    pastel_cmap.set_bad(color='#F1F5F9')
+    valid = matrix[~np.isnan(matrix)]
+    vmax = max(float(np.max(valid)) if valid.size else 0.0, SNR_GOOD) * 1.05
+
+    cell_in = 0.9
+    fw = n * cell_in + 2.0
+    fh = max(3.8, n * cell_in + 1.0)
+    fig_snr = _MplFig(figsize=(fw, fh), dpi=130)
+    fig_snr.patch.set_facecolor('white')
+    fig_snr.subplots_adjust(left=0.20, right=0.82, top=0.92, bottom=0.20)
+    ax = fig_snr.add_subplot(111)
+    ax.set_facecolor('white')
+    im = ax.imshow(matrix, cmap=pastel_cmap, aspect='equal',
+                   vmin=0.0, vmax=vmax, interpolation='nearest')
+    ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+    ax.grid(which='minor', color='#CBD5E1', linewidth=0.8)
+    ax.tick_params(which='minor', length=0)
+    cbar = fig_snr.colorbar(im, ax=ax, fraction=0.038, pad=0.03)
+    cbar.set_label("SNR", color='#374151', fontsize=9, fontweight='bold', labelpad=6)
+    cbar.ax.tick_params(labelcolor='#374151', labelsize=8)
+    for thresh, color in [(SNR_OK, '#F59E0B'), (SNR_GOOD, '#10B981')]:
+        npos = thresh / max(vmax, 1e-9)
+        if 0.0 < npos < 1.0:
+            cbar.ax.axhline(npos, color=color, linewidth=1.5, linestyle='--', alpha=0.85)
+    lbl_fs = max(7, min(10, 72 // n))
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                ax.text(j, i, '—', ha='center', va='center',
+                        fontsize=9, color='#94A3B8', zorder=3)
+            elif not np.isnan(matrix[i, j]):
+                v = matrix[i, j]
+                c = '#065F46' if v >= SNR_GOOD else ('#78350F' if v >= SNR_OK else '#7F1D1D')
+                ax.text(j, i, f"{v:.2f}", ha='center', va='center',
+                        fontsize=9, color=c, fontweight='bold', zorder=3)
+            else:
+                ax.text(j, i, 'n/a', ha='center', va='center',
+                        fontsize=7, color='#94A3B8', zorder=3)
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(all_labels, rotation=35, ha='right',
+                       color='#1E293B', fontsize=lbl_fs)
+    ax.set_yticklabels(all_labels, color='#1E293B', fontsize=lbl_fs)
+    ax.set_xlabel("Compare (LE)", color='#475569', fontsize=9,
+                  labelpad=6, fontweight='bold')
+    ax.set_ylabel("Base (LE)", color='#475569', fontsize=9,
+                  labelpad=6, fontweight='bold')
+    ax.tick_params(which='major', length=0, pad=4)
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#E2E8F0')
+    buf_snr = BytesIO()
+    _MplAgg(fig_snr).print_figure(buf_snr, format='png', dpi=130, facecolor='white')
+    buf_snr.seek(0)
+    sl.shapes.add_picture(buf_snr, Inches(0.2), Inches(0.6), width=Inches(6.3))
+
+    # ── Right: Diff Image Matrix ──────────────────────────────────────
+    _add_text(sl, "Diff Image Matrix",
+              Inches(6.8), Inches(0.05), Inches(6.35), Inches(0.48),
+              size=16, bold=True, color=C_PRIMARY)
+
+    pair_image = {}
+    for r in roi_all_results:
+        if r.result_image is not None:
+            pair_image[(r.base_label, r.compare_label)] = _ccrop(r.result_image, CROP)
+
+    GRID_CLR = '#1E293B'
+    GAP = 0.012
+    CELL = 1.2
+    LPAD = 0.8
+    TPAD = 0.35
+    BPAD = 0.6
+    fw2 = n * CELL + LPAD + 0.2
+    fh2 = n * CELL + TPAD + BPAD
+    fig_diff = _MplFig(figsize=(fw2, fh2), dpi=100)
+    fig_diff.patch.set_facecolor(GRID_CLR)
+    fig_diff.subplots_adjust(
+        left=LPAD / fw2, right=1.0 - 0.05,
+        top=1.0 - TPAD / fh2, bottom=BPAD / fh2,
+        wspace=GAP, hspace=GAP,
+    )
+    d_lbl_fs = max(6, min(9, 70 // n))
+    d_cell_fs = max(8, min(12, 90 // n))
+    for i, base_lbl in enumerate(all_labels):
+        for j, cmp_lbl in enumerate(all_labels):
+            ax2 = fig_diff.add_subplot(n, n, i * n + j + 1)
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            for sp in ax2.spines.values():
+                sp.set_visible(False)
+            if i == j:
+                ax2.set_facecolor('#E2E8F0')
+                ax2.text(0.5, 0.5, '—', ha='center', va='center',
+                         transform=ax2.transAxes, fontsize=d_cell_fs,
+                         color='#94A3B8', fontweight='bold')
+            else:
+                img2 = pair_image.get((base_lbl, cmp_lbl))
+                if img2 is not None:
+                    ax2.set_facecolor('white')
+                    ax2.imshow(img2, cmap='gray', vmin=0, vmax=255,
+                               aspect='equal', interpolation='lanczos')
+                else:
+                    ax2.set_facecolor('#F8FAFC')
+                    ax2.text(0.5, 0.5, 'n/a', ha='center', va='center',
+                             transform=ax2.transAxes, fontsize=7, color='#94A3B8')
+            if i == n - 1:
+                ax2.set_xlabel(cmp_lbl, fontsize=d_lbl_fs, color='#F8FAFC',
+                               fontweight='semibold', labelpad=3)
+            if j == 0:
+                ax2.set_ylabel(base_lbl, fontsize=d_lbl_fs, color='#F8FAFC',
+                               fontweight='semibold', rotation=0,
+                               ha='right', va='center', labelpad=5)
+    buf_diff = BytesIO()
+    _MplAgg(fig_diff).print_figure(buf_diff, format='png', dpi=100, facecolor=GRID_CLR)
+    buf_diff.seek(0)
+    sl.shapes.add_picture(buf_diff, Inches(6.8), Inches(0.6), width=Inches(6.35))
+
+
+def _ppt_add_condition_gallery(prs, result_rows, crop_size,
+                                _fill_bg, _add_text,
+                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                Inches, Pt):
+    """Final slide(s): all original images (base+compare) by condition label."""
+    from io import BytesIO
+    try:
+        from pptx.enum.text import PP_ALIGN
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    def _load_crop_png(path, size):
+        """Load image, center-crop to size×size, return PNG BytesIO."""
+        img = cv2.imread(path)
+        if img is None:
+            return None
+        if len(img.shape) == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = img.shape[:2]
+        if h > size or w > size:
+            cy, cx = h // 2, w // 2
+            half = size // 2
+            y1, x1 = max(0, cy - half), max(0, cx - half)
+            img = img[y1: y1 + size, x1: x1 + size]
+        try:
+            from PIL import Image as _PilImg
+            buf = BytesIO()
+            _PilImg.fromarray(img, mode='L').save(buf, format='PNG')
+            buf.seek(0)
+            return buf
+        except ImportError:
+            from matplotlib.figure import Figure as _MplFig
+            from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+            fig_t = _MplFig(figsize=(1, 1), dpi=size)
+            fig_t.patch.set_facecolor('black')
+            axt = fig_t.add_axes([0, 0, 1, 1])
+            axt.set_axis_off()
+            axt.imshow(img, cmap='gray', vmin=0, vmax=255, aspect='auto')
+            buf = BytesIO()
+            _MplAgg(fig_t).print_figure(buf, format='png', dpi=size, facecolor='black')
+            buf.seek(0)
+            return buf
+
+    # Collect unique (label → path), preserving first occurrence
+    seen: dict = {}
+    for row in result_rows:
+        r = row["result"]
+        p = row["paths"]
+        if r.base_label not in seen and "base" in p:
+            seen[r.base_label] = p["base"]
+        if r.compare_label not in seen and "compare" in p:
+            seen[r.compare_label] = p["compare"]
+    if not seen:
+        return
+
+    ordered = sorted(seen.items(), key=lambda x: x[0])
+    total = len(ordered)
+
+    NCOLS = min(total, 5)
+    NROWS_PP = 2
+    PER_PAGE = NCOLS * NROWS_PP
+
+    SLIDE_W = Inches(13.33)
+    SLIDE_H = Inches(7.5)
+    L_M = Inches(0.25)
+    R_M = Inches(0.25)
+    TITLE_H = Inches(0.52)
+    T_M = Inches(0.10)
+    B_M = Inches(0.12)
+    GAP_X = Inches(0.10)
+    GAP_Y = Inches(0.28)
+    LBL_H = Inches(0.30)
+
+    cell_w = (SLIDE_W - L_M - R_M - GAP_X * (NCOLS - 1)) / NCOLS
+    avail_h = SLIDE_H - TITLE_H - T_M - B_M
+    cell_img_h = (avail_h - GAP_Y * (NROWS_PP - 1)) / NROWS_PP - LBL_H
+
+    total_pages = (total + PER_PAGE - 1) // PER_PAGE
+    for slide_idx in range(0, total, PER_PAGE):
+        block = ordered[slide_idx: slide_idx + PER_PAGE]
+        page_n = slide_idx // PER_PAGE + 1
+        sl = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_bg(sl, C_BG)
+
+        suffix = f"  ({page_n}/{total_pages})" if total_pages > 1 else ""
+        _add_text(sl, f"Image Gallery — By Condition{suffix}",
+                  L_M, Inches(0.08), SLIDE_W - L_M - R_M, TITLE_H,
+                  size=16, bold=True, color=C_PRIMARY)
+
+        for ci, (lbl, path) in enumerate(block):
+            row_i = ci // NCOLS
+            col_i = ci % NCOLS
+            x = L_M + col_i * (cell_w + GAP_X)
+            y = TITLE_H + T_M + row_i * (LBL_H + cell_img_h + GAP_Y)
+
+            # Label bar
+            lb = sl.shapes.add_shape(1, x, y, cell_w, LBL_H)
+            lb.fill.solid()
+            lb.fill.fore_color.rgb = C_CARD
+            lb.line.fill.background()
+            _add_text(sl, lbl,
+                      x + Inches(0.06), y + Inches(0.02),
+                      cell_w - Inches(0.08), LBL_H,
+                      size=9, bold=True, color=C_PRIMARY)
+
+            # Image thumbnail — specify only width to preserve square aspect ratio
+            buf = _load_crop_png(path, crop_size)
+            if buf is not None:
+                sl.shapes.add_picture(buf, x, y + LBL_H, width=cell_w)
+            else:
+                ph = sl.shapes.add_shape(1, x, y + LBL_H, cell_w, cell_img_h)
+                ph.fill.solid()
+                ph.fill.fore_color.rgb = C_CARD
+                ph.line.fill.background()
+                _add_text(sl, "[n/a]",
+                          x + cell_w / 2 - Inches(0.4),
+                          y + LBL_H + cell_img_h / 2 - Inches(0.15),
+                          Inches(0.8), Inches(0.3),
+                          size=9, color=C_TEXT_SEC, align=PP_ALIGN.CENTER)
+
+
 def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
                         _fill_bg, _add_text, _score_color,
                         C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
@@ -4055,6 +4621,12 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
               Inches(0.4), Inches(0.12), Inches(12.5), Inches(0.45),
               size=15, bold=True, color=C_PRIMARY)
     chart_sl.shapes.add_picture(buf, Inches(0.4), Inches(0.65), width=Inches(12.5))
+
+    # ── Matrix overview slide (SNR Pair Matrix + Diff Image Matrix) ───────
+    _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
+                          _fill_bg, _add_text,
+                          C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                          Inches, Pt)
 
 
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
@@ -7559,6 +8131,24 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                                 C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
                                 C_PRIMARY, C_SUCCESS, C_WARN,
                                 Inches, Pt)
+
+            # ── ROI Position Map (base image + overlaid ROI boxes) ───────────
+            _ppt_add_roi_position_slides(prs, roi_full_results, self._images,
+                                         _fill_bg, _add_text,
+                                         C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                         Inches, Pt)
+
+            # ── Per-ROI Intensity Profile (line chart per base) ──────────────
+            _ppt_add_roi_profile_slides(prs, roi_full_results,
+                                        _fill_bg, _add_text,
+                                        C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                        Inches, Pt)
+
+        # ── Image Gallery — By Condition (final slide) ───────────────────────
+        _ppt_add_condition_gallery(prs, result_rows, crop_size,
+                                   _fill_bg, _add_text,
+                                   C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                   Inches, Pt)
 
         ppt_path = str(Path(out_dir) / "perspective_report.pptx")
         prs.save(ppt_path)
