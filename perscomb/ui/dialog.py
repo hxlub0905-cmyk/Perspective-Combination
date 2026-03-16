@@ -3182,8 +3182,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         # ── Figure geometry ───────────────────────────────────────────
         CELL  = 1.6          # inches per image cell
         LPAD  = 1.0          # left margin for row labels
-        TPAD  = 0.7          # top margin for col labels + suptitle
-        BPAD  = 0.3          # bottom margin
+        TPAD  = 0.5          # top margin for suptitle only
+        BPAD  = 0.8          # bottom margin for col labels
         fig_w = n * CELL + LPAD + 0.2
         fig_h = n * CELL + TPAD + BPAD
 
@@ -3210,20 +3210,19 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 ax.set_yticks([])
 
                 if i == j:
-                    # ── Diagonal: styled placeholder ───────────────────
+                    # ── Diagonal: styled placeholder with "—" ──────────
                     ax.set_facecolor('#EEF2F7')
                     for spine in ax.spines.values():
                         spine.set_visible(False)
-                    ax.text(0.5, 0.5, base_lbl,
+                    ax.text(0.5, 0.5, '—',
                             ha='center', va='center',
                             transform=ax.transAxes,
-                            fontsize=lbl_fs, color='#64748B',
-                            fontweight='semibold',
-                            wrap=True)
+                            fontsize=cell_fs, color='#94A3B8',
+                            fontweight='semibold')
                 else:
                     img = pair_image.get((base_lbl, cmp_lbl))
                     if img is not None:
-                        ax.imshow(img, cmap='inferno', vmin=0, vmax=255,
+                        ax.imshow(img, cmap='gray', vmin=0, vmax=255,
                                   aspect='equal', interpolation='lanczos')
                         for spine in ax.spines.values():
                             spine.set_edgecolor('#94A3B8')
@@ -3237,16 +3236,16 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                                 transform=ax.transAxes,
                                 fontsize=8, color='#CBD5E1')
 
-                # Column label — top row only
-                if i == 0:
-                    ax.set_title(cmp_lbl,
-                                 fontsize=lbl_fs, color='#334155',
-                                 fontweight='bold', pad=4)
+                # Column label — bottom row only
+                if i == n - 1:
+                    ax.set_xlabel(cmp_lbl,
+                                  fontsize=lbl_fs, color='#1E293B',
+                                  fontweight='semibold', labelpad=4)
                 # Row label — left column only
                 if j == 0:
                     ax.set_ylabel(base_lbl,
-                                  fontsize=lbl_fs, color='#334155',
-                                  fontweight='bold',
+                                  fontsize=lbl_fs, color='#1E293B',
+                                  fontweight='semibold',
                                   rotation=0, ha='right',
                                   va='center', labelpad=6)
 
@@ -3270,7 +3269,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         # ── Save button row ───────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
         lbl_info = QtWidgets.QLabel(
-            f"Showing center {CROP}×{CROP} px  |  colormap: inferno")
+            f"Showing center {CROP}×{CROP} px  |  colormap: gray")
         lbl_info.setStyleSheet(
             "color: #94A3B8; font-size: 11px; font-style: italic;")
         btn_row.addWidget(lbl_info)
