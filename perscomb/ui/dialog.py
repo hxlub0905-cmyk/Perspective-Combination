@@ -3188,7 +3188,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         fig_h = n * CELL + TPAD + BPAD
 
         fig = Figure(figsize=(fig_w, fig_h), dpi=100)
-        fig.patch.set_facecolor('white')
+        fig.patch.set_facecolor('#F8FAFC')
 
         # Manual margins so labels never overlap cells
         fig.subplots_adjust(
@@ -3209,32 +3209,30 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 ax.set_xticks([])
                 ax.set_yticks([])
 
+                # Consistent border for every cell
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('#4B5563')
+                    spine.set_linewidth(0.6)
+
                 if i == j:
-                    # ── Diagonal: styled placeholder with "—" ──────────
-                    ax.set_facecolor('#EEF2F7')
-                    for spine in ax.spines.values():
-                        spine.set_visible(False)
+                    # ── Diagonal: same dark background as grayscale images ──
+                    ax.set_facecolor('#111111')
                     ax.text(0.5, 0.5, '—',
                             ha='center', va='center',
                             transform=ax.transAxes,
-                            fontsize=cell_fs, color='#94A3B8',
-                            fontweight='semibold')
+                            fontsize=cell_fs, color='#6B7280',
+                            fontweight='bold')
                 else:
                     img = pair_image.get((base_lbl, cmp_lbl))
                     if img is not None:
+                        ax.set_facecolor('#000000')
                         ax.imshow(img, cmap='gray', vmin=0, vmax=255,
                                   aspect='equal', interpolation='lanczos')
-                        for spine in ax.spines.values():
-                            spine.set_edgecolor('#94A3B8')
-                            spine.set_linewidth(0.7)
                     else:
-                        ax.set_facecolor('#F8FAFC')
-                        for spine in ax.spines.values():
-                            spine.set_edgecolor('#E2E8F0')
-                            spine.set_linewidth(0.5)
+                        ax.set_facecolor('#111111')
                         ax.text(0.5, 0.5, 'n/a', ha='center', va='center',
                                 transform=ax.transAxes,
-                                fontsize=8, color='#CBD5E1')
+                                fontsize=8, color='#4B5563')
 
                 # Column label — bottom row only
                 if i == n - 1:
@@ -3264,7 +3262,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         self._diff_matrix_fig = fig
         canvas = FigureCanvas(fig)
         canvas.setMinimumSize(400, 400)
-        canvas.setStyleSheet("background: white; border-radius: 6px;")
+        canvas.setStyleSheet("background: #F8FAFC; border-radius: 6px;")
 
         # ── Save button row ───────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
