@@ -612,6 +612,15 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         )
         self._update_display()
 
+    def clear_multi_draw_preview(self) -> None:
+        """Clear transient ROI-draw previews and hover state."""
+        self._multi_roi_start = None
+        self._multi_roi_current = None
+        self._multi_roi_dragging = False
+        self._cursor_pos = None
+        self._show_zoom = False
+        self._update_display()
+
     def set_grid_preview(self, rects: List[Tuple]) -> None:
         """Show yellow dashed preview rectangles (norm_rects) for Multi-Add grid."""
         self._grid_preview_rects = rects
@@ -648,6 +657,25 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
             return float(img_x) / px_w, float(img_y) / px_h
         return None
 
+    def _widget_to_norm_clamped(self, pos) -> Optional[tuple]:
+        """Convert widget-space QPoint to normalized coords, clamped to the image edge."""
+        label_rect = self._label.geometry()
+        p = pos - label_rect.topLeft()
+        pixmap = self._label.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return None
+        px_w, px_h = pixmap.width(), pixmap.height()
+        lbl_w, lbl_h = label_rect.width(), label_rect.height()
+        offset_x = (lbl_w - px_w) // 2
+        offset_y = (lbl_h - px_h) // 2
+        if px_w <= 0 or px_h <= 0:
+            return None
+        img_x = min(max(p.x() - offset_x, 0), px_w - 1)
+        img_y = min(max(p.y() - offset_y, 0), px_h - 1)
+        den_w = max(px_w - 1, 1)
+        den_h = max(px_h - 1, 1)
+        return float(img_x) / den_w, float(img_y) / den_h
+
     def setCursorPos(self, norm_x: float, norm_y: float):
         """Set cursor position from external source (partner sync)."""
         self._cursor_pos = (norm_x, norm_y)
@@ -667,7 +695,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
 
         # Legacy single-ROI drag (ROI Nulling)
         if self._roi_mode and event.button() == Qt.LeftButton:
-            norm = self._widget_to_norm(event.pos())
+            norm = self._widget_to_norm_clamped(event.pos())
             if norm:
                 self._roi_start = norm
                 self._roi_current = norm
@@ -677,7 +705,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
 
         # Multi-ROI modes
         if self._multi_draw_mode != 'idle' and event.button() == Qt.LeftButton:
-            norm = self._widget_to_norm(event.pos())
+            norm = self._widget_to_norm_clamped(event.pos())
             if norm is None:
                 super().mousePressEvent(event)
                 return
@@ -718,7 +746,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         """Finish ROI drawing on left release."""
         # Legacy single-ROI
         if self._roi_mode and self._roi_dragging and event.button() == Qt.LeftButton:
-            norm = self._widget_to_norm(event.pos())
+            norm = self._widget_to_norm_clamped(event.pos())
             if norm:
                 self._roi_current = norm
             if self._roi_start and self._roi_current:
@@ -739,7 +767,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         # Multi-ROI drag
         if (self._multi_draw_mode == 'drag' and self._multi_roi_dragging
                 and event.button() == Qt.LeftButton):
-            norm = self._widget_to_norm(event.pos())
+            norm = self._widget_to_norm_clamped(event.pos())
             if norm:
                 self._multi_roi_current = norm
             if self._multi_roi_start and self._multi_roi_current:
@@ -763,7 +791,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         """Track mouse position and emit signal."""
         # Legacy single-ROI drag rubber band
         if self._roi_mode and self._roi_dragging:
-            norm = self._widget_to_norm(event.pos())
+            norm = self._widget_to_norm_clamped(event.pos())
             if norm:
                 self._roi_current = norm
             self._update_display()
@@ -772,7 +800,7 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
 
         # Multi-ROI drag rubber band
         if self._multi_draw_mode == 'drag' and self._multi_roi_dragging:
-            norm = self._widget_to_norm(event.pos())
+            norm = self._widget_to_norm_clamped(event.pos())
             if norm:
                 self._multi_roi_current = norm
             self._update_display()
@@ -800,7 +828,16 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
         img_x = pos.x() - offset_x
         img_y = pos.y() - offset_y
 
-        if 0 <= img_x < px_w and 0 <= img_y < px_h:
+        clamp_to_edge = self._multi_draw_mode in ('single_add', 'multi_add')
+        if clamp_to_edge:
+            den_w = max(px_w - 1, 1)
+            den_h = max(px_h - 1, 1)
+            norm_x = min(max(img_x, 0), px_w - 1) / den_w
+            norm_y = min(max(img_y, 0), px_h - 1) / den_h
+            self._cursor_pos = (norm_x, norm_y)
+            self._show_zoom = True
+            self.cursor_moved.emit(norm_x, norm_y)
+        elif 0 <= img_x < px_w and 0 <= img_y < px_h:
             norm_x = img_x / px_w
             norm_y = img_y / px_h
             self._cursor_pos = (norm_x, norm_y)
@@ -4045,6 +4082,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def _clear_multi_add_markers(self) -> None:
         self._base_widget.set_multi_draw_mode('idle')
         self._on_reset_anchors()
+        self._base_widget.clear_multi_draw_preview()
 
     def _on_confirm(self) -> None:
         self._clear_multi_add_markers()
@@ -5199,6 +5237,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._roi_remapped_sets: Dict[str, MultiROISet] = {}
         self.tutorial_overlay: Optional[WelcomeTutorialOverlay] = None
         self._tutorial_checked = False
+        self._compute_abort_requested: bool = False
+        self._compute_lock_effects: Dict[QtWidgets.QWidget, QtWidgets.QGraphicsOpacityEffect] = {}
+        self._compute_lock_targets: Tuple[QtWidgets.QWidget, ...] = ()
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -5320,6 +5361,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ================================================================
         toolbar = QtWidgets.QFrame()
         toolbar.setObjectName("MainToolbar")
+        self.toolbar = toolbar
         toolbar_layout = QtWidgets.QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(8, 6, 8, 6)
         toolbar_layout.setSpacing(6)
@@ -6659,6 +6701,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_progress_banner.setVisible(False)
         outer_layout.addWidget(self.wgt_progress_banner)
 
+        self._compute_lock_targets = (
+            self.toolbar,
+            self.lbl_result_info,
+            self.left_panel_scroll,
+            self.stk_right_panel,
+            self.roi_side_panel,
+        )
         self._apply_responsive_sidebar_layout()
 
     def resizeEvent(self, event: QtGui.QResizeEvent):
@@ -6694,10 +6743,46 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 QtWidgets.QBoxLayout.TopToBottom if compact else QtWidgets.QBoxLayout.LeftToRight
             )
 
+    def _set_widget_locked_appearance(self, widget: QtWidgets.QWidget, locked: bool) -> None:
+        if widget is None:
+            return
+        effect = self._compute_lock_effects.get(widget)
+        if locked:
+            if effect is None:
+                effect = QtWidgets.QGraphicsOpacityEffect(widget)
+                self._compute_lock_effects[widget] = effect
+            effect.setOpacity(0.38)
+            widget.setGraphicsEffect(effect)
+        else:
+            widget.setGraphicsEffect(None)
+
+    def _set_compute_busy(self, busy: bool) -> None:
+        if busy and self.roi_side_panel.isVisible():
+            self._close_roi_side_panel()
+        for widget in self._compute_lock_targets:
+            widget.setEnabled(not busy)
+            self._set_widget_locked_appearance(widget, busy)
+        self.btn_abort_compute.setVisible(busy)
+        self.btn_abort_compute.setEnabled(busy and self._compute_worker is not None)
+        if not busy:
+            self.btn_abort_compute.setText("Abort")
+
+    def _on_abort_compute(self) -> None:
+        if self._compute_worker is None or self._compute_abort_requested:
+            return
+        self._compute_abort_requested = True
+        self._compute_worker.abort_requested = True
+        self.btn_abort_compute.setEnabled(False)
+        self.btn_abort_compute.setText("Aborting...")
+        self.lbl_progress_text.setText(
+            "Aborting compute after the active pair finishes..."
+        )
+
     def _connect_signals(self):
         """Connect UI signals."""
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
         self.btn_compute.clicked.connect(self._on_compute)
+        self.btn_abort_compute.clicked.connect(self._on_abort_compute)
         self.btn_export.clicked.connect(self._on_export)
         self.btn_select_all.clicked.connect(self._select_all_compare)
         self.btn_select_none.clicked.connect(self._select_none_compare)
@@ -6939,7 +7024,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_diff_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay Difference Map cursor position to left-panel magnifier."""
-        if not self.btn_split_view.isChecked():
+        if (not self.btn_split_view.isChecked()
+                and self.img_base_mag._multi_draw_mode == 'idle'
+                and not self.img_base_mag._roi_mode):
             self.img_base_mag.setCursorPos(norm_x, norm_y)
 
     def _on_diff_cursor_left(self):
@@ -7391,11 +7478,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             pair_count = len(compare_imgs) * (len(compare_imgs) - 1)
         else:
             pair_count = len(compare_imgs)
+        self._compute_abort_requested = False
         self.btn_compute.setEnabled(False)
         self.btn_compute.setText("Computing…")
         self.btn_export.setEnabled(False)
         self.btn_prev_result.setEnabled(False)
         self.btn_next_result.setEnabled(False)
+        self._set_compute_busy(True)
 
         # ── Embedded progress banner ──────────────────────────────────────
         self.progress_bar.setRange(0, pair_count)
@@ -7495,6 +7584,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             on_done=self._on_compute_done,
             on_progress=_on_progress,
         )
+        self.btn_abort_compute.setEnabled(True)
 
     def _start_worker(self, fn, on_success, on_error=None, on_done=None, on_progress=None):
         """Run *fn* on a QThread; all callbacks execute on the main thread.
@@ -7538,6 +7628,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         return thread, worker
 
     def _on_compute_finished(self, results: List[SinglePairResult]):
+        if self._compute_abort_requested and len(results) < self.progress_bar.maximum():
+            return
         self._results = results
         self._current_result_idx = 0
         self._has_computed = True  # P0-3: flag for Re-compute button state
@@ -7740,6 +7832,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_compute_done(self):
         self._compute_thread = None
         self._compute_worker = None
+        self._set_compute_busy(False)
         # Hide embedded progress banner
         self.wgt_progress_banner.setVisible(False)
         # Also close legacy progress dialog if present (e.g. from Quadrant Fusion)
@@ -8266,7 +8359,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_base_mag_cursor_moved(self, norm_x: float, norm_y: float):
         """Relay left-panel magnifier cursor position to Difference Map (bidirectional zoom)."""
-        if not self.btn_split_view.isChecked():
+        if (not self.btn_split_view.isChecked()
+                and self.img_base_mag._multi_draw_mode == 'idle'
+                and not self.img_base_mag._roi_mode):
             self.img_diff.setCursorPos(norm_x, norm_y)
 
     def _on_base_mag_cursor_left(self):
@@ -8338,6 +8433,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """
         if self._roi_manager is not None:
             self._roi_manager._clear_multi_add_markers()  # sets draw mode → idle
+        self.img_diff.clearCursor()
         self.roi_side_panel.setVisible(False)
 
     def _on_roi_panel_confirm(self) -> None:
@@ -8351,6 +8447,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if self._roi_manager is not None:
             self._roi_manager._clear_multi_add_markers()
         self._on_multi_rois_changed()
+        self.img_diff.clearCursor()
         self.roi_side_panel.setVisible(False)
 
     def _capture_roi_ref_base(self) -> None:
