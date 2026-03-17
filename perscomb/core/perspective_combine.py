@@ -144,9 +144,23 @@ def _percentile_range_glv_masked(
 
     Returns:
         (p_low, p_high) computed from the masked pixel subset.
+    
+    Raises:
+        ValueError: When glv_high == glv_low (degenerate range).
     """
     if img is None or img.size == 0:
         return 0.0, 1.0
+
+    # Validate GLV range
+    if glv_high < glv_low:
+        # Auto-correct by swapping
+        glv_low, glv_high = glv_high, glv_low
+    elif glv_high == glv_low:
+        # Degenerate range - cannot create meaningful mask
+        raise ValueError(
+            f"Invalid GLV range: glv_high ({glv_high}) must be > glv_low ({glv_low}). "
+            f"A single-value range cannot create a meaningful pixel mask."
+        )
 
     img_f = img.astype(np.float32)
     mask = (img_f >= float(glv_low)) & (img_f <= float(glv_high))
