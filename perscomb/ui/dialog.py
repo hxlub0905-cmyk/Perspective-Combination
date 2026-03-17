@@ -2573,23 +2573,25 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         return len(set(r.base_label for r in self._all_results)) > 1
 
     # ------------------------------------------------------------------
-    # Dark-theme stylesheet applied to the entire dialog
+    # Light-theme stylesheet (matches main UI DIALOG_STYLE palette)
     # ------------------------------------------------------------------
     _DIALOG_QSS = """
-        QDialog, QWidget#roi_dialog_root {
-            background-color: #111827;
-            color: #D1D5DB;
+        QDialog, QWidget {
+            background-color: #F3F4F6;
+            color: #111827;
+            font-family: 'Liberation Sans', Arial, 'Helvetica Neue', 'Segoe UI';
+            font-size: 11px;
         }
         QTabWidget::pane {
-            border: 1px solid #374151;
-            background-color: #1F2937;
+            border: 1px solid #E5E7EB;
+            background-color: #FFFFFF;
             border-radius: 0px 4px 4px 4px;
         }
         QTabBar::tab {
-            background-color: #1F2937;
-            color: #9CA3AF;
-            padding: 6px 18px;
-            border: 1px solid #374151;
+            background-color: #F9FAFB;
+            color: #6B7280;
+            padding: 6px 16px;
+            border: 1px solid #E5E7EB;
             border-bottom: none;
             border-top-left-radius: 5px;
             border-top-right-radius: 5px;
@@ -2597,43 +2599,40 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             font-size: 11px;
         }
         QTabBar::tab:selected {
-            background-color: #374151;
-            color: #F9FAFB;
-            border-bottom: 2px solid #3B82F6;
+            background-color: #FFFFFF;
+            color: #111827;
+            border-bottom: 2px solid #F59E0B;
             font-weight: bold;
         }
         QTabBar::tab:hover:!selected {
-            background-color: #2D3748;
-            color: #D1D5DB;
+            background-color: #FFF8ED;
+            color: #374151;
         }
         QTableWidget {
-            background-color: #1F2937;
-            alternate-background-color: #243044;
-            color: #D1D5DB;
-            gridline-color: #374151;
-            border: 1px solid #374151;
+            background-color: #FFFFFF;
+            alternate-background-color: #F9FAFB;
+            color: #111827;
+            gridline-color: #E5E7EB;
+            border: 1px solid #E5E7EB;
             border-radius: 4px;
-            selection-background-color: #2563EB;
-            selection-color: #F9FAFB;
+            selection-background-color: #FEF3C7;
+            selection-color: #111827;
             font-size: 11px;
         }
         QHeaderView::section {
-            background-color: #374151;
-            color: #9CA3AF;
+            background-color: #F3F4F6;
+            color: #6B7280;
             padding: 5px 8px;
             border: none;
-            border-right: 1px solid #4B5563;
-            border-bottom: 1px solid #4B5563;
+            border-right: 1px solid #E5E7EB;
+            border-bottom: 1px solid #D1D5DB;
             font-weight: bold;
             font-size: 11px;
         }
-        QHeaderView::section:first {
-            border-top-left-radius: 4px;
-        }
         QComboBox {
-            background-color: #374151;
-            color: #D1D5DB;
-            border: 1px solid #4B5563;
+            background-color: #FFFFFF;
+            color: #111827;
+            border: 1px solid #D1D5DB;
             border-radius: 4px;
             padding: 3px 10px;
             min-height: 24px;
@@ -2641,62 +2640,61 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         }
         QComboBox::drop-down {
             border: none;
-            width: 22px;
+            width: 20px;
         }
         QComboBox QAbstractItemView {
-            background-color: #374151;
-            color: #D1D5DB;
-            selection-background-color: #2563EB;
-            border: 1px solid #4B5563;
+            background-color: #FFFFFF;
+            color: #111827;
+            selection-background-color: #FEF3C7;
+            border: 1px solid #D1D5DB;
         }
         QPushButton {
-            background-color: #374151;
-            color: #D1D5DB;
-            border: 1px solid #4B5563;
+            background-color: #FFFFFF;
+            color: #374151;
+            border: 1px solid #D1D5DB;
             border-radius: 5px;
-            padding: 5px 18px;
+            padding: 5px 16px;
             min-height: 26px;
             font-size: 11px;
         }
         QPushButton:hover {
-            background-color: #4B5563;
-            color: #F9FAFB;
-            border-color: #6B7280;
+            background-color: #FFF8ED;
+            color: #111827;
+            border-color: #F59E0B;
         }
         QPushButton:pressed {
-            background-color: #2563EB;
-            color: #F9FAFB;
-            border-color: #1D4ED8;
+            background-color: #FDE68A;
+            border-color: #D97706;
         }
         QLabel {
-            color: #9CA3AF;
+            color: #6B7280;
             font-size: 11px;
         }
         QScrollBar:vertical {
-            background-color: #1F2937;
+            background-color: #F3F4F6;
             width: 10px;
             margin: 0;
             border-radius: 5px;
         }
         QScrollBar::handle:vertical {
-            background-color: #4B5563;
+            background-color: #D1D5DB;
             border-radius: 5px;
             min-height: 24px;
         }
-        QScrollBar::handle:vertical:hover { background-color: #6B7280; }
+        QScrollBar::handle:vertical:hover { background-color: #9CA3AF; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         QScrollBar:horizontal {
-            background-color: #1F2937;
+            background-color: #F3F4F6;
             height: 10px;
             margin: 0;
             border-radius: 5px;
         }
         QScrollBar::handle:horizontal {
-            background-color: #4B5563;
+            background-color: #D1D5DB;
             border-radius: 5px;
             min-width: 24px;
         }
-        QScrollBar::handle:horizontal:hover { background-color: #6B7280; }
+        QScrollBar::handle:horizontal:hover { background-color: #9CA3AF; }
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
     """
 
@@ -2712,14 +2710,14 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         header.setFixedHeight(44)
         header.setStyleSheet(
             "background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #1E3A5F, stop:1 #0F172A);"
-            "border-bottom: 1px solid #3B82F6;"
+            "stop:0 #FEF3C7, stop:1 #FFF8ED);"
+            "border-bottom: 2px solid #F59E0B;"
         )
         h_lay = QtWidgets.QHBoxLayout(header)
         h_lay.setContentsMargins(16, 0, 16, 0)
         lbl_title = QtWidgets.QLabel("ROI Intensity Analysis")
         lbl_title.setStyleSheet(
-            "color: #F9FAFB; font-size: 15px; font-weight: bold; background: transparent;"
+            "color: #111827; font-size: 15px; font-weight: bold; background: transparent;"
         )
         n_bases = len(self._base_labels)
         n_pairs = len(self._all_results)
@@ -2727,7 +2725,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             f"  {n_bases} base image{'s' if n_bases != 1 else ''}  ·  {n_pairs} pair{'s' if n_pairs != 1 else ''}"
         )
         lbl_info.setStyleSheet(
-            "color: #60A5FA; font-size: 11px; background: transparent;"
+            "color: #92400E; font-size: 11px; background: transparent;"
         )
         h_lay.addWidget(lbl_title)
         h_lay.addWidget(lbl_info)
@@ -2751,8 +2749,14 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         inner_lay.addWidget(tabs, stretch=1)
 
         bottom = QtWidgets.QHBoxLayout()
-        btn_close = QtWidgets.QPushButton("✕  Close")
-        btn_close.setFixedWidth(110)
+        btn_close = QtWidgets.QPushButton("Close")
+        btn_close.setFixedWidth(100)
+        btn_close.setStyleSheet(
+            "QPushButton { background:#FFFFFF; color:#374151; border:1px solid #D1D5DB;"
+            " border-radius:5px; padding:5px 16px; font-weight:bold; }"
+            "QPushButton:hover { background:#FFF8ED; border-color:#F59E0B; color:#92400E; }"
+            "QPushButton:pressed { background:#FDE68A; }"
+        )
         btn_close.clicked.connect(self.close)
         bottom.addStretch()
         bottom.addWidget(btn_close)
@@ -2867,9 +2871,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         # Column indices (keep in sync with _SUMMARY_HEADERS below)
         self._SUMMARY_HEADERS = [
             'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
-            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR', 'Base SNR',
+            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'Pair SNR', 'Base SNR',
         ]
-        self._COL_SNR      = self._SUMMARY_HEADERS.index('SNR')
+        self._COL_SNR      = self._SUMMARY_HEADERS.index('Pair SNR')
         self._COL_BASE_SNR = self._SUMMARY_HEADERS.index('Base SNR')
         self._COL_STATUS   = self._SUMMARY_HEADERS.index('Align Status')
 
@@ -8271,20 +8275,40 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         return paths
 
     def _ask_export_options(self) -> tuple:
-        """Show a small dialog asking for export options.
-        Returns (do_center_crop: bool, crop_size: int, export_gif: bool).
+        """Show the Export Options dialog.
+
+        Returns
+        -------
+        (do_center_crop: bool, crop_size: int, export_gif: bool,
+         ppt_sections: dict)  or  (False, 512, False, None) on cancel.
         """
+        has_roi = bool(self._roi_full_results)
+
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Export Options")
         dlg.setStyleSheet(DIALOG_STYLE)
-        dlg.resize(380, 190)
-        layout = QtWidgets.QVBoxLayout(dlg)
+        dlg.resize(480, 0)
+        root = QtWidgets.QVBoxLayout(dlg)
+        root.setSpacing(12)
+        root.setContentsMargins(16, 16, 16, 12)
 
-        chk = QtWidgets.QCheckBox("Center-crop images (useful when defect is centered)")
-        chk.setChecked(False)
-        layout.addWidget(chk)
+        def _section_label(text: str) -> QtWidgets.QLabel:
+            lbl = QtWidgets.QLabel(text)
+            lbl.setStyleSheet(
+                "font-weight: bold; color: #111827; font-size: 12px;"
+                "padding-bottom: 2px; border-bottom: 1px solid #E5E7EB;"
+            )
+            return lbl
+
+        # ── Image / File options ──────────────────────────────────────
+        root.addWidget(_section_label("Image & File Options"))
+
+        chk_crop = QtWidgets.QCheckBox("Center-crop images  (useful when defect is centered)")
+        chk_crop.setChecked(False)
+        root.addWidget(chk_crop)
 
         crop_row = QtWidgets.QHBoxLayout()
+        crop_row.setContentsMargins(20, 0, 0, 0)
         crop_row.addWidget(QtWidgets.QLabel("Crop size (px):"))
         spn = QtWidgets.QSpinBox()
         spn.setRange(64, 4096)
@@ -8293,29 +8317,90 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         spn.setEnabled(False)
         crop_row.addWidget(spn)
         crop_row.addStretch()
-        layout.addLayout(crop_row)
-        chk.toggled.connect(spn.setEnabled)
+        root.addLayout(crop_row)
+        chk_crop.toggled.connect(spn.setEnabled)
 
         chk_gif = QtWidgets.QCheckBox(
             "Export animated GIF  (Base → Normalized Compare → Diff loop)"
         )
         chk_gif.setToolTip(
-            "Generates a looping animated GIF for each pair — handy for slides/email.\n"
+            "Generates a looping GIF per pair — handy for slides/email.\n"
             "Requires Pillow (pip install Pillow)."
         )
         chk_gif.setChecked(False)
-        layout.addWidget(chk_gif)
+        root.addWidget(chk_gif)
 
+        # ── PPT Report sections ───────────────────────────────────────
+        root.addWidget(_section_label("PowerPoint Report  —  Sections to Include"))
+
+        # (label, key, default_checked, tooltip)
+        _PPT_SECTION_DEFS = [
+            ("Overview Table  — summary of all pairs",
+             "overview_table",    True,
+             "One or more slides listing all pairs with alignment/diff metrics."),
+            ("Detail Slides  — Base / Compare / Diff images per pair",
+             "detail_slides",     True,
+             "3×2 image grid for every pair: base, aligned compare, normalized compare,\n"
+             "diff map, JET SNR map, and GIF animation frame."),
+            ("ROI Pair Summary Table  — LE metrics & SNR per pair",
+             "roi_summary_table", True,
+             "Multi-page table with T/R mean, Δ, Pair SNR columns (requires ROI data)."),
+            ("SNR Pair Matrix  — heatmap of SNR across all conditions",
+             "snr_matrix",        True,
+             "N×N heatmap where each cell shows the Pair SNR for that (base, compare) pair."),
+            ("Intensity Profile Charts  — per-ROI mean across LE",
+             "intensity_profiles", True,
+             "Line chart per base image: base mean (dashed), compare mean, diff mean per ROI."),
+            ("Image Gallery  — all images organized by condition",
+             "image_gallery",     True,
+             "Thumbnail grid showing all acquired images grouped by LE condition."),
+            ("ROI Position Maps  — base image with ROI overlays",
+             "roi_position_maps", False,
+             "Annotated base image showing target and reference ROI bounding boxes."),
+            ("Diff Map + ROI Overlay  — diff image with ROI boxes",
+             "diff_roi_overlay",  False,
+             "Diff image for each pair with target/reference ROI boxes drawn on top."),
+            ("Base SNR Summary Chart  — bar chart per base image",
+             "base_snr_chart",    False,
+             "Bar chart comparing Base SNR across all base images (color-coded by threshold)."),
+        ]
+
+        section_checks: Dict[str, QtWidgets.QCheckBox] = {}
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(4)
+        grid.setContentsMargins(4, 0, 0, 0)
+
+        for row_i, (label, key, default, tip) in enumerate(_PPT_SECTION_DEFS):
+            # Disable ROI-related sections when no ROI data loaded
+            roi_keys = {"roi_summary_table", "snr_matrix", "intensity_profiles",
+                        "roi_position_maps", "diff_roi_overlay", "base_snr_chart"}
+            chk_s = QtWidgets.QCheckBox(label)
+            chk_s.setChecked(default)
+            chk_s.setToolTip(tip)
+            if key in roi_keys and not has_roi:
+                chk_s.setChecked(False)
+                chk_s.setEnabled(False)
+                chk_s.setToolTip("No ROI data loaded — run ROI analysis first.")
+            section_checks[key] = chk_s
+            grid.addWidget(chk_s, row_i, 0)
+
+        root.addLayout(grid)
+
+        # ── Dialog buttons ────────────────────────────────────────────
         btn_row = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
         btn_row.accepted.connect(dlg.accept)
         btn_row.rejected.connect(dlg.reject)
-        layout.addWidget(btn_row)
+        root.addWidget(btn_row)
+
+        dlg.adjustSize()
 
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            return chk.isChecked(), spn.value(), chk_gif.isChecked()
-        return False, 512, False
+            ppt_sections = {k: chk.isChecked() for k, chk in section_checks.items()}
+            return chk_crop.isChecked(), spn.value(), chk_gif.isChecked(), ppt_sections
+        return False, 512, False, None
 
     # ------------------------------------------------------------------
     # PPT ROI helper  (module-level, called from _export_ppt_report)
@@ -8326,8 +8411,25 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                            do_center_crop: bool = False,
                            crop_size: int = 512,
                            roi_full_results: Optional[Dict[str, object]] = None,
-                           roi_all_results: Optional[List[object]] = None) -> Optional[str]:
-        """Build a dark-themed PPT report for all computed image pairs."""
+                           roi_all_results: Optional[List[object]] = None,
+                           ppt_sections: Optional[Dict[str, bool]] = None,
+                           progress_callback=None) -> Optional[str]:
+        """Build a dark-themed PPT report for all computed image pairs.
+
+        ppt_sections keys: overview_table, detail_slides, roi_summary_table,
+          snr_matrix, roi_position_maps, diff_roi_overlay, intensity_profiles,
+          image_gallery, base_snr_chart.
+        All sections default to True when ppt_sections is None.
+        """
+        # Default: include every section
+        _sec: Dict[str, bool] = ppt_sections or {}
+        def _s(key: str, default: bool = True) -> bool:
+            return _sec.get(key, default)
+
+        def _prog(label: str) -> None:
+            if progress_callback:
+                progress_callback(label)
+
         try:
             from pptx import Presentation
             from pptx.util import Inches, Pt, Emu
@@ -8385,7 +8487,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 return C_PRIMARY
             return C_WARN
 
-        # ── Title slide ──────────────────────────────────────────────────────
+        # ── Title slide (always included) ────────────────────────────────────
+        _prog("Generating Title slide…")
         title_slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
         _fill_bg(title_slide, C_BG)
 
@@ -8413,8 +8516,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                   size=11, color=C_TEXT_SEC)
 
         # ── Overview table slide(s) ─────────────────────────────────────────
+        if _s('overview_table'):
+            _prog("Generating Overview Table…")
         ROWS_PER = 18
         for block_start in range(0, len(result_rows), ROWS_PER):
+            if not _s('overview_table'):
+                break
             block = result_rows[block_start:block_start + ROWS_PER]
             ov = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(ov, C_BG)
@@ -8498,10 +8605,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         C_BLEND = RGBColor(0x60, 0x9C, 0xFF)  # blue  → Blend
 
         for idx, row in enumerate(result_rows, start=1):
+            if not _s('detail_slides'):
+                break
             result: SinglePairResult = row["result"]
             paths: Dict[str, str] = row["paths"]
             s = result.stats
             score = s.get('alignment_score', result.alignment.final_score)
+            _prog(f"Detail slide  [{result.base_label} → {result.compare_label}]  ({idx}/{len(result_rows)})")
 
             slide = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(slide, C_BG)
@@ -8632,43 +8742,59 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # ── ROI Analysis slides ──────────────────────────────────────────────
         if roi_full_results and roi_all_results:
-            _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
-                                _fill_bg, _add_text, _score_color,
-                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
-                                C_PRIMARY, C_SUCCESS, C_WARN,
-                                Inches, Pt)
+            if _s('roi_summary_table'):
+                _prog("Generating ROI Pair Summary Table…")
+                _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
+                                    _fill_bg, _add_text, _score_color,
+                                    C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
+                                    C_PRIMARY, C_SUCCESS, C_WARN,
+                                    Inches, Pt)
 
-            # ── ROI Position Map (base image + overlaid ROI boxes) ───────────
-            _ppt_add_roi_position_slides(prs, roi_full_results, self._images,
-                                         _fill_bg, _add_text,
-                                         C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                         Inches, Pt)
+            if _s('snr_matrix'):
+                _prog("Generating SNR Pair Matrix…")
+                _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
+                                      _fill_bg, _add_text,
+                                      C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                      Inches, Pt)
 
-            # ── Diff Map + ROI Position slides ───────────────────────────────
-            _ppt_add_diff_roi_position_slides(prs, roi_full_results, roi_all_results,
-                                              _fill_bg, _add_text,
-                                              C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                              Inches, Pt)
+            if _s('roi_position_maps'):
+                _prog("Generating ROI Position Maps…")
+                _ppt_add_roi_position_slides(prs, roi_full_results, self._images,
+                                             _fill_bg, _add_text,
+                                             C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                             Inches, Pt)
 
-            # ── Per-ROI Intensity Profile (line chart per base) ──────────────
-            _ppt_add_roi_profile_slides(prs, roi_full_results,
-                                        _fill_bg, _add_text,
-                                        C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                        Inches, Pt)
+            if _s('diff_roi_overlay'):
+                _prog("Generating Diff Map + ROI Overlay…")
+                _ppt_add_diff_roi_position_slides(prs, roi_full_results, roi_all_results,
+                                                  _fill_bg, _add_text,
+                                                  C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                                  Inches, Pt)
 
-        # ── Image Gallery — By Condition (final slide) ───────────────────────
-        _ppt_add_condition_gallery(prs, result_rows, crop_size,
-                                   _fill_bg, _add_text,
-                                   C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                   Inches, Pt)
+            if _s('intensity_profiles'):
+                _prog("Generating Intensity Profile Charts…")
+                _ppt_add_roi_profile_slides(prs, roi_full_results,
+                                            _fill_bg, _add_text,
+                                            C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                            Inches, Pt)
+
+        # ── Image Gallery — By Condition ──────────────────────────────────────
+        if _s('image_gallery'):
+            _prog("Generating Image Gallery…")
+            _ppt_add_condition_gallery(prs, result_rows, crop_size,
+                                       _fill_bg, _add_text,
+                                       C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                       Inches, Pt)
 
         # ── Image Gallery — Base SNR Summary ─────────────────────────────────
-        if roi_full_results:
+        if roi_full_results and _s('base_snr_chart'):
+            _prog("Generating Base SNR Summary Chart…")
             _ppt_add_base_snr_gallery_slide(prs, roi_full_results,
                                             _fill_bg, _add_text,
                                             C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
                                             Inches, Pt)
 
+        _prog("Saving PowerPoint file…")
         ppt_path = str(Path(out_dir) / "perspective_report.pptx")
         prs.save(ppt_path)
         return ppt_path
@@ -8709,8 +8835,52 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     os.makedirs(folder_path, exist_ok=True)
 
                 settings = self._last_settings or {}
-                # Read export options from UI at export time (not from stale _last_settings)
-                do_center_crop, crop_size, export_gif = self._ask_export_options()
+                # Read export options (includes PPT section selections)
+                do_center_crop, crop_size, export_gif, ppt_sections = \
+                    self._ask_export_options()
+                if ppt_sections is None:
+                    return   # user cancelled
+
+                # ── Progress dialog ───────────────────────────────────
+                n_pairs = len(self._results)
+                has_roi = bool(self._roi_full_results)
+                _sec = ppt_sections or {}
+                ppt_step_count = (
+                    1                                          # title
+                    + (1 if _sec.get('overview_table')   else 0)
+                    + (n_pairs if _sec.get('detail_slides') else 0)
+                    + (1 if _sec.get('roi_summary_table') and has_roi else 0)
+                    + (1 if _sec.get('snr_matrix')        and has_roi else 0)
+                    + (1 if _sec.get('roi_position_maps') and has_roi else 0)
+                    + (1 if _sec.get('diff_roi_overlay')  and has_roi else 0)
+                    + (1 if _sec.get('intensity_profiles') and has_roi else 0)
+                    + (1 if _sec.get('image_gallery')     else 0)
+                    + (1 if _sec.get('base_snr_chart')    and has_roi else 0)
+                    + 1                                        # save file
+                )
+                total_steps = (
+                    1                        # folder setup
+                    + n_pairs                # image saving
+                    + (n_pairs if export_gif else 0)
+                    + ppt_step_count
+                )
+                prog = QtWidgets.QProgressDialog(
+                    "Preparing export…", "Cancel", 0, total_steps, self
+                )
+                prog.setWindowTitle("Exporting…")
+                prog.setWindowModality(Qt.WindowModal)
+                prog.setMinimumDuration(0)
+                prog.setStyleSheet(DIALOG_STYLE)
+                prog.setValue(0)
+
+                def _step(label: str) -> bool:
+                    """Advance progress by 1 step. Returns True if cancelled."""
+                    prog.setLabelText(label)
+                    prog.setValue(prog.value() + 1)
+                    QtWidgets.QApplication.processEvents()
+                    return prog.wasCanceled()
+
+                _step("Setting up export folders…")
 
                 csv_headers = [
                     "base", "compare", "operation", "align_method", "dx", "dy",
@@ -8725,6 +8895,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     writer = csv.writer(f)
                     writer.writerow(csv_headers)
                     for result in self._results:
+                        if _step(f"Saving images  [{result.base_label} → {result.compare_label}]"):
+                            return
                         base_name = _safe_name(result.base_label)
                         cmp_name = _safe_name(result.compare_label)
                         op_name = _safe_name(result.operation)
@@ -8774,6 +8946,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
                         for row in result_rows:
                             result = row["result"]
+                            if _step(f"Creating GIF  [{result.base_label} → {result.compare_label}]"):
+                                break
                             base_img_g = self._images.get(result.base_label)
                             norm_img_g = result.normalized_compare
                             diff_img_g = result.result_image
@@ -8818,11 +8992,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     except Exception as gif_err:
                         gif_note = f"\n⚠ GIF error: {gif_err}"
 
-                ppt_path = self._export_ppt_report(out_dir, result_rows, settings,
-                                                   do_center_crop=do_center_crop,
-                                                   crop_size=crop_size,
-                                                   roi_full_results=self._roi_full_results or {},
-                                                   roi_all_results=self._results or [])
+                ppt_path = self._export_ppt_report(
+                    out_dir, result_rows, settings,
+                    do_center_crop=do_center_crop,
+                    crop_size=crop_size,
+                    roi_full_results=self._roi_full_results or {},
+                    roi_all_results=self._results or [],
+                    ppt_sections=ppt_sections,
+                    progress_callback=_step,
+                )
+                prog.setValue(total_steps)
                 if ppt_path:
                     QtWidgets.QMessageBox.information(
                         self,
