@@ -924,18 +924,20 @@ class SyncZoomImageWidget(QtWidgets.QWidget):
             rh3 = max(1, int(abs(y1n - y0n) * h))
             cv2.rectangle(img_rgb, (rx, ry), (rx + rw3, ry + rh3), (0, 255, 0), 2)
 
-        # 5. Single-add cursor preview (ghost rect following mouse)
-        if self._multi_draw_mode == 'single_add' and self._cursor_pos is not None:
+        # 5. Single-add / Multi-add cursor preview (ghost rect following mouse)
+        if self._multi_draw_mode in ('single_add', 'multi_add') and self._cursor_pos is not None:
             nw_s, nh_s = self._add_size_norm
             cx_n, cy_n = self._cursor_pos
             nx = max(0.0, min(cx_n - nw_s / 2, 1.0 - nw_s))
             ny = max(0.0, min(cy_n - nh_s / 2, 1.0 - nh_s))
             rx, ry = int(nx * w), int(ny * h)
             rpw, rph = max(1, int(nw_s * w)), max(1, int(nh_s * h))
-            cv2.rectangle(img_rgb, (rx, ry), (rx + rpw, ry + rph), (0, 255, 0), 1)
+            # single_add → green;  multi_add → gold (matches anchor marker colour)
+            ghost_color = (0, 255, 0) if self._multi_draw_mode == 'single_add' else (0, 215, 255)
+            cv2.rectangle(img_rgb, (rx, ry), (rx + rpw, ry + rph), ghost_color, 1)
 
-        # Draw zoom overlay if cursor is on image
-        if self._show_zoom and self._cursor_pos is not None:
+        # Draw zoom overlay if cursor is on image (suppress during ROI draw modes)
+        if self._show_zoom and self._cursor_pos is not None and self._multi_draw_mode == 'idle':
             norm_x, norm_y = self._cursor_pos
             src_x, src_y = int(norm_x * w), int(norm_y * h)
 
@@ -1467,6 +1469,7 @@ class _Worker(QtCore.QObject):
     def __init__(self, fn):
         super().__init__()
         self._fn = fn
+        self.abort_requested: bool = False
 
     def run(self):
         try:
@@ -5177,6 +5180,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Multi-ROI state
         self._multi_roi_set: MultiROISet = MultiROISet()
         self._roi_manager: Optional[MultiROIManagerWidget] = None
+        self._has_computed: bool = False  # True after first successful compute
         self._roi_profile_dialog: Optional[ROIIntensityProfileDialog] = None
         # Last ROI analysis results keyed by base_label.
         # In auto-pair mode there are multiple base groups; standard mode has one.
@@ -5201,6 +5205,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._connect_signals()
         self._setup_tutorial_overlay()
         self._load_images()
+        # Initial badge and step-state update after all widgets exist
+        QtCore.QTimer.singleShot(0, self._update_adv_badge)
+        QtCore.QTimer.singleShot(0, self._update_step_states)
 
     def _set_button_icon(self, button: QtWidgets.QPushButton, pixmap_enum, text: str = None, size: int = 16):
         if text is not None:
@@ -5381,6 +5388,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         content_layout = QtWidgets.QHBoxLayout()
         content_layout.setSpacing(8)
         content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout = content_layout  # stored for ROI slide-in panel
 
         # === LEFT SIDEBAR ===
         self.left_panel = QtWidgets.QWidget()
@@ -5593,6 +5601,56 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             card_layout.addSpacing(2)
             return card, card_layout
 
+        def _make_step_header(num_text: str, title: str, optional: bool = False):
+            """Create a numbered step header row.
+
+            Returns (frame, circle_label, status_label) where:
+              - circle_label  : QLabel showing the step number; tint to orange on complete
+              - status_label  : QLabel showing '' / '✓' / '—'
+            """
+            frame = QtWidgets.QFrame()
+            frame.setObjectName("StepHeader")
+            frame.setContentsMargins(0, 0, 0, 0)
+            h_lay = QtWidgets.QHBoxLayout(frame)
+            h_lay.setContentsMargins(4, 8, 4, 2)
+            h_lay.setSpacing(8)
+
+            circle = QtWidgets.QLabel(num_text)
+            circle.setFixedSize(26, 26)
+            circle.setAlignment(Qt.AlignCenter)
+            circle.setStyleSheet(
+                "QLabel { background-color: #D1D5DB; color: #1F2937; border-radius: 13px;"
+                " font-weight: 700; font-size: 12px; }"
+            )
+            h_lay.addWidget(circle)
+
+            lbl = QtWidgets.QLabel(title)
+            lbl.setStyleSheet(
+                f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: 13px;"
+                f" color: {UI_TEXT_PRIMARY_STRONG}; background: transparent; border: none;"
+            )
+            h_lay.addWidget(lbl)
+
+            if optional:
+                tag = QtWidgets.QLabel("optional")
+                tag.setStyleSheet(
+                    "color: #9CA3AF; font-size: 9px; border: 1px solid #D1D5DB;"
+                    " border-radius: 3px; padding: 1px 4px; background: transparent;"
+                )
+                h_lay.addWidget(tag)
+
+            h_lay.addStretch()
+
+            status = QtWidgets.QLabel("")
+            status.setStyleSheet("font-size: 13px; color: #6B7280; background: transparent; border: none;")
+            h_lay.addWidget(status)
+
+            return frame, circle, status
+
+        # ─── Step 1: Images ─────────────────────────────────────────────────────
+        step1_hdr, self._step1_circle, self._step1_status = _make_step_header("①", "Images")
+        left_layout.addWidget(step1_hdr)
+
         # --- INPUT section ---
         card_input, input_layout = _make_sidebar_card("INPUT")
         left_layout.addWidget(card_input)
@@ -5652,13 +5710,34 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         compare_hdr_row.addWidget(self.lbl_compare_title)
         compare_hdr_row.addStretch()
 
-        # Utility buttons in compare header row
+        # Utility buttons in compare header row — give explicit style so they are
+        # clearly identifiable as clickable buttons (flat=True strips all chrome)
+        _util_btn_style = (
+            "QPushButton {"
+            "  background-color: #F3F4F6;"
+            "  color: #374151;"
+            "  border: 1px solid #D1D5DB;"
+            "  border-radius: 4px;"
+            "  padding: 2px 8px;"
+            "  font-size: 11px;"
+            "  font-weight: 600;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #E5E7EB;"
+            "  border-color: #9CA3AF;"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #D1D5DB;"
+            "}"
+        )
         self.btn_select_all = QtWidgets.QPushButton("All")
         self.btn_select_all.setProperty("role", "utility")
-        self.btn_select_all.setFlat(True)
+        self.btn_select_all.setStyleSheet(_util_btn_style)
+        self.btn_select_all.setFixedHeight(22)
         self.btn_select_none = QtWidgets.QPushButton("None")
         self.btn_select_none.setProperty("role", "utility")
-        self.btn_select_none.setFlat(True)
+        self.btn_select_none.setStyleSheet(_util_btn_style)
+        self.btn_select_none.setFixedHeight(22)
         compare_hdr_row.addWidget(self.btn_select_all)
         compare_hdr_row.addWidget(self.btn_select_none)
         std_layout.addLayout(compare_hdr_row)
@@ -5704,6 +5783,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._qf_roi_rect: Optional[tuple] = None
         self._qf_last_result: Optional[QuadrantFusionResult] = None
 
+        # ─── Step 2: Configure ──────────────────────────────────────────────────
+        step2_hdr, self._step2_circle, self._step2_status = _make_step_header("②", "Configure")
+        left_layout.addWidget(step2_hdr)
+
         # --- OPERATION section ---
         card_operation, operation_card_layout = _make_sidebar_card("OPERATION")
         left_layout.addWidget(card_operation)
@@ -5747,6 +5830,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_adv_toggle.setChecked(False)
         self.btn_adv_toggle.setProperty("variant", "ghost")
         op_layout.addWidget(self.btn_adv_toggle)
+
+        # P1-1: compact summary badge shown when Advanced Settings is collapsed
+        self.lbl_adv_badge = QtWidgets.QLabel("")
+        self.lbl_adv_badge.setWordWrap(True)
+        self.lbl_adv_badge.setStyleSheet(
+            "color: #9CA3AF; font-size: 10px; border: none; background: transparent;"
+            " padding-left: 6px; padding-bottom: 2px;"
+        )
+        op_layout.addWidget(self.lbl_adv_badge)
 
         self.grp_advanced = QtWidgets.QWidget()
         adv_layout = QtWidgets.QVBoxLayout(self.grp_advanced)
@@ -5956,12 +6048,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         left_layout.addStretch()
 
-        # ROI + status + Compute (stacked hierarchy)
-        lbl_roi_section = QtWidgets.QLabel("ROI")
-        lbl_roi_section.setStyleSheet(
-            f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_SECONDARY_MUTED};"
+        # ─── Step 3: ROI + Compute ───────────────────────────────────────────
+        step3_hdr, self._step3_circle, self._step3_status = _make_step_header(
+            "③", "ROI  +  Compute", optional=True
         )
-        left_layout.addWidget(lbl_roi_section)
+        left_layout.addWidget(step3_hdr)
 
         self.btn_roi_manager.setProperty("role", "secondary")
         self.btn_compute.setProperty("role", "primary")
@@ -5975,6 +6066,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         left_layout.addWidget(self.lbl_roi_status)
         left_layout.addWidget(self.btn_compute)
+
+        # P1-3: Space bar shortcut hint
+        self.lbl_space_hint = QtWidgets.QLabel("Press  Space  to compute")
+        self.lbl_space_hint.setAlignment(Qt.AlignCenter)
+        self.lbl_space_hint.setStyleSheet(
+            "color: #9CA3AF; font-size: 10px; border: none; background: transparent; padding-top: 2px;"
+        )
+        left_layout.addWidget(self.lbl_space_hint)
 
         self.left_panel_scroll = QtWidgets.QScrollArea()
         self.left_panel_scroll.setObjectName("LeftPanelScroll")
@@ -6450,8 +6549,64 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.setCurrentIndex(0)
 
         content_layout.addWidget(self.stk_right_panel, stretch=1)
+
+        # P1-2: ROI Manager slide-in side panel (hidden by default)
+        self.roi_side_panel = QtWidgets.QFrame()
+        self.roi_side_panel.setObjectName("ROISidePanel")
+        self.roi_side_panel.setStyleSheet(f"""
+            QFrame#ROISidePanel {{
+                background-color: {UI_BG_PANEL};
+                border-left: 2px solid {UI_PRIMARY};
+                border-radius: 0px;
+            }}
+        """)
+        self.roi_side_panel.setFixedWidth(480)  # match original dialog min-width
+        self.roi_side_panel.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding
+        )
+        _rsp_layout = QtWidgets.QVBoxLayout(self.roi_side_panel)
+        _rsp_layout.setContentsMargins(0, 0, 0, 0)
+        _rsp_layout.setSpacing(0)
+
+        # Header row: title + close button
+        _rsp_hdr = QtWidgets.QFrame()
+        _rsp_hdr.setStyleSheet(
+            f"QFrame {{ background-color: {UI_PRIMARY}; border: none; }}"
+        )
+        _rsp_hdr_lay = QtWidgets.QHBoxLayout(_rsp_hdr)
+        _rsp_hdr_lay.setContentsMargins(12, 6, 8, 6)
+        _rsp_hdr_lay.setSpacing(8)
+        _rsp_title = QtWidgets.QLabel("📐  ROI Manager")
+        _rsp_title.setStyleSheet(
+            "color: #111827; font-weight: 700; font-size: 13px; background: transparent; border: none;"
+        )
+        _rsp_hdr_lay.addWidget(_rsp_title)
+        _rsp_hdr_lay.addStretch()
+        self.btn_close_roi_panel = QtWidgets.QPushButton("✕")
+        self.btn_close_roi_panel.setFixedSize(24, 24)
+        self.btn_close_roi_panel.setFlat(True)
+        self.btn_close_roi_panel.setStyleSheet(
+            "QPushButton { color: #111827; font-weight: 700; background: transparent; border: none; }"
+            "QPushButton:hover { background-color: rgba(0,0,0,0.12); border-radius: 4px; }"
+        )
+        self.btn_close_roi_panel.clicked.connect(self._close_roi_side_panel)
+        _rsp_hdr_lay.addWidget(self.btn_close_roi_panel)
+        _rsp_layout.addWidget(_rsp_hdr)
+
+        # Scroll area for ROI manager content (filled lazily on first open)
+        self._roi_side_scroll = QtWidgets.QScrollArea()
+        self._roi_side_scroll.setWidgetResizable(True)
+        self._roi_side_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._roi_side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _rsp_layout.addWidget(self._roi_side_scroll, stretch=1)
+
+        self._roi_panel_populated = False  # filled on first open
+        self.roi_side_panel.setVisible(False)
+        content_layout.addWidget(self.roi_side_panel, stretch=0)
+
         content_layout.setStretch(0, 0)
         content_layout.setStretch(1, 1)
+        content_layout.setStretch(2, 0)
         outer_layout.addLayout(content_layout, stretch=1)
 
         # ── Embedded progress banner (shown during compute) ───────────────
@@ -6463,11 +6618,25 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _pb_layout = QtWidgets.QVBoxLayout(self.wgt_progress_banner)
         _pb_layout.setContentsMargins(16, 8, 16, 8)
         _pb_layout.setSpacing(4)
+        # Top row: progress text + abort button
+        _pb_top_row = QtWidgets.QHBoxLayout()
+        _pb_top_row.setSpacing(8)
         self.lbl_progress_text = QtWidgets.QLabel("Computing…")
         self.lbl_progress_text.setStyleSheet(
             "color: #92400E; font-size: 12px; font-weight: 600; border: none;"
         )
-        _pb_layout.addWidget(self.lbl_progress_text)
+        _pb_top_row.addWidget(self.lbl_progress_text, stretch=1)
+        self.btn_abort_compute = QtWidgets.QPushButton("■  Abort")
+        self.btn_abort_compute.setFixedHeight(24)
+        self.btn_abort_compute.setCursor(QtGui.QCursor(Qt.PointingHandCursor))
+        self.btn_abort_compute.setStyleSheet(
+            "QPushButton { background-color: #EF4444; color: #FFFFFF; border: none; "
+            "border-radius: 4px; padding: 2px 12px; font-size: 11px; font-weight: 700; }"
+            "QPushButton:hover { background-color: #DC2626; }"
+            "QPushButton:pressed { background-color: #B91C1C; }"
+        )
+        _pb_top_row.addWidget(self.btn_abort_compute)
+        _pb_layout.addLayout(_pb_top_row)
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%v / %m  (%p%)")
@@ -6533,8 +6702,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_select_all.clicked.connect(self._select_all_compare)
         self.btn_select_none.clicked.connect(self._select_none_compare)
         self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
+        self.cmb_base.currentIndexChanged.connect(self._update_step_states)
         self.chk_auto_pair.stateChanged.connect(self._on_auto_pair_toggle)
         self.btn_adv_toggle.toggled.connect(self._on_adv_toggle)
+        # P1-1: Advanced Settings badge refresh
+        self.cmb_normalize_mode.currentIndexChanged.connect(self._update_adv_badge)
+        self.cmb_subtract_mode.currentIndexChanged.connect(self._update_adv_badge)
+        self.cmb_align_method.currentIndexChanged.connect(self._update_adv_badge)
         self.slider_blend.valueChanged.connect(self._on_blend_change)
         self.histogram_canvas.range_changed.connect(self._on_hist_range_changed)
         self.btn_clear_hist_range.clicked.connect(self._on_clear_hist_range)
@@ -6818,6 +6992,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 chk = QtWidgets.QCheckBox(label)
                 chk.setProperty("compareItem", True)
                 chk.setChecked(False)
+                chk.stateChanged.connect(self._update_step_states)  # P0-2
                 self.compare_layout.addWidget(chk)
                 self._compare_checkboxes.append(chk)
 
@@ -7116,15 +7291,22 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         clahe_clip_limit = 2.0
 
         # ROI-Match (EPI Nulling) parameters
+        # ROI is optional — if ROI-Match mode is selected but no ROIs have been
+        # defined, silently fall back to Percentile normalization so Compute is
+        # never blocked.  The status label updates to inform the user.
         use_roi_match = (norm_mode == 3)
         roi_rect_px = None
-        if use_roi_match:
-            if len(self._multi_roi_set) == 0:
-                QtWidgets.QMessageBox.warning(
-                    self, "ROI-Match",
-                    "Please define at least one ROI in ROI Manager first."
+        if use_roi_match and len(self._multi_roi_set) == 0:
+            use_roi_match = False
+            normalize_method = 'percentile'
+            normalize = True
+            if hasattr(self, 'lbl_roi_status'):
+                self.lbl_roi_status.setText(
+                    "ROI-Match selected but no ROIs defined — using Percentile fallback"
                 )
-                return
+                self.lbl_roi_status.setStyleSheet(
+                    "color: #D97706; font-size: 11px; border: none; background: transparent;"
+                )
 
         sub_mode = self.cmb_subtract_mode.currentIndex()
         # 0 = |diff|×2 (default), 1 = |diff| no gain, 2 = clip≥0 (preserve direction)
@@ -7263,11 +7445,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                         results.append(result)
                         idx += 1
                         worker.progress.emit(idx, f"{base_lbl} → {cmp_lbl}")
+                        if worker.abort_requested:
+                            return results
                 return results
             # Standard mode: one base vs N compares
             cmp_labels = list(compare_imgs.keys())
             results = []
             for idx, cmp_lbl in enumerate(cmp_labels):
+                if worker.abort_requested:
+                    return results
                 r = compute_single_pair(
                     base=base_img,
                     compare=compare_imgs[cmp_lbl],
@@ -7294,6 +7480,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 )
                 results.append(r)
                 worker.progress.emit(idx + 1, f"{base_label} → {cmp_lbl}")
+                if worker.abort_requested:
+                    return results
             return results
 
         def _on_progress(current, label):
@@ -7352,6 +7540,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def _on_compute_finished(self, results: List[SinglePairResult]):
         self._results = results
         self._current_result_idx = 0
+        self._has_computed = True  # P0-3: flag for Re-compute button state
         self._update_current_result()
         self._update_navigation()
         self.btn_export.setEnabled(bool(self._results))
@@ -7558,8 +7747,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._compute_progress.close()
             self._compute_progress = None
         self.btn_compute.setEnabled(True)
-        self.btn_compute.setText("Compute")
-        self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
+        # P0-3: Show "Re-compute" after first successful run
+        if self._has_computed:
+            self.btn_compute.setText("↺  Re-compute")
+            self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_BrowserReload, "↺  Re-compute")
+        else:
+            self.btn_compute.setText("Compute")
+            self._set_button_icon(self.btn_compute, QtWidgets.QStyle.SP_MediaPlay, "Compute")
 
     # ── Quadrant Fusion compute ─────────────────────────────────────────
 
@@ -7760,6 +7954,69 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Show/hide Advanced operation options."""
         self.grp_advanced.setVisible(checked)
         self.btn_adv_toggle.setText("Advanced Settings \u25bc" if checked else "Advanced Settings \u25b6")
+        # P1-1: badge is only meaningful when section is collapsed
+        if hasattr(self, 'lbl_adv_badge'):
+            self.lbl_adv_badge.setVisible(not checked)
+
+    def _update_adv_badge(self):
+        """P1-1: Refresh the Advanced Settings summary badge text."""
+        if not hasattr(self, 'lbl_adv_badge'):
+            return
+        if self.btn_adv_toggle.isChecked():
+            self.lbl_adv_badge.setVisible(False)
+            return
+        norm_labels = ["Percentile", "GLV-Mask", "Skip", "ROI-Match"]
+        sub_labels   = ["|diff|×2", "|diff|", "clip≥0"]
+        align_labels = ["Phase", "NCC"]
+        norm  = norm_labels[min(self.cmb_normalize_mode.currentIndex(),  len(norm_labels)  - 1)]
+        sub   = sub_labels  [min(self.cmb_subtract_mode.currentIndex(),  len(sub_labels)   - 1)]
+        align = align_labels[min(self.cmb_align_method.currentIndex(),   len(align_labels) - 1)]
+        self.lbl_adv_badge.setText(f"Norm: {norm}  ·  {sub}  ·  Align: {align}")
+        self.lbl_adv_badge.setVisible(True)
+
+    def _update_step_states(self):
+        """P0-2: Refresh step header completion indicators (circle tint + ✓ status)."""
+        if not hasattr(self, '_step1_circle'):
+            return
+
+        _DONE_CIRCLE  = (
+            "QLabel { background-color: #F59E0B; color: #111827; border-radius: 13px;"
+            " font-weight: 700; font-size: 12px; }"
+        )
+        _PEND_CIRCLE  = (
+            "QLabel { background-color: #D1D5DB; color: #1F2937; border-radius: 13px;"
+            " font-weight: 700; font-size: 12px; }"
+        )
+        _DONE_STATUS  = "font-size: 13px; color: #16A34A; font-weight: 700; background: transparent; border: none;"
+        _SKIP_STATUS  = "font-size: 13px; color: #9CA3AF; background: transparent; border: none;"
+        _PEND_STATUS  = "font-size: 13px; color: #D1D5DB; background: transparent; border: none;"
+
+        # ── Step 1: base selected + at least one compare checked ────────────
+        base_ok     = bool(self.cmb_base.currentText())
+        compare_ok  = any(
+            chk.isChecked() and chk.isEnabled()
+            for chk in self._compare_checkboxes
+        ) if hasattr(self, '_compare_checkboxes') else False
+        step1_done  = base_ok and compare_ok
+        self._step1_circle.setStyleSheet(_DONE_CIRCLE if step1_done else _PEND_CIRCLE)
+        self._step1_status.setText("✓" if step1_done else "")
+        self._step1_status.setStyleSheet(_DONE_STATUS if step1_done else _PEND_STATUS)
+
+        # ── Step 2: ready only after Step 1 is done (encourages 1→2→3 flow) ─
+        # Before images are loaded the configure section is not yet meaningful,
+        # so keep it gray until the user has images + a base/compare pair ready.
+        step2_done = step1_done
+        self._step2_circle.setStyleSheet(_DONE_CIRCLE if step2_done else _PEND_CIRCLE)
+        self._step2_status.setText("✓" if step2_done else "")
+        self._step2_status.setStyleSheet(_DONE_STATUS if step2_done else _PEND_STATUS)
+
+        # ── Step 3: optional — ✓ if ROIs defined, — if none ─────────────────
+        has_rois = bool(self._multi_roi_set and len(self._multi_roi_set) > 0)
+        self._step3_circle.setStyleSheet(_DONE_CIRCLE if has_rois else _PEND_CIRCLE)
+        self._step3_status.setText("✓" if has_rois else "—")
+        self._step3_status.setStyleSheet(
+            _DONE_STATUS if has_rois else _SKIP_STATUS
+        )
 
     def _show_about_dialog(self):
         """Show the About Fusi\u00b3 dialog."""
@@ -8020,14 +8277,37 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     # ── Multi-ROI Manager ────────────────────────────────────────────────
 
     def _on_open_roi_manager(self) -> None:
-        """Open (or bring to front) the MultiROIManagerWidget."""
-        if self._roi_manager is None:
+        """Toggle the ROI Manager slide-in side panel (P1-2)."""
+        # If already visible, toggle-close it (resets draw mode too)
+        if self.roi_side_panel.isVisible():
+            self._close_roi_side_panel()
+            return
+
+        # Lazily create and embed MultiROIManagerWidget on first open
+        if not self._roi_panel_populated:
             self._roi_manager = MultiROIManagerWidget(
                 roi_set=self._multi_roi_set,
                 base_widget=self.img_base_mag,
-                parent=self,
+                parent=None,  # no dialog parent — we embed it as a plain widget
             )
+            # Remove dialog chrome — make it behave like a regular embedded widget
+            self._roi_manager.setWindowFlags(Qt.Widget)
             self._roi_manager.rois_changed.connect(self._on_multi_rois_changed)
+            self._roi_side_scroll.setWidget(self._roi_manager)
+            self._roi_panel_populated = True
+
+            # --- Fix: _on_confirm calls accept() which hides the embedded widget.
+            # Disconnect the default confirm signal and replace with a handler that
+            # (a) clears markers, (b) refreshes ROI state, (c) closes the side panel
+            # — without hiding the _roi_manager widget itself.
+            try:
+                self._roi_manager._btn_confirm.clicked.disconnect()
+            except RuntimeError:
+                pass  # no connection to disconnect
+            self._roi_manager._btn_confirm.clicked.connect(self._on_roi_panel_confirm)
+
+        # Ensure the embedded widget is always visible (accept() may have hidden it)
+        self._roi_manager.setVisible(True)
 
         # Provide current base image shape for pixel→norm conversion
         base_label = self.cmb_base.currentText()
@@ -8048,9 +8328,30 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # (that image is what img_base_mag shows).  In standard mode, use cmb_base.
         self._capture_roi_ref_base()
 
-        self._roi_manager.show()
-        self._roi_manager.raise_()
-        self._roi_manager.activateWindow()
+        self.roi_side_panel.setVisible(True)
+
+    def _close_roi_side_panel(self) -> None:
+        """Close the ROI side panel and reset the image viewer's draw mode to idle.
+
+        Called by the ✕ button and by the toggle-close path so that the ghost
+        bounding-box cursor preview stops rendering as soon as the panel closes.
+        """
+        if self._roi_manager is not None:
+            self._roi_manager._clear_multi_add_markers()  # sets draw mode → idle
+        self.roi_side_panel.setVisible(False)
+
+    def _on_roi_panel_confirm(self) -> None:
+        """Embedded-panel version of ROI confirm.
+
+        Replaces MultiROIManagerWidget._on_confirm so that accept() is never
+        called on the embedded widget (which would hide it and break re-opens).
+        Instead we clean up multi-add state, refresh ROI overlays, then close
+        the side panel — leaving _roi_manager itself visible inside the scroll.
+        """
+        if self._roi_manager is not None:
+            self._roi_manager._clear_multi_add_markers()
+        self._on_multi_rois_changed()
+        self.roi_side_panel.setVisible(False)
 
     def _capture_roi_ref_base(self) -> None:
         """Record the base-image label currently shown in the base viewer."""
@@ -8065,6 +8366,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_roi_status_label()
         # Keep the ref-base up to date when the user adds/modifies ROIs
         self._capture_roi_ref_base()
+        self._update_step_states()  # P0-2: update Step 3 ✓ indicator
 
     def _on_roi_view_toggled(self, _checked: bool) -> None:
         self._apply_roi_visibility()
