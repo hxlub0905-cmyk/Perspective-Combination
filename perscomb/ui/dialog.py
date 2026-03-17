@@ -3871,6 +3871,25 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
         le_labels      = [lbl.replace('_compare', '') for lbl in compare_labels]
         xs             = list(range(len(compare_labels)))
 
+        # ── Compute base SNR (same formula as SNR Pair Matrix, on raw base) ──
+        import numpy as _np
+        base_snr: Optional[float] = None
+        target_roi_b  = roi_full.roi_set.get_target()
+        ref_rois_b    = roi_full.roi_set.get_references()
+        if target_roi_b and ref_rois_b and base_layer:
+            t_stat = base_layer.roi_stats.get(target_roi_b.id)
+            ref_stats_b = [base_layer.roi_stats[r.id]
+                           for r in ref_rois_b if r.id in base_layer.roi_stats]
+            if t_stat and ref_stats_b:
+                ref_means_b = _np.array([rs.mean for rs in ref_stats_b], dtype=_np.float32)
+                mu_t_b  = float(t_stat.mean)
+                mu_r_b  = float(_np.mean(ref_means_b))
+                if len(ref_means_b) >= 2:
+                    sigma_b = float(_np.std(ref_means_b))
+                else:
+                    sigma_b = float(ref_stats_b[0].std)
+                base_snr = max(0.0, (mu_t_b - mu_r_b) / (sigma_b + 1e-7)) if sigma_b > 1e-7 else 0.0
+
         n_rois = len(rois)
         NCOLS  = min(n_rois, 3)
         NROWS  = (n_rois + NCOLS - 1) // NCOLS
@@ -3937,6 +3956,17 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
                 type_col = '#F87171' if roi.roi_type == 'target' else '#60A5FA'
                 ax.set_ylabel("Mean (norm)", color=type_col, fontsize=7, labelpad=3)
 
+                # Annotate base SNR on target ROI subplot
+                if roi.roi_type == 'target' and base_snr is not None:
+                    snr_txt = f"Base SNR: {base_snr:.3f}"
+                    ax.annotate(snr_txt,
+                                xy=(0.98, 0.97), xycoords='axes fraction',
+                                ha='right', va='top', fontsize=7,
+                                color='#FCD34D',
+                                bbox=dict(boxstyle='round,pad=0.25',
+                                          facecolor='#1F2937', edgecolor='#FCD34D',
+                                          linewidth=0.8, alpha=0.85))
+
             # Shared legend in first subplot
             if axes:
                 axes[0].legend(facecolor=BG_FIG, labelcolor=COL_TXT,
@@ -3957,9 +3987,14 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
 
             sl = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(sl, C_BG)
+            snr_subtitle = (f"  |  Base SNR = {base_snr:.3f}" if base_snr is not None else "")
             _add_text(sl, f"Per-ROI Intensity Profile — Base: {base_lbl}{suffix}",
-                      Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.44),
+                      Inches(0.3), Inches(0.08), Inches(9.5), Inches(0.44),
                       size=15, bold=True, color=C_PRIMARY)
+            if snr_subtitle:
+                _add_text(sl, f"Base SNR = {base_snr:.3f}",
+                          Inches(9.9), Inches(0.10), Inches(3.2), Inches(0.40),
+                          size=13, bold=True, color=C_TEXT_SEC)
             # Place chart immediately below title (0.54") to minimise gap
             sl.shapes.add_picture(buf, Inches(0.2), Inches(0.54), width=Inches(12.9))
 
@@ -4282,6 +4317,254 @@ def _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
     _MplAgg(fig_diff).print_figure(buf_diff, format='png', dpi=130, facecolor=GRID_CLR_DIFF)
     buf_diff.seek(0)
     sl.shapes.add_picture(buf_diff, Inches(6.8), Inches(0.6), width=Inches(6.35))
+
+
+def _ppt_add_base_snr_gallery_slide(prs, roi_full_results,
+                                     _fill_bg, _add_text,
+                                     C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                     Inches, Pt):
+    """Gallery slide showing Base SNR for each base image.
+
+    Computes SNR from the raw base image layer using the same formula as the
+    SNR Pair Matrix:  SNR = (μ_target − μ_ref) / σ_ref
+    where μ_ref / σ_ref come from the reference ROIs in the base layer.
+    """
+    from io import BytesIO
+    import numpy as _np
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+
+    BG_FIG = '#1F2937'
+    BG_AX  = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_GRD = '#374151'
+    COL_SPL = '#4B5563'
+    _EPS = 1e-7
+
+    # Build base SNR table: {base_lbl: snr_value | None}
+    base_snr_map = {}
+    for base_lbl, roi_full in roi_full_results.items():
+        base_layer   = roi_full.get_base_layer()
+        target_roi   = roi_full.roi_set.get_target()
+        ref_rois     = roi_full.roi_set.get_references()
+        snr_val      = None
+        if target_roi and ref_rois and base_layer:
+            t_stat = base_layer.roi_stats.get(target_roi.id)
+            ref_stats = [base_layer.roi_stats[r.id]
+                         for r in ref_rois if r.id in base_layer.roi_stats]
+            if t_stat and ref_stats:
+                ref_means = _np.array([rs.mean for rs in ref_stats], dtype=_np.float32)
+                mu_t  = float(t_stat.mean)
+                mu_r  = float(_np.mean(ref_means))
+                sigma = float(_np.std(ref_means)) if len(ref_means) >= 2 else float(ref_stats[0].std)
+                snr_val = max(0.0, (mu_t - mu_r) / sigma) if sigma > _EPS else 0.0
+        base_snr_map[base_lbl] = snr_val
+
+    if not base_snr_map:
+        return
+
+    labels  = list(base_snr_map.keys())
+    values  = [base_snr_map[l] for l in labels]
+    n       = len(labels)
+
+    # Bar colors: green (≥2), amber (≥1), red (<1)
+    SNR_OK, SNR_GOOD = 1.0, 2.0
+    bar_colors = []
+    for v in values:
+        if v is None:
+            bar_colors.append('#6B7280')
+        elif v >= SNR_GOOD:
+            bar_colors.append('#34D399')
+        elif v >= SNR_OK:
+            bar_colors.append('#FBBF24')
+        else:
+            bar_colors.append('#F87171')
+
+    fw = max(5.0, n * 1.2 + 2.0)
+    fig = _MplFig(figsize=(fw, 4.0), dpi=130)
+    fig.patch.set_facecolor(BG_FIG)
+    fig.subplots_adjust(left=0.14, right=0.96, top=0.88, bottom=0.22)
+    ax = fig.add_subplot(111)
+    ax.set_facecolor(BG_AX)
+    ax.tick_params(colors=COL_TXT, labelsize=8)
+    for side in ('bottom', 'left'):
+        ax.spines[side].set_color(COL_SPL)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, axis='y', color=COL_GRD, linewidth=0.5, linestyle='--')
+
+    xs_bar = list(range(n))
+    bars = ax.bar(xs_bar, [v if v is not None else 0.0 for v in values],
+                  color=bar_colors, width=0.6, zorder=3)
+
+    # Value labels above bars
+    for xi, v in zip(xs_bar, values):
+        if v is not None:
+            ax.text(xi, v + 0.04, f"{v:.3f}", ha='center', va='bottom',
+                    color=COL_TXT, fontsize=8, fontweight='bold')
+
+    # Threshold lines
+    y_max = max((v for v in values if v is not None), default=SNR_GOOD)
+    y_max = max(y_max, SNR_GOOD) * 1.15
+    ax.set_ylim(0, y_max)
+    ax.axhline(SNR_OK,   color='#FBBF24', linewidth=1.2, linestyle='--', alpha=0.8, label=f'OK (≥{SNR_OK})')
+    ax.axhline(SNR_GOOD, color='#34D399', linewidth=1.2, linestyle='--', alpha=0.8, label=f'Good (≥{SNR_GOOD})')
+    ax.legend(facecolor=BG_FIG, labelcolor=COL_TXT, fontsize=8, loc='upper right')
+
+    ax.set_xticks(xs_bar)
+    ax.set_xticklabels(labels, rotation=30, ha='right', color=COL_TXT, fontsize=8)
+    ax.set_ylabel("Base SNR", color=COL_TXT, fontsize=9, labelpad=4)
+    ax.set_title("Base Image SNR (target vs. reference ROIs)", color=COL_TXT,
+                 fontsize=10, fontweight='bold', pad=6)
+
+    buf = BytesIO()
+    _MplAgg(fig).print_figure(buf, format='png', dpi=130, facecolor=BG_FIG)
+    buf.seek(0)
+
+    sl = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_bg(sl, C_BG)
+    _add_text(sl, "Image Gallery — Base SNR Summary",
+              Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.44),
+              size=16, bold=True, color=C_PRIMARY)
+    sl.shapes.add_picture(buf, Inches(1.0), Inches(0.60), width=Inches(11.3))
+
+
+def _ppt_add_diff_roi_position_slides(prs, roi_full_results, roi_all_results,
+                                       _fill_bg, _add_text,
+                                       C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                       Inches, Pt):
+    """Diff Map + ROI Position slides — diff image with ROI boxes overlaid.
+
+    For each base label, shows every diff image (one per compare LE) with the
+    target/reference ROI rectangles drawn on it, mirroring the layout of the
+    Base ROI Position Map slides.
+    """
+    from io import BytesIO
+    import numpy as _np
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    FONT    = cv2.FONT_HERSHEY_SIMPLEX
+    TGT_COL = (60,  80, 220)    # BGR blue-red (target)
+    REF_COL = (200, 200,  40)   # BGR cyan-ish (reference)
+
+    # Group roi_all_results by base label
+    from collections import defaultdict as _dd
+    results_by_base = _dd(list)
+    for r in roi_all_results:
+        results_by_base[r.base_label].append(r)
+
+    for base_lbl, roi_full in roi_full_results.items():
+        rois = roi_full.roi_set.rois
+        if not rois:
+            continue
+        pair_results = results_by_base.get(base_lbl, [])
+        if not pair_results:
+            continue
+
+        for r in pair_results:
+            diff_img = getattr(r, 'result_image', None)
+            if diff_img is None:
+                continue
+
+            # Convert grayscale diff to BGR for coloured ROI drawing
+            if len(diff_img.shape) == 2:
+                vis = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
+            else:
+                vis = diff_img.copy()
+
+            h, w = vis.shape[:2]
+
+            # Draw ROI boxes
+            for roi in rois:
+                nx, ny, nw, nh = roi.norm_rect
+                rx  = int(nx * w)
+                ry  = int(ny * h)
+                rpw = max(1, int(nw * w))
+                rph = max(1, int(nh * h))
+                col       = TGT_COL if roi.roi_type == 'target' else REF_COL
+                thickness = 3       if roi.roi_type == 'target' else 2
+                cv2.rectangle(vis, (rx, ry), (rx + rpw, ry + rph), col, thickness)
+                cv2.rectangle(vis, (rx + 1, ry + 1),
+                              (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
+                short_lbl  = roi.label.split('_')[-1].lstrip('0') or '0'
+                font_scale = max(0.35, min(0.65, w / 1200))
+                tx = rx + 3
+                ty = max(ry - 4, 10)
+                cv2.putText(vis, short_lbl, (tx + 1, ty + 1), FONT,
+                            font_scale, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(vis, short_lbl, (tx, ty), FONT,
+                            font_scale, col, 1, cv2.LINE_AA)
+
+            # Encode to PNG
+            try:
+                from PIL import Image as _PilImg
+                pil = _PilImg.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+                buf = BytesIO()
+                pil.save(buf, format='PNG')
+                buf.seek(0)
+            except ImportError:
+                ok, enc = cv2.imencode('.png', vis)
+                if not ok:
+                    continue
+                buf = BytesIO(enc.tobytes())
+
+            # Slide layout
+            sl = prs.slides.add_slide(prs.slide_layouts[6])
+            _fill_bg(sl, C_BG)
+            _add_text(sl,
+                      f"Diff Map + ROI — Base: {base_lbl}  ↔  Compare: {r.compare_label}",
+                      Inches(0.3), Inches(0.08), Inches(10.5), Inches(0.46),
+                      size=14, bold=True, color=C_PRIMARY)
+
+            AVAIL_W = Inches(10.3)
+            AVAIL_H = Inches(6.78)
+            nat_h, nat_w = vis.shape[:2]
+            if nat_w == 0 or nat_h == 0:
+                disp_w, disp_h = AVAIL_W, AVAIL_H
+            elif (nat_w / nat_h) >= (AVAIL_W / AVAIL_H):
+                disp_w = AVAIL_W
+                disp_h = int(AVAIL_W * nat_h / nat_w)
+            else:
+                disp_h = AVAIL_H
+                disp_w = int(AVAIL_H * nat_w / nat_h)
+            img_y = Inches(0.62) + (AVAIL_H - disp_h) // 2
+            sl.shapes.add_picture(buf, Inches(0.2), img_y, width=disp_w, height=disp_h)
+
+            # Legend (right side)
+            LEG_X = Inches(11.0)
+            LEG_Y = Inches(1.5)
+
+            def _legend_row_d(y_off, color_rgb, label, thick_str):
+                box = sl.shapes.add_shape(
+                    1, LEG_X, LEG_Y + y_off, Inches(0.28), Inches(0.22))
+                box.fill.solid()
+                box.fill.fore_color.rgb = color_rgb
+                box.line.fill.background()
+                _add_text(sl, f"{label}  ({thick_str})",
+                          LEG_X + Inches(0.34), LEG_Y + y_off,
+                          Inches(2.0), Inches(0.28),
+                          size=9, color=C_TEXT)
+
+            _add_text(sl, "Legend", LEG_X, LEG_Y - Inches(0.32),
+                      Inches(2.2), Inches(0.30),
+                      size=10, bold=True, color=C_TEXT_SEC)
+            _legend_row_d(Inches(0.00),
+                          RGBColor(220, 80, 60),  "Target",    "thick border")
+            _legend_row_d(Inches(0.35),
+                          RGBColor(40, 200, 200), "Reference", "thin border")
+
+            n_tgt = sum(1 for ro in rois if ro.roi_type == 'target')
+            n_ref = sum(1 for ro in rois if ro.roi_type == 'reference')
+            _add_text(sl,
+                      f"Total: {len(rois)} ROIs\n"
+                      f"  Target: {n_tgt}\n"
+                      f"  Reference: {n_ref}",
+                      LEG_X, LEG_Y + Inches(0.8),
+                      Inches(2.2), Inches(0.85),
+                      size=9, color=C_TEXT_SEC)
 
 
 def _ppt_add_condition_gallery(prs, result_rows, crop_size,
@@ -8145,6 +8428,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                                          C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
                                          Inches, Pt)
 
+            # ── Diff Map + ROI Position slides ───────────────────────────────
+            _ppt_add_diff_roi_position_slides(prs, roi_full_results, roi_all_results,
+                                              _fill_bg, _add_text,
+                                              C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                              Inches, Pt)
+
             # ── Per-ROI Intensity Profile (line chart per base) ──────────────
             _ppt_add_roi_profile_slides(prs, roi_full_results,
                                         _fill_bg, _add_text,
@@ -8156,6 +8445,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                                    _fill_bg, _add_text,
                                    C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
                                    Inches, Pt)
+
+        # ── Image Gallery — Base SNR Summary ─────────────────────────────────
+        if roi_full_results:
+            _ppt_add_base_snr_gallery_slide(prs, roi_full_results,
+                                            _fill_bg, _add_text,
+                                            C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                            Inches, Pt)
 
         ppt_path = str(Path(out_dir) / "perspective_report.pptx")
         prs.save(ppt_path)
