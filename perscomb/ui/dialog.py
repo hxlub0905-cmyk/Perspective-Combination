@@ -2558,9 +2558,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         self._all_results = all_results
         self._base_labels = list(roi_results.keys())
 
-        self.setWindowTitle("ROI Intensity Profiles")
+        self.setWindowTitle("ROI Intensity Analysis  —  ROI Details")
         self.setWindowFlags(self.windowFlags() | Qt.Window)
-        self.resize(860, 580)
+        self.resize(1040, 680)
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -2572,27 +2572,193 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         """True when results come from auto-pair mode (multiple distinct base images)."""
         return len(set(r.base_label for r in self._all_results)) > 1
 
+    # ------------------------------------------------------------------
+    # Dark-theme stylesheet applied to the entire dialog
+    # ------------------------------------------------------------------
+    _DIALOG_QSS = """
+        QDialog, QWidget#roi_dialog_root {
+            background-color: #111827;
+            color: #D1D5DB;
+        }
+        QTabWidget::pane {
+            border: 1px solid #374151;
+            background-color: #1F2937;
+            border-radius: 0px 4px 4px 4px;
+        }
+        QTabBar::tab {
+            background-color: #1F2937;
+            color: #9CA3AF;
+            padding: 6px 18px;
+            border: 1px solid #374151;
+            border-bottom: none;
+            border-top-left-radius: 5px;
+            border-top-right-radius: 5px;
+            margin-right: 2px;
+            font-size: 11px;
+        }
+        QTabBar::tab:selected {
+            background-color: #374151;
+            color: #F9FAFB;
+            border-bottom: 2px solid #3B82F6;
+            font-weight: bold;
+        }
+        QTabBar::tab:hover:!selected {
+            background-color: #2D3748;
+            color: #D1D5DB;
+        }
+        QTableWidget {
+            background-color: #1F2937;
+            alternate-background-color: #243044;
+            color: #D1D5DB;
+            gridline-color: #374151;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            selection-background-color: #2563EB;
+            selection-color: #F9FAFB;
+            font-size: 11px;
+        }
+        QHeaderView::section {
+            background-color: #374151;
+            color: #9CA3AF;
+            padding: 5px 8px;
+            border: none;
+            border-right: 1px solid #4B5563;
+            border-bottom: 1px solid #4B5563;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        QHeaderView::section:first {
+            border-top-left-radius: 4px;
+        }
+        QComboBox {
+            background-color: #374151;
+            color: #D1D5DB;
+            border: 1px solid #4B5563;
+            border-radius: 4px;
+            padding: 3px 10px;
+            min-height: 24px;
+            font-size: 11px;
+        }
+        QComboBox::drop-down {
+            border: none;
+            width: 22px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #374151;
+            color: #D1D5DB;
+            selection-background-color: #2563EB;
+            border: 1px solid #4B5563;
+        }
+        QPushButton {
+            background-color: #374151;
+            color: #D1D5DB;
+            border: 1px solid #4B5563;
+            border-radius: 5px;
+            padding: 5px 18px;
+            min-height: 26px;
+            font-size: 11px;
+        }
+        QPushButton:hover {
+            background-color: #4B5563;
+            color: #F9FAFB;
+            border-color: #6B7280;
+        }
+        QPushButton:pressed {
+            background-color: #2563EB;
+            color: #F9FAFB;
+            border-color: #1D4ED8;
+        }
+        QLabel {
+            color: #9CA3AF;
+            font-size: 11px;
+        }
+        QScrollBar:vertical {
+            background-color: #1F2937;
+            width: 10px;
+            margin: 0;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #4B5563;
+            border-radius: 5px;
+            min-height: 24px;
+        }
+        QScrollBar::handle:vertical:hover { background-color: #6B7280; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QScrollBar:horizontal {
+            background-color: #1F2937;
+            height: 10px;
+            margin: 0;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #4B5563;
+            border-radius: 5px;
+            min-width: 24px;
+        }
+        QScrollBar::handle:horizontal:hover { background-color: #6B7280; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+    """
+
     def _build_ui(self) -> None:
+        self.setStyleSheet(self._DIALOG_QSS)
+
         root = QtWidgets.QVBoxLayout(self)
-        root.setSpacing(8)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(0)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        # ── Header banner ─────────────────────────────────────────────
+        header = QtWidgets.QWidget()
+        header.setFixedHeight(44)
+        header.setStyleSheet(
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #1E3A5F, stop:1 #0F172A);"
+            "border-bottom: 1px solid #3B82F6;"
+        )
+        h_lay = QtWidgets.QHBoxLayout(header)
+        h_lay.setContentsMargins(16, 0, 16, 0)
+        lbl_title = QtWidgets.QLabel("ROI Intensity Analysis")
+        lbl_title.setStyleSheet(
+            "color: #F9FAFB; font-size: 15px; font-weight: bold; background: transparent;"
+        )
+        n_bases = len(self._base_labels)
+        n_pairs = len(self._all_results)
+        lbl_info = QtWidgets.QLabel(
+            f"  {n_bases} base image{'s' if n_bases != 1 else ''}  ·  {n_pairs} pair{'s' if n_pairs != 1 else ''}"
+        )
+        lbl_info.setStyleSheet(
+            "color: #60A5FA; font-size: 11px; background: transparent;"
+        )
+        h_lay.addWidget(lbl_title)
+        h_lay.addWidget(lbl_info)
+        h_lay.addStretch()
+        root.addWidget(header)
+
+        # ── Tab area ──────────────────────────────────────────────────
+        inner = QtWidgets.QWidget()
+        inner_lay = QtWidgets.QVBoxLayout(inner)
+        inner_lay.setSpacing(8)
+        inner_lay.setContentsMargins(10, 8, 10, 8)
 
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self._build_summary_tab(), "LE Summary")
+        tabs.addTab(self._build_summary_tab(),    "📋  Pair Summary")
         if self._is_auto_pair:
-            tabs.addTab(self._build_matrix_tab(), "Pair Matrix")
-            tabs.addTab(self._build_diff_matrix_tab(), "Diff Matrix")
-        tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
-        tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
-        tabs.addTab(self._build_table_tab(), "Raw Table")
-        root.addWidget(tabs, stretch=1)
+            tabs.addTab(self._build_matrix_tab(),      "🔢  SNR Pair Matrix")
+            tabs.addTab(self._build_diff_matrix_tab(), "🖼  Diff Image Matrix")
+        tabs.addTab(self._build_snr_chart_tab(), "📊  SNR Bar Chart")
+        tabs.addTab(self._build_mean_tab(),      "📈  Intensity Profile")
+        tabs.addTab(self._build_table_tab(),     "🗂  Raw Stats")
+        inner_lay.addWidget(tabs, stretch=1)
 
         bottom = QtWidgets.QHBoxLayout()
-        btn_close = QtWidgets.QPushButton("Close")
+        btn_close = QtWidgets.QPushButton("✕  Close")
+        btn_close.setFixedWidth(110)
         btn_close.clicked.connect(self.close)
         bottom.addStretch()
         bottom.addWidget(btn_close)
-        root.addLayout(bottom)
+        inner_lay.addLayout(bottom)
+
+        root.addWidget(inner, stretch=1)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -2626,6 +2792,35 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
     def _results_for_base(self, base_label: str) -> List[SinglePairResult]:
         return [r for r in self._all_results if r.base_label == base_label]
+
+    def _compute_base_snr(self, base_label: str) -> Optional[float]:
+        """Return Base SNR for *base_label* (same formula as SNR Pair Matrix on raw base image).
+
+        SNR = max(0, (μ_target − μ_ref) / σ_ref)
+        where μ_ref = mean of reference-ROI means, σ_ref = std of those means (≥2 refs)
+        or the single reference ROI's pixel std (1 ref).
+        """
+        import numpy as _np
+        roi_full = self._roi_results.get(base_label)
+        if roi_full is None:
+            return None
+        base_layer = roi_full.get_base_layer()
+        target_roi = roi_full.roi_set.get_target()
+        ref_rois   = roi_full.roi_set.get_references()
+        if not (target_roi and ref_rois and base_layer):
+            return None
+        t_stat = base_layer.roi_stats.get(target_roi.id)
+        ref_stats = [base_layer.roi_stats[r.id]
+                     for r in ref_rois if r.id in base_layer.roi_stats]
+        if not (t_stat and ref_stats):
+            return None
+        ref_means = _np.array([rs.mean for rs in ref_stats], dtype=_np.float32)
+        mu_t  = float(t_stat.mean)
+        mu_r  = float(_np.mean(ref_means))
+        sigma = float(_np.std(ref_means)) if len(ref_means) >= 2 else float(ref_stats[0].std)
+        if sigma <= 1e-7:
+            return 0.0
+        return max(0.0, (mu_t - mu_r) / sigma)
 
     def _save_figure(self, fig, default_stem: str = "roi_chart") -> None:
         """Open a save dialog and write *fig* to PNG / PDF / SVG."""
@@ -2672,10 +2867,11 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         # Column indices (keep in sync with _SUMMARY_HEADERS below)
         self._SUMMARY_HEADERS = [
             'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
-            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR',
+            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR', 'Base SNR',
         ]
-        self._COL_SNR    = self._SUMMARY_HEADERS.index('SNR')
-        self._COL_STATUS = self._SUMMARY_HEADERS.index('Align Status')
+        self._COL_SNR      = self._SUMMARY_HEADERS.index('SNR')
+        self._COL_BASE_SNR = self._SUMMARY_HEADERS.index('Base SNR')
+        self._COL_STATUS   = self._SUMMARY_HEADERS.index('Align Status')
 
         self._summary_table = QtWidgets.QTableWidget(0, len(self._SUMMARY_HEADERS))
         self._summary_table.setHorizontalHeaderLabels(self._SUMMARY_HEADERS)
@@ -2697,6 +2893,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
     def _get_summary_data(self, base_filter: Optional[str] = None) -> List[dict]:
         """Return structured data dicts for each pair (used by table and CSV)."""
+        # Pre-compute Base SNR once per base label to avoid repeated work.
+        _base_snr_cache: Dict[str, Optional[float]] = {}
+
         data = []
         for r in self._all_results:
             if base_filter is not None and r.base_label != base_filter:
@@ -2707,6 +2906,12 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             align_score_v = r.alignment.final_score if r.alignment else None
             alpha_str     = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
             align_str     = f"{align_score_v:.1f}" if align_score_v is not None else "—"
+
+            # Base SNR (same for all pairs sharing the same base)
+            if r.base_label not in _base_snr_cache:
+                _base_snr_cache[r.base_label] = self._compute_base_snr(r.base_label)
+            base_snr_v = _base_snr_cache[r.base_label]
+            base_snr_s = f"{base_snr_v:.4f}" if base_snr_v is not None else "—"
 
             if snr_entry is not None:
                 # Scale from [0,1] normalized range to GLV (0-255) for display.
@@ -2728,6 +2933,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'delta_v':      delta_v,
                     'snr':          f"{snr_entry.snr:.4f}",
                     'snr_v':        snr_entry.snr,
+                    'base_snr':     base_snr_s,
+                    'base_snr_v':   base_snr_v,
                 })
             else:
                 data.append({
@@ -2737,6 +2944,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'mu_t': '—', 'mu_r': '—', 'sigma_r': '—',
                     'delta': '—', 'delta_v': None,
                     'snr': '—',  'snr_v': None,
+                    'base_snr': base_snr_s, 'base_snr_v': base_snr_v,
                 })
         return data
 
@@ -2744,7 +2952,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         """Flat string rows in SUMMARY_HEADERS column order (for CSV export)."""
         return [
             [d['base'], d['compare'], d['align_status'], d['alpha'], d['align_score'],
-             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr']]
+             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr'], d['base_snr']]
             for d in self._get_summary_data(base_filter)
         ]
 
@@ -2798,6 +3006,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 self._make_sort_item(d['sigma_r']),
                 self._make_sort_item(d['delta'], d['delta_v']),
                 self._make_sort_item(d['snr'], d['snr_v']),
+                self._make_sort_item(d['base_snr'], d['base_snr_v']),
             ]
 
             # Color: Align Status cell
@@ -2814,6 +3023,12 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 items[self._COL_SNR].setBackground(snr_bg)
                 items[self._COL_SNR].setForeground(QtGui.QColor('#D1D5DB'))
 
+            # Color: Base SNR cell
+            base_snr_bg = self._snr_bg(d['base_snr_v'])
+            if base_snr_bg is not None:
+                items[self._COL_BASE_SNR].setBackground(base_snr_bg)
+                items[self._COL_BASE_SNR].setForeground(QtGui.QColor('#D1D5DB'))
+
             for col, item in enumerate(items):
                 self._summary_table.setItem(row_idx, col, item)
 
@@ -2828,7 +3043,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             return
         headers = [
             'base', 'compare_le', 'align_status', 'roi_match_alpha', 'align_score',
-            'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv', 'snr',
+            'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv',
+            'snr', 'base_snr',
         ]
         try:
             with open(path, 'w', newline='', encoding='utf-8') as f:
