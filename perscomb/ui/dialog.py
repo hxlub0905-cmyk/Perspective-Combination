@@ -2558,9 +2558,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         self._all_results = all_results
         self._base_labels = list(roi_results.keys())
 
-        self.setWindowTitle("ROI Intensity Profiles")
+        self.setWindowTitle("ROI Intensity Analysis  —  ROI Details")
         self.setWindowFlags(self.windowFlags() | Qt.Window)
-        self.resize(860, 580)
+        self.resize(1040, 680)
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -2572,27 +2572,197 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         """True when results come from auto-pair mode (multiple distinct base images)."""
         return len(set(r.base_label for r in self._all_results)) > 1
 
+    # ------------------------------------------------------------------
+    # Light-theme stylesheet (matches main UI DIALOG_STYLE palette)
+    # ------------------------------------------------------------------
+    _DIALOG_QSS = """
+        QDialog, QWidget {
+            background-color: #F3F4F6;
+            color: #111827;
+            font-family: 'Liberation Sans', Arial, 'Helvetica Neue', 'Segoe UI';
+            font-size: 11px;
+        }
+        QTabWidget::pane {
+            border: 1px solid #E5E7EB;
+            background-color: #FFFFFF;
+            border-radius: 0px 4px 4px 4px;
+        }
+        QTabBar::tab {
+            background-color: #F9FAFB;
+            color: #6B7280;
+            padding: 6px 16px;
+            border: 1px solid #E5E7EB;
+            border-bottom: none;
+            border-top-left-radius: 5px;
+            border-top-right-radius: 5px;
+            margin-right: 2px;
+            font-size: 11px;
+        }
+        QTabBar::tab:selected {
+            background-color: #FFFFFF;
+            color: #111827;
+            border-bottom: 2px solid #F59E0B;
+            font-weight: bold;
+        }
+        QTabBar::tab:hover:!selected {
+            background-color: #FFF8ED;
+            color: #374151;
+        }
+        QTableWidget {
+            background-color: #FFFFFF;
+            alternate-background-color: #F9FAFB;
+            color: #111827;
+            gridline-color: #E5E7EB;
+            border: 1px solid #E5E7EB;
+            border-radius: 4px;
+            selection-background-color: #FEF3C7;
+            selection-color: #111827;
+            font-size: 11px;
+        }
+        QHeaderView::section {
+            background-color: #F3F4F6;
+            color: #6B7280;
+            padding: 5px 8px;
+            border: none;
+            border-right: 1px solid #E5E7EB;
+            border-bottom: 1px solid #D1D5DB;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        QComboBox {
+            background-color: #FFFFFF;
+            color: #111827;
+            border: 1px solid #D1D5DB;
+            border-radius: 4px;
+            padding: 3px 10px;
+            min-height: 24px;
+            font-size: 11px;
+        }
+        QComboBox::drop-down {
+            border: none;
+            width: 20px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #FFFFFF;
+            color: #111827;
+            selection-background-color: #FEF3C7;
+            border: 1px solid #D1D5DB;
+        }
+        QPushButton {
+            background-color: #FFFFFF;
+            color: #374151;
+            border: 1px solid #D1D5DB;
+            border-radius: 5px;
+            padding: 5px 16px;
+            min-height: 26px;
+            font-size: 11px;
+        }
+        QPushButton:hover {
+            background-color: #FFF8ED;
+            color: #111827;
+            border-color: #F59E0B;
+        }
+        QPushButton:pressed {
+            background-color: #FDE68A;
+            border-color: #D97706;
+        }
+        QLabel {
+            color: #6B7280;
+            font-size: 11px;
+        }
+        QScrollBar:vertical {
+            background-color: #F3F4F6;
+            width: 10px;
+            margin: 0;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #D1D5DB;
+            border-radius: 5px;
+            min-height: 24px;
+        }
+        QScrollBar::handle:vertical:hover { background-color: #9CA3AF; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QScrollBar:horizontal {
+            background-color: #F3F4F6;
+            height: 10px;
+            margin: 0;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #D1D5DB;
+            border-radius: 5px;
+            min-width: 24px;
+        }
+        QScrollBar::handle:horizontal:hover { background-color: #9CA3AF; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+    """
+
     def _build_ui(self) -> None:
+        self.setStyleSheet(self._DIALOG_QSS)
+
         root = QtWidgets.QVBoxLayout(self)
-        root.setSpacing(8)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(0)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        # ── Header banner ─────────────────────────────────────────────
+        header = QtWidgets.QWidget()
+        header.setFixedHeight(44)
+        header.setStyleSheet(
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #FEF3C7, stop:1 #FFF8ED);"
+            "border-bottom: 2px solid #F59E0B;"
+        )
+        h_lay = QtWidgets.QHBoxLayout(header)
+        h_lay.setContentsMargins(16, 0, 16, 0)
+        lbl_title = QtWidgets.QLabel("ROI Intensity Analysis")
+        lbl_title.setStyleSheet(
+            "color: #111827; font-size: 15px; font-weight: bold; background: transparent;"
+        )
+        n_bases = len(self._base_labels)
+        n_pairs = len(self._all_results)
+        lbl_info = QtWidgets.QLabel(
+            f"  {n_bases} base image{'s' if n_bases != 1 else ''}  ·  {n_pairs} pair{'s' if n_pairs != 1 else ''}"
+        )
+        lbl_info.setStyleSheet(
+            "color: #92400E; font-size: 11px; background: transparent;"
+        )
+        h_lay.addWidget(lbl_title)
+        h_lay.addWidget(lbl_info)
+        h_lay.addStretch()
+        root.addWidget(header)
+
+        # ── Tab area ──────────────────────────────────────────────────
+        inner = QtWidgets.QWidget()
+        inner_lay = QtWidgets.QVBoxLayout(inner)
+        inner_lay.setSpacing(8)
+        inner_lay.setContentsMargins(10, 8, 10, 8)
 
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self._build_summary_tab(), "LE Summary")
+        tabs.addTab(self._build_summary_tab(),    "📋  Pair Summary")
         if self._is_auto_pair:
-            tabs.addTab(self._build_matrix_tab(), "Pair Matrix")
-            tabs.addTab(self._build_diff_matrix_tab(), "Diff Matrix")
-        tabs.addTab(self._build_snr_chart_tab(), "SNR Chart")
-        tabs.addTab(self._build_mean_tab(), "Per-ROI Mean")
-        tabs.addTab(self._build_table_tab(), "Raw Table")
-        root.addWidget(tabs, stretch=1)
+            tabs.addTab(self._build_matrix_tab(),      "🔢  SNR Pair Matrix")
+            tabs.addTab(self._build_diff_matrix_tab(), "🖼  Diff Image Matrix")
+        tabs.addTab(self._build_snr_chart_tab(), "📊  SNR Bar Chart")
+        tabs.addTab(self._build_mean_tab(),      "📈  Intensity Profile")
+        tabs.addTab(self._build_table_tab(),     "🗂  Raw Stats")
+        inner_lay.addWidget(tabs, stretch=1)
 
         bottom = QtWidgets.QHBoxLayout()
         btn_close = QtWidgets.QPushButton("Close")
+        btn_close.setFixedWidth(100)
+        btn_close.setStyleSheet(
+            "QPushButton { background:#FFFFFF; color:#374151; border:1px solid #D1D5DB;"
+            " border-radius:5px; padding:5px 16px; font-weight:bold; }"
+            "QPushButton:hover { background:#FFF8ED; border-color:#F59E0B; color:#92400E; }"
+            "QPushButton:pressed { background:#FDE68A; }"
+        )
         btn_close.clicked.connect(self.close)
         bottom.addStretch()
         bottom.addWidget(btn_close)
-        root.addLayout(bottom)
+        inner_lay.addLayout(bottom)
+
+        root.addWidget(inner, stretch=1)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -2626,6 +2796,35 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
     def _results_for_base(self, base_label: str) -> List[SinglePairResult]:
         return [r for r in self._all_results if r.base_label == base_label]
+
+    def _compute_base_snr(self, base_label: str) -> Optional[float]:
+        """Return Base SNR for *base_label* (same formula as SNR Pair Matrix on raw base image).
+
+        SNR = max(0, (μ_target − μ_ref) / σ_ref)
+        where μ_ref = mean of reference-ROI means, σ_ref = std of those means (≥2 refs)
+        or the single reference ROI's pixel std (1 ref).
+        """
+        import numpy as _np
+        roi_full = self._roi_results.get(base_label)
+        if roi_full is None:
+            return None
+        base_layer = roi_full.get_base_layer()
+        target_roi = roi_full.roi_set.get_target()
+        ref_rois   = roi_full.roi_set.get_references()
+        if not (target_roi and ref_rois and base_layer):
+            return None
+        t_stat = base_layer.roi_stats.get(target_roi.id)
+        ref_stats = [base_layer.roi_stats[r.id]
+                     for r in ref_rois if r.id in base_layer.roi_stats]
+        if not (t_stat and ref_stats):
+            return None
+        ref_means = _np.array([rs.mean for rs in ref_stats], dtype=_np.float32)
+        mu_t  = float(t_stat.mean)
+        mu_r  = float(_np.mean(ref_means))
+        sigma = float(_np.std(ref_means)) if len(ref_means) >= 2 else float(ref_stats[0].std)
+        if sigma <= 1e-7:
+            return 0.0
+        return max(0.0, (mu_t - mu_r) / sigma)
 
     def _save_figure(self, fig, default_stem: str = "roi_chart") -> None:
         """Open a save dialog and write *fig* to PNG / PDF / SVG."""
@@ -2672,10 +2871,11 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         # Column indices (keep in sync with _SUMMARY_HEADERS below)
         self._SUMMARY_HEADERS = [
             'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
-            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'SNR',
+            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'Pair SNR', 'Base SNR',
         ]
-        self._COL_SNR    = self._SUMMARY_HEADERS.index('SNR')
-        self._COL_STATUS = self._SUMMARY_HEADERS.index('Align Status')
+        self._COL_SNR      = self._SUMMARY_HEADERS.index('Pair SNR')
+        self._COL_BASE_SNR = self._SUMMARY_HEADERS.index('Base SNR')
+        self._COL_STATUS   = self._SUMMARY_HEADERS.index('Align Status')
 
         self._summary_table = QtWidgets.QTableWidget(0, len(self._SUMMARY_HEADERS))
         self._summary_table.setHorizontalHeaderLabels(self._SUMMARY_HEADERS)
@@ -2697,6 +2897,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
 
     def _get_summary_data(self, base_filter: Optional[str] = None) -> List[dict]:
         """Return structured data dicts for each pair (used by table and CSV)."""
+        # Pre-compute Base SNR once per base label to avoid repeated work.
+        _base_snr_cache: Dict[str, Optional[float]] = {}
+
         data = []
         for r in self._all_results:
             if base_filter is not None and r.base_label != base_filter:
@@ -2707,6 +2910,12 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             align_score_v = r.alignment.final_score if r.alignment else None
             alpha_str     = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
             align_str     = f"{align_score_v:.1f}" if align_score_v is not None else "—"
+
+            # Base SNR (same for all pairs sharing the same base)
+            if r.base_label not in _base_snr_cache:
+                _base_snr_cache[r.base_label] = self._compute_base_snr(r.base_label)
+            base_snr_v = _base_snr_cache[r.base_label]
+            base_snr_s = f"{base_snr_v:.4f}" if base_snr_v is not None else "—"
 
             if snr_entry is not None:
                 # Scale from [0,1] normalized range to GLV (0-255) for display.
@@ -2728,6 +2937,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'delta_v':      delta_v,
                     'snr':          f"{snr_entry.snr:.4f}",
                     'snr_v':        snr_entry.snr,
+                    'base_snr':     base_snr_s,
+                    'base_snr_v':   base_snr_v,
                 })
             else:
                 data.append({
@@ -2737,6 +2948,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'mu_t': '—', 'mu_r': '—', 'sigma_r': '—',
                     'delta': '—', 'delta_v': None,
                     'snr': '—',  'snr_v': None,
+                    'base_snr': base_snr_s, 'base_snr_v': base_snr_v,
                 })
         return data
 
@@ -2744,7 +2956,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         """Flat string rows in SUMMARY_HEADERS column order (for CSV export)."""
         return [
             [d['base'], d['compare'], d['align_status'], d['alpha'], d['align_score'],
-             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr']]
+             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr'], d['base_snr']]
             for d in self._get_summary_data(base_filter)
         ]
 
@@ -2798,6 +3010,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 self._make_sort_item(d['sigma_r']),
                 self._make_sort_item(d['delta'], d['delta_v']),
                 self._make_sort_item(d['snr'], d['snr_v']),
+                self._make_sort_item(d['base_snr'], d['base_snr_v']),
             ]
 
             # Color: Align Status cell
@@ -2814,6 +3027,12 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 items[self._COL_SNR].setBackground(snr_bg)
                 items[self._COL_SNR].setForeground(QtGui.QColor('#D1D5DB'))
 
+            # Color: Base SNR cell
+            base_snr_bg = self._snr_bg(d['base_snr_v'])
+            if base_snr_bg is not None:
+                items[self._COL_BASE_SNR].setBackground(base_snr_bg)
+                items[self._COL_BASE_SNR].setForeground(QtGui.QColor('#D1D5DB'))
+
             for col, item in enumerate(items):
                 self._summary_table.setItem(row_idx, col, item)
 
@@ -2828,7 +3047,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             return
         headers = [
             'base', 'compare_le', 'align_status', 'roi_match_alpha', 'align_score',
-            'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv', 'snr',
+            'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv',
+            'snr', 'base_snr',
         ]
         try:
             with open(path, 'w', newline='', encoding='utf-8') as f:
@@ -3871,6 +4091,25 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
         le_labels      = [lbl.replace('_compare', '') for lbl in compare_labels]
         xs             = list(range(len(compare_labels)))
 
+        # ── Compute base SNR (same formula as SNR Pair Matrix, on raw base) ──
+        import numpy as _np
+        base_snr: Optional[float] = None
+        target_roi_b  = roi_full.roi_set.get_target()
+        ref_rois_b    = roi_full.roi_set.get_references()
+        if target_roi_b and ref_rois_b and base_layer:
+            t_stat = base_layer.roi_stats.get(target_roi_b.id)
+            ref_stats_b = [base_layer.roi_stats[r.id]
+                           for r in ref_rois_b if r.id in base_layer.roi_stats]
+            if t_stat and ref_stats_b:
+                ref_means_b = _np.array([rs.mean for rs in ref_stats_b], dtype=_np.float32)
+                mu_t_b  = float(t_stat.mean)
+                mu_r_b  = float(_np.mean(ref_means_b))
+                if len(ref_means_b) >= 2:
+                    sigma_b = float(_np.std(ref_means_b))
+                else:
+                    sigma_b = float(ref_stats_b[0].std)
+                base_snr = max(0.0, (mu_t_b - mu_r_b) / (sigma_b + 1e-7)) if sigma_b > 1e-7 else 0.0
+
         n_rois = len(rois)
         NCOLS  = min(n_rois, 3)
         NROWS  = (n_rois + NCOLS - 1) // NCOLS
@@ -3937,6 +4176,17 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
                 type_col = '#F87171' if roi.roi_type == 'target' else '#60A5FA'
                 ax.set_ylabel("Mean (norm)", color=type_col, fontsize=7, labelpad=3)
 
+                # Annotate base SNR on target ROI subplot
+                if roi.roi_type == 'target' and base_snr is not None:
+                    snr_txt = f"Base SNR: {base_snr:.3f}"
+                    ax.annotate(snr_txt,
+                                xy=(0.98, 0.97), xycoords='axes fraction',
+                                ha='right', va='top', fontsize=7,
+                                color='#FCD34D',
+                                bbox=dict(boxstyle='round,pad=0.25',
+                                          facecolor='#1F2937', edgecolor='#FCD34D',
+                                          linewidth=0.8, alpha=0.85))
+
             # Shared legend in first subplot
             if axes:
                 axes[0].legend(facecolor=BG_FIG, labelcolor=COL_TXT,
@@ -3957,9 +4207,14 @@ def _ppt_add_roi_profile_slides(prs, roi_full_results,
 
             sl = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(sl, C_BG)
+            snr_subtitle = (f"  |  Base SNR = {base_snr:.3f}" if base_snr is not None else "")
             _add_text(sl, f"Per-ROI Intensity Profile — Base: {base_lbl}{suffix}",
-                      Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.44),
+                      Inches(0.3), Inches(0.08), Inches(9.5), Inches(0.44),
                       size=15, bold=True, color=C_PRIMARY)
+            if snr_subtitle:
+                _add_text(sl, f"Base SNR = {base_snr:.3f}",
+                          Inches(9.9), Inches(0.10), Inches(3.2), Inches(0.40),
+                          size=13, bold=True, color=C_TEXT_SEC)
             # Place chart immediately below title (0.54") to minimise gap
             sl.shapes.add_picture(buf, Inches(0.2), Inches(0.54), width=Inches(12.9))
 
@@ -4282,6 +4537,254 @@ def _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
     _MplAgg(fig_diff).print_figure(buf_diff, format='png', dpi=130, facecolor=GRID_CLR_DIFF)
     buf_diff.seek(0)
     sl.shapes.add_picture(buf_diff, Inches(6.8), Inches(0.6), width=Inches(6.35))
+
+
+def _ppt_add_base_snr_gallery_slide(prs, roi_full_results,
+                                     _fill_bg, _add_text,
+                                     C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                     Inches, Pt):
+    """Gallery slide showing Base SNR for each base image.
+
+    Computes SNR from the raw base image layer using the same formula as the
+    SNR Pair Matrix:  SNR = (μ_target − μ_ref) / σ_ref
+    where μ_ref / σ_ref come from the reference ROIs in the base layer.
+    """
+    from io import BytesIO
+    import numpy as _np
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+
+    BG_FIG = '#1F2937'
+    BG_AX  = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_GRD = '#374151'
+    COL_SPL = '#4B5563'
+    _EPS = 1e-7
+
+    # Build base SNR table: {base_lbl: snr_value | None}
+    base_snr_map = {}
+    for base_lbl, roi_full in roi_full_results.items():
+        base_layer   = roi_full.get_base_layer()
+        target_roi   = roi_full.roi_set.get_target()
+        ref_rois     = roi_full.roi_set.get_references()
+        snr_val      = None
+        if target_roi and ref_rois and base_layer:
+            t_stat = base_layer.roi_stats.get(target_roi.id)
+            ref_stats = [base_layer.roi_stats[r.id]
+                         for r in ref_rois if r.id in base_layer.roi_stats]
+            if t_stat and ref_stats:
+                ref_means = _np.array([rs.mean for rs in ref_stats], dtype=_np.float32)
+                mu_t  = float(t_stat.mean)
+                mu_r  = float(_np.mean(ref_means))
+                sigma = float(_np.std(ref_means)) if len(ref_means) >= 2 else float(ref_stats[0].std)
+                snr_val = max(0.0, (mu_t - mu_r) / sigma) if sigma > _EPS else 0.0
+        base_snr_map[base_lbl] = snr_val
+
+    if not base_snr_map:
+        return
+
+    labels  = list(base_snr_map.keys())
+    values  = [base_snr_map[l] for l in labels]
+    n       = len(labels)
+
+    # Bar colors: green (≥2), amber (≥1), red (<1)
+    SNR_OK, SNR_GOOD = 1.0, 2.0
+    bar_colors = []
+    for v in values:
+        if v is None:
+            bar_colors.append('#6B7280')
+        elif v >= SNR_GOOD:
+            bar_colors.append('#34D399')
+        elif v >= SNR_OK:
+            bar_colors.append('#FBBF24')
+        else:
+            bar_colors.append('#F87171')
+
+    fw = max(5.0, n * 1.2 + 2.0)
+    fig = _MplFig(figsize=(fw, 4.0), dpi=130)
+    fig.patch.set_facecolor(BG_FIG)
+    fig.subplots_adjust(left=0.14, right=0.96, top=0.88, bottom=0.22)
+    ax = fig.add_subplot(111)
+    ax.set_facecolor(BG_AX)
+    ax.tick_params(colors=COL_TXT, labelsize=8)
+    for side in ('bottom', 'left'):
+        ax.spines[side].set_color(COL_SPL)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, axis='y', color=COL_GRD, linewidth=0.5, linestyle='--')
+
+    xs_bar = list(range(n))
+    bars = ax.bar(xs_bar, [v if v is not None else 0.0 for v in values],
+                  color=bar_colors, width=0.6, zorder=3)
+
+    # Value labels above bars
+    for xi, v in zip(xs_bar, values):
+        if v is not None:
+            ax.text(xi, v + 0.04, f"{v:.3f}", ha='center', va='bottom',
+                    color=COL_TXT, fontsize=8, fontweight='bold')
+
+    # Threshold lines
+    y_max = max((v for v in values if v is not None), default=SNR_GOOD)
+    y_max = max(y_max, SNR_GOOD) * 1.15
+    ax.set_ylim(0, y_max)
+    ax.axhline(SNR_OK,   color='#FBBF24', linewidth=1.2, linestyle='--', alpha=0.8, label=f'OK (≥{SNR_OK})')
+    ax.axhline(SNR_GOOD, color='#34D399', linewidth=1.2, linestyle='--', alpha=0.8, label=f'Good (≥{SNR_GOOD})')
+    ax.legend(facecolor=BG_FIG, labelcolor=COL_TXT, fontsize=8, loc='upper right')
+
+    ax.set_xticks(xs_bar)
+    ax.set_xticklabels(labels, rotation=30, ha='right', color=COL_TXT, fontsize=8)
+    ax.set_ylabel("Base SNR", color=COL_TXT, fontsize=9, labelpad=4)
+    ax.set_title("Base Image SNR (target vs. reference ROIs)", color=COL_TXT,
+                 fontsize=10, fontweight='bold', pad=6)
+
+    buf = BytesIO()
+    _MplAgg(fig).print_figure(buf, format='png', dpi=130, facecolor=BG_FIG)
+    buf.seek(0)
+
+    sl = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_bg(sl, C_BG)
+    _add_text(sl, "Image Gallery — Base SNR Summary",
+              Inches(0.3), Inches(0.08), Inches(12.8), Inches(0.44),
+              size=16, bold=True, color=C_PRIMARY)
+    sl.shapes.add_picture(buf, Inches(1.0), Inches(0.60), width=Inches(11.3))
+
+
+def _ppt_add_diff_roi_position_slides(prs, roi_full_results, roi_all_results,
+                                       _fill_bg, _add_text,
+                                       C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                       Inches, Pt):
+    """Diff Map + ROI Position slides — diff image with ROI boxes overlaid.
+
+    For each base label, shows every diff image (one per compare LE) with the
+    target/reference ROI rectangles drawn on it, mirroring the layout of the
+    Base ROI Position Map slides.
+    """
+    from io import BytesIO
+    import numpy as _np
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    FONT    = cv2.FONT_HERSHEY_SIMPLEX
+    TGT_COL = (60,  80, 220)    # BGR blue-red (target)
+    REF_COL = (200, 200,  40)   # BGR cyan-ish (reference)
+
+    # Group roi_all_results by base label
+    from collections import defaultdict as _dd
+    results_by_base = _dd(list)
+    for r in roi_all_results:
+        results_by_base[r.base_label].append(r)
+
+    for base_lbl, roi_full in roi_full_results.items():
+        rois = roi_full.roi_set.rois
+        if not rois:
+            continue
+        pair_results = results_by_base.get(base_lbl, [])
+        if not pair_results:
+            continue
+
+        for r in pair_results:
+            diff_img = getattr(r, 'result_image', None)
+            if diff_img is None:
+                continue
+
+            # Convert grayscale diff to BGR for coloured ROI drawing
+            if len(diff_img.shape) == 2:
+                vis = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
+            else:
+                vis = diff_img.copy()
+
+            h, w = vis.shape[:2]
+
+            # Draw ROI boxes
+            for roi in rois:
+                nx, ny, nw, nh = roi.norm_rect
+                rx  = int(nx * w)
+                ry  = int(ny * h)
+                rpw = max(1, int(nw * w))
+                rph = max(1, int(nh * h))
+                col       = TGT_COL if roi.roi_type == 'target' else REF_COL
+                thickness = 3       if roi.roi_type == 'target' else 2
+                cv2.rectangle(vis, (rx, ry), (rx + rpw, ry + rph), col, thickness)
+                cv2.rectangle(vis, (rx + 1, ry + 1),
+                              (rx + rpw - 1, ry + rph - 1), (0, 0, 0), 1)
+                short_lbl  = roi.label.split('_')[-1].lstrip('0') or '0'
+                font_scale = max(0.35, min(0.65, w / 1200))
+                tx = rx + 3
+                ty = max(ry - 4, 10)
+                cv2.putText(vis, short_lbl, (tx + 1, ty + 1), FONT,
+                            font_scale, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(vis, short_lbl, (tx, ty), FONT,
+                            font_scale, col, 1, cv2.LINE_AA)
+
+            # Encode to PNG
+            try:
+                from PIL import Image as _PilImg
+                pil = _PilImg.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+                buf = BytesIO()
+                pil.save(buf, format='PNG')
+                buf.seek(0)
+            except ImportError:
+                ok, enc = cv2.imencode('.png', vis)
+                if not ok:
+                    continue
+                buf = BytesIO(enc.tobytes())
+
+            # Slide layout
+            sl = prs.slides.add_slide(prs.slide_layouts[6])
+            _fill_bg(sl, C_BG)
+            _add_text(sl,
+                      f"Diff Map + ROI — Base: {base_lbl}  ↔  Compare: {r.compare_label}",
+                      Inches(0.3), Inches(0.08), Inches(10.5), Inches(0.46),
+                      size=14, bold=True, color=C_PRIMARY)
+
+            AVAIL_W = Inches(10.3)
+            AVAIL_H = Inches(6.78)
+            nat_h, nat_w = vis.shape[:2]
+            if nat_w == 0 or nat_h == 0:
+                disp_w, disp_h = AVAIL_W, AVAIL_H
+            elif (nat_w / nat_h) >= (AVAIL_W / AVAIL_H):
+                disp_w = AVAIL_W
+                disp_h = int(AVAIL_W * nat_h / nat_w)
+            else:
+                disp_h = AVAIL_H
+                disp_w = int(AVAIL_H * nat_w / nat_h)
+            img_y = Inches(0.62) + (AVAIL_H - disp_h) // 2
+            sl.shapes.add_picture(buf, Inches(0.2), img_y, width=disp_w, height=disp_h)
+
+            # Legend (right side)
+            LEG_X = Inches(11.0)
+            LEG_Y = Inches(1.5)
+
+            def _legend_row_d(y_off, color_rgb, label, thick_str):
+                box = sl.shapes.add_shape(
+                    1, LEG_X, LEG_Y + y_off, Inches(0.28), Inches(0.22))
+                box.fill.solid()
+                box.fill.fore_color.rgb = color_rgb
+                box.line.fill.background()
+                _add_text(sl, f"{label}  ({thick_str})",
+                          LEG_X + Inches(0.34), LEG_Y + y_off,
+                          Inches(2.0), Inches(0.28),
+                          size=9, color=C_TEXT)
+
+            _add_text(sl, "Legend", LEG_X, LEG_Y - Inches(0.32),
+                      Inches(2.2), Inches(0.30),
+                      size=10, bold=True, color=C_TEXT_SEC)
+            _legend_row_d(Inches(0.00),
+                          RGBColor(220, 80, 60),  "Target",    "thick border")
+            _legend_row_d(Inches(0.35),
+                          RGBColor(40, 200, 200), "Reference", "thin border")
+
+            n_tgt = sum(1 for ro in rois if ro.roi_type == 'target')
+            n_ref = sum(1 for ro in rois if ro.roi_type == 'reference')
+            _add_text(sl,
+                      f"Total: {len(rois)} ROIs\n"
+                      f"  Target: {n_tgt}\n"
+                      f"  Reference: {n_ref}",
+                      LEG_X, LEG_Y + Inches(0.8),
+                      Inches(2.2), Inches(0.85),
+                      size=9, color=C_TEXT_SEC)
 
 
 def _ppt_add_condition_gallery(prs, result_rows, crop_size,
@@ -7772,20 +8275,40 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         return paths
 
     def _ask_export_options(self) -> tuple:
-        """Show a small dialog asking for export options.
-        Returns (do_center_crop: bool, crop_size: int, export_gif: bool).
+        """Show the Export Options dialog.
+
+        Returns
+        -------
+        (do_center_crop: bool, crop_size: int, export_gif: bool,
+         ppt_sections: dict)  or  (False, 512, False, None) on cancel.
         """
+        has_roi = bool(self._roi_full_results)
+
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Export Options")
         dlg.setStyleSheet(DIALOG_STYLE)
-        dlg.resize(380, 190)
-        layout = QtWidgets.QVBoxLayout(dlg)
+        dlg.resize(480, 0)
+        root = QtWidgets.QVBoxLayout(dlg)
+        root.setSpacing(12)
+        root.setContentsMargins(16, 16, 16, 12)
 
-        chk = QtWidgets.QCheckBox("Center-crop images (useful when defect is centered)")
-        chk.setChecked(False)
-        layout.addWidget(chk)
+        def _section_label(text: str) -> QtWidgets.QLabel:
+            lbl = QtWidgets.QLabel(text)
+            lbl.setStyleSheet(
+                "font-weight: bold; color: #111827; font-size: 12px;"
+                "padding-bottom: 2px; border-bottom: 1px solid #E5E7EB;"
+            )
+            return lbl
+
+        # ── Image / File options ──────────────────────────────────────
+        root.addWidget(_section_label("Image & File Options"))
+
+        chk_crop = QtWidgets.QCheckBox("Center-crop images  (useful when defect is centered)")
+        chk_crop.setChecked(False)
+        root.addWidget(chk_crop)
 
         crop_row = QtWidgets.QHBoxLayout()
+        crop_row.setContentsMargins(20, 0, 0, 0)
         crop_row.addWidget(QtWidgets.QLabel("Crop size (px):"))
         spn = QtWidgets.QSpinBox()
         spn.setRange(64, 4096)
@@ -7794,29 +8317,90 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         spn.setEnabled(False)
         crop_row.addWidget(spn)
         crop_row.addStretch()
-        layout.addLayout(crop_row)
-        chk.toggled.connect(spn.setEnabled)
+        root.addLayout(crop_row)
+        chk_crop.toggled.connect(spn.setEnabled)
 
         chk_gif = QtWidgets.QCheckBox(
             "Export animated GIF  (Base → Normalized Compare → Diff loop)"
         )
         chk_gif.setToolTip(
-            "Generates a looping animated GIF for each pair — handy for slides/email.\n"
+            "Generates a looping GIF per pair — handy for slides/email.\n"
             "Requires Pillow (pip install Pillow)."
         )
         chk_gif.setChecked(False)
-        layout.addWidget(chk_gif)
+        root.addWidget(chk_gif)
 
+        # ── PPT Report sections ───────────────────────────────────────
+        root.addWidget(_section_label("PowerPoint Report  —  Sections to Include"))
+
+        # (label, key, default_checked, tooltip)
+        _PPT_SECTION_DEFS = [
+            ("Overview Table  — summary of all pairs",
+             "overview_table",    True,
+             "One or more slides listing all pairs with alignment/diff metrics."),
+            ("Detail Slides  — Base / Compare / Diff images per pair",
+             "detail_slides",     True,
+             "3×2 image grid for every pair: base, aligned compare, normalized compare,\n"
+             "diff map, JET SNR map, and GIF animation frame."),
+            ("ROI Pair Summary Table  — LE metrics & SNR per pair",
+             "roi_summary_table", True,
+             "Multi-page table with T/R mean, Δ, Pair SNR columns (requires ROI data)."),
+            ("SNR Pair Matrix  — heatmap of SNR across all conditions",
+             "snr_matrix",        True,
+             "N×N heatmap where each cell shows the Pair SNR for that (base, compare) pair."),
+            ("Intensity Profile Charts  — per-ROI mean across LE",
+             "intensity_profiles", True,
+             "Line chart per base image: base mean (dashed), compare mean, diff mean per ROI."),
+            ("Image Gallery  — all images organized by condition",
+             "image_gallery",     True,
+             "Thumbnail grid showing all acquired images grouped by LE condition."),
+            ("ROI Position Maps  — base image with ROI overlays",
+             "roi_position_maps", False,
+             "Annotated base image showing target and reference ROI bounding boxes."),
+            ("Diff Map + ROI Overlay  — diff image with ROI boxes",
+             "diff_roi_overlay",  False,
+             "Diff image for each pair with target/reference ROI boxes drawn on top."),
+            ("Base SNR Summary Chart  — bar chart per base image",
+             "base_snr_chart",    False,
+             "Bar chart comparing Base SNR across all base images (color-coded by threshold)."),
+        ]
+
+        section_checks: Dict[str, QtWidgets.QCheckBox] = {}
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(4)
+        grid.setContentsMargins(4, 0, 0, 0)
+
+        for row_i, (label, key, default, tip) in enumerate(_PPT_SECTION_DEFS):
+            # Disable ROI-related sections when no ROI data loaded
+            roi_keys = {"roi_summary_table", "snr_matrix", "intensity_profiles",
+                        "roi_position_maps", "diff_roi_overlay", "base_snr_chart"}
+            chk_s = QtWidgets.QCheckBox(label)
+            chk_s.setChecked(default)
+            chk_s.setToolTip(tip)
+            if key in roi_keys and not has_roi:
+                chk_s.setChecked(False)
+                chk_s.setEnabled(False)
+                chk_s.setToolTip("No ROI data loaded — run ROI analysis first.")
+            section_checks[key] = chk_s
+            grid.addWidget(chk_s, row_i, 0)
+
+        root.addLayout(grid)
+
+        # ── Dialog buttons ────────────────────────────────────────────
         btn_row = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
         btn_row.accepted.connect(dlg.accept)
         btn_row.rejected.connect(dlg.reject)
-        layout.addWidget(btn_row)
+        root.addWidget(btn_row)
+
+        dlg.adjustSize()
 
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            return chk.isChecked(), spn.value(), chk_gif.isChecked()
-        return False, 512, False
+            ppt_sections = {k: chk.isChecked() for k, chk in section_checks.items()}
+            return chk_crop.isChecked(), spn.value(), chk_gif.isChecked(), ppt_sections
+        return False, 512, False, None
 
     # ------------------------------------------------------------------
     # PPT ROI helper  (module-level, called from _export_ppt_report)
@@ -7827,8 +8411,25 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                            do_center_crop: bool = False,
                            crop_size: int = 512,
                            roi_full_results: Optional[Dict[str, object]] = None,
-                           roi_all_results: Optional[List[object]] = None) -> Optional[str]:
-        """Build a dark-themed PPT report for all computed image pairs."""
+                           roi_all_results: Optional[List[object]] = None,
+                           ppt_sections: Optional[Dict[str, bool]] = None,
+                           progress_callback=None) -> Optional[str]:
+        """Build a dark-themed PPT report for all computed image pairs.
+
+        ppt_sections keys: overview_table, detail_slides, roi_summary_table,
+          snr_matrix, roi_position_maps, diff_roi_overlay, intensity_profiles,
+          image_gallery, base_snr_chart.
+        All sections default to True when ppt_sections is None.
+        """
+        # Default: include every section
+        _sec: Dict[str, bool] = ppt_sections or {}
+        def _s(key: str, default: bool = True) -> bool:
+            return _sec.get(key, default)
+
+        def _prog(label: str) -> None:
+            if progress_callback:
+                progress_callback(label)
+
         try:
             from pptx import Presentation
             from pptx.util import Inches, Pt, Emu
@@ -7886,7 +8487,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 return C_PRIMARY
             return C_WARN
 
-        # ── Title slide ──────────────────────────────────────────────────────
+        # ── Title slide (always included) ────────────────────────────────────
+        _prog("Generating Title slide…")
         title_slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
         _fill_bg(title_slide, C_BG)
 
@@ -7914,8 +8516,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                   size=11, color=C_TEXT_SEC)
 
         # ── Overview table slide(s) ─────────────────────────────────────────
+        if _s('overview_table'):
+            _prog("Generating Overview Table…")
         ROWS_PER = 18
         for block_start in range(0, len(result_rows), ROWS_PER):
+            if not _s('overview_table'):
+                break
             block = result_rows[block_start:block_start + ROWS_PER]
             ov = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(ov, C_BG)
@@ -7999,10 +8605,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         C_BLEND = RGBColor(0x60, 0x9C, 0xFF)  # blue  → Blend
 
         for idx, row in enumerate(result_rows, start=1):
+            if not _s('detail_slides'):
+                break
             result: SinglePairResult = row["result"]
             paths: Dict[str, str] = row["paths"]
             s = result.stats
             score = s.get('alignment_score', result.alignment.final_score)
+            _prog(f"Detail slide  [{result.base_label} → {result.compare_label}]  ({idx}/{len(result_rows)})")
 
             slide = prs.slides.add_slide(prs.slide_layouts[6])
             _fill_bg(slide, C_BG)
@@ -8133,30 +8742,59 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # ── ROI Analysis slides ──────────────────────────────────────────────
         if roi_full_results and roi_all_results:
-            _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
-                                _fill_bg, _add_text, _score_color,
-                                C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
-                                C_PRIMARY, C_SUCCESS, C_WARN,
-                                Inches, Pt)
+            if _s('roi_summary_table'):
+                _prog("Generating ROI Pair Summary Table…")
+                _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
+                                    _fill_bg, _add_text, _score_color,
+                                    C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
+                                    C_PRIMARY, C_SUCCESS, C_WARN,
+                                    Inches, Pt)
 
-            # ── ROI Position Map (base image + overlaid ROI boxes) ───────────
-            _ppt_add_roi_position_slides(prs, roi_full_results, self._images,
-                                         _fill_bg, _add_text,
-                                         C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                         Inches, Pt)
+            if _s('snr_matrix'):
+                _prog("Generating SNR Pair Matrix…")
+                _ppt_add_matrix_slide(prs, roi_full_results, roi_all_results,
+                                      _fill_bg, _add_text,
+                                      C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                      Inches, Pt)
 
-            # ── Per-ROI Intensity Profile (line chart per base) ──────────────
-            _ppt_add_roi_profile_slides(prs, roi_full_results,
-                                        _fill_bg, _add_text,
-                                        C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                        Inches, Pt)
+            if _s('roi_position_maps'):
+                _prog("Generating ROI Position Maps…")
+                _ppt_add_roi_position_slides(prs, roi_full_results, self._images,
+                                             _fill_bg, _add_text,
+                                             C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                             Inches, Pt)
 
-        # ── Image Gallery — By Condition (final slide) ───────────────────────
-        _ppt_add_condition_gallery(prs, result_rows, crop_size,
-                                   _fill_bg, _add_text,
-                                   C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
-                                   Inches, Pt)
+            if _s('diff_roi_overlay'):
+                _prog("Generating Diff Map + ROI Overlay…")
+                _ppt_add_diff_roi_position_slides(prs, roi_full_results, roi_all_results,
+                                                  _fill_bg, _add_text,
+                                                  C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                                  Inches, Pt)
 
+            if _s('intensity_profiles'):
+                _prog("Generating Intensity Profile Charts…")
+                _ppt_add_roi_profile_slides(prs, roi_full_results,
+                                            _fill_bg, _add_text,
+                                            C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                            Inches, Pt)
+
+        # ── Image Gallery — By Condition ──────────────────────────────────────
+        if _s('image_gallery'):
+            _prog("Generating Image Gallery…")
+            _ppt_add_condition_gallery(prs, result_rows, crop_size,
+                                       _fill_bg, _add_text,
+                                       C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                       Inches, Pt)
+
+        # ── Image Gallery — Base SNR Summary ─────────────────────────────────
+        if roi_full_results and _s('base_snr_chart'):
+            _prog("Generating Base SNR Summary Chart…")
+            _ppt_add_base_snr_gallery_slide(prs, roi_full_results,
+                                            _fill_bg, _add_text,
+                                            C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                            Inches, Pt)
+
+        _prog("Saving PowerPoint file…")
         ppt_path = str(Path(out_dir) / "perspective_report.pptx")
         prs.save(ppt_path)
         return ppt_path
@@ -8197,8 +8835,52 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     os.makedirs(folder_path, exist_ok=True)
 
                 settings = self._last_settings or {}
-                # Read export options from UI at export time (not from stale _last_settings)
-                do_center_crop, crop_size, export_gif = self._ask_export_options()
+                # Read export options (includes PPT section selections)
+                do_center_crop, crop_size, export_gif, ppt_sections = \
+                    self._ask_export_options()
+                if ppt_sections is None:
+                    return   # user cancelled
+
+                # ── Progress dialog ───────────────────────────────────
+                n_pairs = len(self._results)
+                has_roi = bool(self._roi_full_results)
+                _sec = ppt_sections or {}
+                ppt_step_count = (
+                    1                                          # title
+                    + (1 if _sec.get('overview_table')   else 0)
+                    + (n_pairs if _sec.get('detail_slides') else 0)
+                    + (1 if _sec.get('roi_summary_table') and has_roi else 0)
+                    + (1 if _sec.get('snr_matrix')        and has_roi else 0)
+                    + (1 if _sec.get('roi_position_maps') and has_roi else 0)
+                    + (1 if _sec.get('diff_roi_overlay')  and has_roi else 0)
+                    + (1 if _sec.get('intensity_profiles') and has_roi else 0)
+                    + (1 if _sec.get('image_gallery')     else 0)
+                    + (1 if _sec.get('base_snr_chart')    and has_roi else 0)
+                    + 1                                        # save file
+                )
+                total_steps = (
+                    1                        # folder setup
+                    + n_pairs                # image saving
+                    + (n_pairs if export_gif else 0)
+                    + ppt_step_count
+                )
+                prog = QtWidgets.QProgressDialog(
+                    "Preparing export…", "Cancel", 0, total_steps, self
+                )
+                prog.setWindowTitle("Exporting…")
+                prog.setWindowModality(Qt.WindowModal)
+                prog.setMinimumDuration(0)
+                prog.setStyleSheet(DIALOG_STYLE)
+                prog.setValue(0)
+
+                def _step(label: str) -> bool:
+                    """Advance progress by 1 step. Returns True if cancelled."""
+                    prog.setLabelText(label)
+                    prog.setValue(prog.value() + 1)
+                    QtWidgets.QApplication.processEvents()
+                    return prog.wasCanceled()
+
+                _step("Setting up export folders…")
 
                 csv_headers = [
                     "base", "compare", "operation", "align_method", "dx", "dy",
@@ -8213,6 +8895,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     writer = csv.writer(f)
                     writer.writerow(csv_headers)
                     for result in self._results:
+                        if _step(f"Saving images  [{result.base_label} → {result.compare_label}]"):
+                            return
                         base_name = _safe_name(result.base_label)
                         cmp_name = _safe_name(result.compare_label)
                         op_name = _safe_name(result.operation)
@@ -8262,6 +8946,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
                         for row in result_rows:
                             result = row["result"]
+                            if _step(f"Creating GIF  [{result.base_label} → {result.compare_label}]"):
+                                break
                             base_img_g = self._images.get(result.base_label)
                             norm_img_g = result.normalized_compare
                             diff_img_g = result.result_image
@@ -8306,11 +8992,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                     except Exception as gif_err:
                         gif_note = f"\n⚠ GIF error: {gif_err}"
 
-                ppt_path = self._export_ppt_report(out_dir, result_rows, settings,
-                                                   do_center_crop=do_center_crop,
-                                                   crop_size=crop_size,
-                                                   roi_full_results=self._roi_full_results or {},
-                                                   roi_all_results=self._results or [])
+                ppt_path = self._export_ppt_report(
+                    out_dir, result_rows, settings,
+                    do_center_crop=do_center_crop,
+                    crop_size=crop_size,
+                    roi_full_results=self._roi_full_results or {},
+                    roi_all_results=self._results or [],
+                    ppt_sections=ppt_sections,
+                    progress_callback=_step,
+                )
+                prog.setValue(total_steps)
                 if ppt_path:
                     QtWidgets.QMessageBox.information(
                         self,
