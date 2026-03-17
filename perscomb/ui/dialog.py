@@ -6751,10 +6751,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             if effect is None:
                 effect = QtWidgets.QGraphicsOpacityEffect(widget)
                 self._compute_lock_effects[widget] = effect
-            effect.setOpacity(0.38)
-            widget.setGraphicsEffect(effect)
+                widget.setGraphicsEffect(effect)
+            try:
+                effect.setOpacity(0.38)
+            except RuntimeError:
+                effect = QtWidgets.QGraphicsOpacityEffect(widget)
+                effect.setOpacity(0.38)
+                self._compute_lock_effects[widget] = effect
+                widget.setGraphicsEffect(effect)
         else:
             widget.setGraphicsEffect(None)
+            self._compute_lock_effects.pop(widget, None)
 
     def _set_compute_busy(self, busy: bool) -> None:
         if busy and self.roi_side_panel.isVisible():
