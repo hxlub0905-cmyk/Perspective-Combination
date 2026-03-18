@@ -968,6 +968,38 @@ def compute_roi_full_stats(
             comp_layer.roi_stats[roi.id] = ROIStats.from_pixels(pixels)
         result.layers.append(comp_layer)
 
+        # COMPARE SNR — SNR of the normalized compare image itself (before
+        # subtraction).  Uses the same target/reference formula as diff SNR so
+        # the two metrics are directly comparable.  The difference between
+        # comp_snr and diff_snr reveals how much the cross-LE normalization
+        # clip degrades/enhances defect visibility in the compare image.
+        target_roi = roi_set.get_target()
+        ref_rois = roi_set.get_references()
+        if target_roi is not None and ref_rois:
+            t_stats_c = comp_layer.roi_stats.get(target_roi.id)
+            ref_means_c = np.asarray(
+                [comp_layer.roi_stats[r.id].mean for r in ref_rois if r.id in comp_layer.roi_stats],
+                dtype=np.float32,
+            )
+            mu_ref_c = float(np.mean(ref_means_c)) if ref_means_c.size else 0.0
+            if ref_means_c.size >= 2:
+                sigma_ref_c = float(np.std(ref_means_c))
+            elif ref_means_c.size == 1:
+                ref_pixels_c = [roi.crop(comp_norm).astype(np.float32).ravel() for roi in ref_rois]
+                ref_pixels_c = [px for px in ref_pixels_c if px.size > 0]
+                sigma_ref_c = float(np.std(np.concatenate(ref_pixels_c))) if ref_pixels_c else 0.0
+            else:
+                sigma_ref_c = 0.0
+            mu_target_c = t_stats_c.mean if t_stats_c is not None else 0.0
+            comp_snr = 0.0 if sigma_ref_c <= _EPS else max(0.0, float((mu_target_c - mu_ref_c) / sigma_ref_c))
+            result.snr_per_compare[le_label] = ROISNREntry(
+                le_label=le_label,
+                snr=comp_snr,
+                mu_target=mu_target_c,
+                mu_ref=mu_ref_c,
+                sigma_ref=sigma_ref_c,
+            )
+
         # DIFF layer  (consistent with subtract pipeline)
         diff_f = base_norm - comp_norm
         if abs_diff:

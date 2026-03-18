@@ -2781,8 +2781,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(self._build_summary_tab(),    "📋  Pair Summary")
         if self._is_auto_pair:
-            tabs.addTab(self._build_matrix_tab(),      "🔢  SNR Pair Matrix")
-            tabs.addTab(self._build_diff_matrix_tab(), "🖼  Diff Image Matrix")
+            tabs.addTab(self._build_matrix_tab(),             "🔢  SNR Pair Matrix")
+            tabs.addTab(self._build_compare_snr_matrix_tab(), "📐  Comp SNR Matrix")
+            tabs.addTab(self._build_diff_matrix_tab(),        "🖼  Diff Image Matrix")
         tabs.addTab(self._build_snr_chart_tab(), "📊  SNR Bar Chart")
         tabs.addTab(self._build_mean_tab(),      "📈  Intensity Profile")
         tabs.addTab(self._build_table_tab(),     "🗂  Raw Stats")
@@ -2912,9 +2913,11 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         self._SUMMARY_HEADERS = [
             'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
             'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'Pair SNR', 'Base SNR',
+            'Comp SNR',
         ]
         self._COL_SNR      = self._SUMMARY_HEADERS.index('Pair SNR')
         self._COL_BASE_SNR = self._SUMMARY_HEADERS.index('Base SNR')
+        self._COL_COMP_SNR = self._SUMMARY_HEADERS.index('Comp SNR')
         self._COL_STATUS   = self._SUMMARY_HEADERS.index('Align Status')
 
         self._summary_table = QtWidgets.QTableWidget(0, len(self._SUMMARY_HEADERS))
@@ -2945,7 +2948,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             if base_filter is not None and r.base_label != base_filter:
                 continue
             roi_full  = self._roi_results.get(r.base_label)
-            snr_entry = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
+            snr_entry      = roi_full.snr_per_diff.get(r.compare_label)    if roi_full else None
+            comp_snr_entry = roi_full.snr_per_compare.get(r.compare_label) if roi_full else None
             align_status  = (r.alignment.status if r.alignment else None) or '—'
             align_score_v = r.alignment.final_score if r.alignment else None
             alpha_str     = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
@@ -2956,6 +2960,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 _base_snr_cache[r.base_label] = self._compute_base_snr(r.base_label)
             base_snr_v = _base_snr_cache[r.base_label]
             base_snr_s = f"{base_snr_v:.4f}" if base_snr_v is not None else "—"
+
+            comp_snr_s = f"{comp_snr_entry.snr:.4f}" if comp_snr_entry is not None else "—"
+            comp_snr_v = comp_snr_entry.snr           if comp_snr_entry is not None else None
 
             if snr_entry is not None:
                 # Scale from [0,1] normalized range to GLV (0-255) for display.
@@ -2979,6 +2986,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'snr_v':        snr_entry.snr,
                     'base_snr':     base_snr_s,
                     'base_snr_v':   base_snr_v,
+                    'comp_snr':     comp_snr_s,
+                    'comp_snr_v':   comp_snr_v,
                 })
             else:
                 data.append({
@@ -2989,6 +2998,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     'delta': '—', 'delta_v': None,
                     'snr': '—',  'snr_v': None,
                     'base_snr': base_snr_s, 'base_snr_v': base_snr_v,
+                    'comp_snr': comp_snr_s, 'comp_snr_v': comp_snr_v,
                 })
         return data
 
@@ -2996,7 +3006,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         """Flat string rows in SUMMARY_HEADERS column order (for CSV export)."""
         return [
             [d['base'], d['compare'], d['align_status'], d['alpha'], d['align_score'],
-             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr'], d['base_snr']]
+             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr'], d['base_snr'],
+             d['comp_snr']]
             for d in self._get_summary_data(base_filter)
         ]
 
@@ -3051,6 +3062,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 self._make_sort_item(d['delta'], d['delta_v']),
                 self._make_sort_item(d['snr'], d['snr_v']),
                 self._make_sort_item(d['base_snr'], d['base_snr_v']),
+                self._make_sort_item(d['comp_snr'], d['comp_snr_v']),
             ]
 
             # Color: Align Status cell
@@ -3072,6 +3084,12 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             if base_snr_bg is not None:
                 items[self._COL_BASE_SNR].setBackground(base_snr_bg)
                 items[self._COL_BASE_SNR].setForeground(QtGui.QColor('#D1D5DB'))
+
+            # Color: Comp SNR cell
+            comp_snr_bg = self._snr_bg(d['comp_snr_v'])
+            if comp_snr_bg is not None:
+                items[self._COL_COMP_SNR].setBackground(comp_snr_bg)
+                items[self._COL_COMP_SNR].setForeground(QtGui.QColor('#D1D5DB'))
 
             for col, item in enumerate(items):
                 self._summary_table.setItem(row_idx, col, item)
@@ -3542,6 +3560,153 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         return w
 
     # ------------------------------------------------------------------
+    # Tab 2d — Compare SNR Matrix (auto-pair only)
+    # ------------------------------------------------------------------
+
+    def _build_compare_snr_matrix_tab(self) -> QtWidgets.QWidget:
+        """N×N heatmap of normalized-compare SNR — rows=base anchor, cols=compare LE.
+
+        Each cell shows the ROI SNR of the *compare* image after it has been
+        normalised through the base anchor's p2/p98 (i.e. before subtraction).
+        Comparing this matrix to the Diff SNR Pair Matrix reveals how much the
+        cross-LE clip degrades or preserves defect visibility.
+        """
+        from matplotlib.colors import LinearSegmentedColormap
+
+        w = QtWidgets.QWidget()
+        w.setStyleSheet("background: white;")
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(16, 12, 16, 8)
+        lay.setSpacing(6)
+
+        # ── Collect ordered labels ─────────────────────────────────────
+        all_labels = sorted(set(
+            [r.base_label    for r in self._all_results] +
+            [r.compare_label for r in self._all_results]
+        ))
+        n = len(all_labels)
+        label_idx = {lbl: i for i, lbl in enumerate(all_labels)}
+
+        matrix = np.full((n, n), np.nan)
+        for r in self._all_results:
+            roi_full = self._roi_results.get(r.base_label)
+            if roi_full:
+                entry = roi_full.snr_per_compare.get(r.compare_label)
+                if entry is not None:
+                    matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
+
+        # ── Pastel colormap: red → amber → green ──────────────────────
+        pastel_cmap = LinearSegmentedColormap.from_list(
+            'comp_snr_pastel',
+            [
+                (0.00, '#FECACA'),
+                (0.35, '#FDE68A'),
+                (0.65, '#BBF7D0'),
+                (1.00, '#6EE7B7'),
+            ]
+        )
+        pastel_cmap.set_bad(color='#F1F5F9')
+
+        valid = matrix[~np.isnan(matrix)]
+        vmin = 0.0
+        vmax = max(float(np.max(valid)) if valid.size else 0.0, self._SNR_GOOD) * 1.05
+
+        # ── Figure ────────────────────────────────────────────────────
+        cell_in = 1.1
+        margin  = 2.4
+        fig_w   = n * cell_in + margin
+        fig_h   = max(4.0, n * cell_in + 1.2)
+        fig = Figure(figsize=(fig_w, fig_h))
+        fig.patch.set_facecolor('white')
+        fig.subplots_adjust(left=0.18, right=0.82, top=0.88, bottom=0.18)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('white')
+
+        im = ax.imshow(matrix, cmap=pastel_cmap, aspect='equal',
+                       vmin=vmin, vmax=vmax, interpolation='nearest')
+
+        # ── Grid lines ────────────────────────────────────────────────
+        ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+        ax.grid(which='minor', color='#CBD5E1', linewidth=0.8)
+        ax.tick_params(which='minor', length=0)
+
+        # ── Colorbar ──────────────────────────────────────────────────
+        cbar = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.03)
+        cbar.set_label("Comp SNR", color='#374151', fontsize=11,
+                       fontweight='bold', labelpad=8)
+        cbar.ax.tick_params(labelcolor='#374151', color='#CBD5E1', labelsize=10)
+        cbar.outline.set_edgecolor('#CBD5E1')
+        cbar.ax.set_facecolor('white')
+        for thresh, color in [(self._SNR_OK, '#F59E0B'), (self._SNR_GOOD, '#10B981')]:
+            norm_pos = thresh / max(vmax, 1e-9)
+            if 0.0 < norm_pos < 1.0:
+                cbar.ax.axhline(norm_pos, color=color, linewidth=1.5,
+                                linestyle='--', alpha=0.85)
+                cbar.ax.text(1.25, norm_pos, f'{thresh:.0f}',
+                             transform=cbar.ax.transAxes,
+                             va='center', ha='left',
+                             color=color, fontsize=9, fontweight='bold')
+
+        # ── Cell annotations ──────────────────────────────────────────
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    ax.add_patch(
+                        __import__('matplotlib.patches', fromlist=['FancyBboxPatch'])
+                        .FancyBboxPatch(
+                            (j - 0.45, i - 0.45), 0.90, 0.90,
+                            boxstyle='round,pad=0.05',
+                            facecolor='#E2E8F0', edgecolor='none', zorder=2,
+                        )
+                    )
+                    ax.text(j, i, '—', ha='center', va='center',
+                            fontsize=12, color='#94A3B8', zorder=3)
+                elif not np.isnan(matrix[i, j]):
+                    val = matrix[i, j]
+                    if val >= self._SNR_GOOD:
+                        txt_col = '#065F46'
+                    elif val >= self._SNR_OK:
+                        txt_col = '#78350F'
+                    else:
+                        txt_col = '#7F1D1D'
+                    ax.text(j, i, f"{val:.2f}", ha='center', va='center',
+                            fontsize=12, color=txt_col, fontweight='bold', zorder=3)
+                else:
+                    ax.text(j, i, 'n/a', ha='center', va='center',
+                            fontsize=10, color='#94A3B8', zorder=3)
+
+        # ── Axes labels ───────────────────────────────────────────────
+        ax.set_xticks(range(n))
+        ax.set_yticks(range(n))
+        ax.set_xticklabels(all_labels, rotation=35, ha='right',
+                           color='#1E293B', fontsize=11, fontweight='semibold')
+        ax.set_yticklabels(all_labels, color='#1E293B', fontsize=11,
+                           fontweight='semibold')
+        ax.set_xlabel("Compare (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_ylabel("Base Anchor (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_title("Compare SNR Matrix  (after normalization, before subtraction)",
+                     color='#0F172A', fontsize=13, fontweight='bold', pad=14)
+        ax.tick_params(which='major', length=0, pad=6)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#E2E8F0')
+            spine.set_linewidth(1.0)
+
+        self._comp_snr_matrix_fig = fig
+        canvas = FigureCanvas(fig)
+        canvas.setStyleSheet("background: white;")
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(
+            self._make_save_btn(lambda: self._comp_snr_matrix_fig, "roi_compare_snr_matrix"))
+        lay.addWidget(canvas, stretch=1)
+        lay.addLayout(btn_row)
+        return w
+
+    # ------------------------------------------------------------------
     # Tab 3 — Per-ROI Mean across LE
     # ------------------------------------------------------------------
 
@@ -3627,10 +3792,44 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         if vxd:
             ax.plot(vxd, vyd, marker='^', color='#F87171', linewidth=1.5, label='Diff')
 
+        # Comp SNR — secondary y-axis so SNR scale doesn't compress mean intensity.
+        # SNR is computed on the normalized compare image (before subtraction);
+        # a drop here relative to the Diff SNR Matrix reveals clip-induced degradation.
+        comp_snr_vals = [
+            roi_result.snr_per_compare[le_label].snr
+            if le_label in roi_result.snr_per_compare else None
+            for le_label in le_labels
+        ]
+        vxs = [i for i, v in enumerate(comp_snr_vals) if v is not None]
+        vys = [v for v in comp_snr_vals if v is not None]
+        if vxs:
+            ax2 = ax.twinx()
+            ax2.set_facecolor(self._BG_AX)
+            ax2.tick_params(colors=self._COL_MUT, labelsize=8)
+            ax2.spines['right'].set_color(self._COL_SPL)
+            ax2.spines['top'].set_visible(False)
+            ax2.spines['left'].set_visible(False)
+            ax2.spines['bottom'].set_visible(False)
+            ax2.set_ylabel("Comp SNR", color='#A78BFA', fontsize=8, labelpad=6)
+            ax2.yaxis.label.set_color('#A78BFA')
+            ax2.tick_params(axis='y', colors='#A78BFA')
+            ax2.plot(vxs, vys, marker='D', color='#A78BFA', linewidth=1.5,
+                     linestyle=':', label='Comp SNR')
+            ax2.axhline(self._SNR_OK,   color='#F59E0B', linewidth=0.8,
+                        linestyle='--', alpha=0.6)
+            ax2.axhline(self._SNR_GOOD, color='#10B981', linewidth=0.8,
+                        linestyle='--', alpha=0.6)
+            # Merge legends from both axes
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax2.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2,
+                      facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
+        else:
+            ax.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
+
         ax.set_xticks(list(x))
         ax.set_xticklabels(le_labels, rotation=20, ha='right',
                            color=self._COL_TXT, fontsize=9)
-        ax.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
         self._mean_canvas.draw()
 
     # ------------------------------------------------------------------
