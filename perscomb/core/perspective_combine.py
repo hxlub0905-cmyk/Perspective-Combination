@@ -937,7 +937,40 @@ def compute_roi_full_stats(
     )
 
     # ------------------------------------------------------------------
-    # BASE layer
+    # RAW BASE SNR — computed on base_proc / 255 (before normalization)
+    # so it can be compared to the normalized base SNR to show the effect
+    # of normalization on the base image itself.
+    # ------------------------------------------------------------------
+    _raw_base_img = base_proc / 255.0
+    _tgt_roi_b = roi_set.get_target()
+    _ref_rois_b = roi_set.get_references()
+    if _tgt_roi_b is not None and _ref_rois_b:
+        _t_px = _tgt_roi_b.crop(_raw_base_img).astype(np.float32).ravel()
+        _ref_means_b = np.asarray(
+            [float(np.mean(roi.crop(_raw_base_img))) for roi in _ref_rois_b],
+            dtype=np.float32,
+        )
+        _mu_t_rb   = float(np.mean(_t_px))  if _t_px.size  else 0.0
+        _mu_r_rb   = float(np.mean(_ref_means_b)) if _ref_means_b.size else 0.0
+        if _ref_means_b.size >= 2:
+            _sigma_rb = float(np.std(_ref_means_b))
+        elif _ref_means_b.size == 1:
+            _ref_px_b = np.concatenate([roi.crop(_raw_base_img).astype(np.float32).ravel()
+                                        for roi in _ref_rois_b])
+            _sigma_rb = float(np.std(_ref_px_b)) if _ref_px_b.size else 0.0
+        else:
+            _sigma_rb = 0.0
+        _raw_base_snr = 0.0 if _sigma_rb <= _EPS else max(0.0, (_mu_t_rb - _mu_r_rb) / _sigma_rb)
+        result.raw_snr_base = ROISNREntry(
+            le_label='base_raw',
+            snr=_raw_base_snr,
+            mu_target=_mu_t_rb,
+            mu_ref=_mu_r_rb,
+            sigma_ref=_sigma_rb,
+        )
+
+    # ------------------------------------------------------------------
+    # BASE layer  (normalized)
     # ------------------------------------------------------------------
     base_layer = ROIImageLayer(image_label='base', layer_type='base')
     for roi in roi_set.rois:
