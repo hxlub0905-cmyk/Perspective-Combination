@@ -123,15 +123,26 @@ class ROIFullResult:
 
     Attributes
     ----------
-    roi_set         : The MultiROISet used for this computation.
-    layers          : [base layer] + [compare layers…] + [diff layers…]
-    snr_per_diff    : SNR computed from diff layers, keyed by LE label.
-    normalize_method: The normalization method that was applied.
-    nonlinear_warning: True when HEQ/CLAHE was used (stats not cross-LE comparable).
+    roi_set            : The MultiROISet used for this computation.
+    layers             : [base layer] + [compare layers…] + [diff layers…]
+    snr_per_diff       : SNR computed from diff layers, keyed by LE label.
+    snr_per_compare    : SNR computed from normalized compare layers, keyed by LE
+                         label.  Measures the compare image's own defect visibility
+                         after being mapped through the base anchor — useful for
+                         quantifying clip-induced SNR degradation in cross-LE
+                         normalization (GLV Mask / Percentile).
+    raw_snr_base       : SNR of the raw (un-normalized) base image using the same
+                         target/reference formula.  Comparing this to the base-layer
+                         SNR (normalized) shows how much normalization alone changes
+                         the base image's defect visibility.
+    normalize_method   : The normalization method that was applied.
+    nonlinear_warning  : True when HEQ/CLAHE was used (stats not cross-LE comparable).
     """
     roi_set: "MultiROISet"
     layers: List[ROIImageLayer] = field(default_factory=list)
     snr_per_diff: Dict[str, ROISNREntry] = field(default_factory=dict)
+    snr_per_compare: Dict[str, ROISNREntry] = field(default_factory=dict)
+    raw_snr_base: Optional[ROISNREntry] = None   # SNR on raw (un-normalized) base
     normalize_method: str = 'percentile'
     nonlinear_warning: bool = False
 

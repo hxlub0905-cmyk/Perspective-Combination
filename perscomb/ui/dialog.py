@@ -2781,8 +2781,9 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(self._build_summary_tab(),    "📋  Pair Summary")
         if self._is_auto_pair:
-            tabs.addTab(self._build_matrix_tab(),      "🔢  SNR Pair Matrix")
-            tabs.addTab(self._build_diff_matrix_tab(), "🖼  Diff Image Matrix")
+            tabs.addTab(self._build_matrix_tab(),             "🔢  SNR Pair Matrix")
+            tabs.addTab(self._build_compare_snr_matrix_tab(), "📐  Comp SNR Matrix")
+            tabs.addTab(self._build_diff_matrix_tab(),        "🖼  Diff Image Matrix")
         tabs.addTab(self._build_snr_chart_tab(), "📊  SNR Bar Chart")
         tabs.addTab(self._build_mean_tab(),      "📈  Intensity Profile")
         tabs.addTab(self._build_table_tab(),     "🗂  Raw Stats")
@@ -2909,13 +2910,20 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         lay.addLayout(ctrl_row)
 
         # Column indices (keep in sync with _SUMMARY_HEADERS below)
+        # SNR columns are grouped at the right for easy comparison:
+        #   Base (raw) → Base (norm) → Comp SNR → Pair SNR
+        # This lets users read left-to-right: raw baseline → normalized
+        # baseline → compare after normalization → final diff SNR.
         self._SUMMARY_HEADERS = [
             'Base', 'Compare (LE)', 'Align Status', 'ROI-match α', 'Align Score',
-            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)', 'Pair SNR', 'Base SNR',
+            'T Mean Diff', 'R Mean Diff', 'R Std Diff', 'Δ (T−R)',
+            'Base SNR (raw)', 'Base SNR (norm)', 'Comp SNR', 'Pair SNR',
         ]
-        self._COL_SNR      = self._SUMMARY_HEADERS.index('Pair SNR')
-        self._COL_BASE_SNR = self._SUMMARY_HEADERS.index('Base SNR')
-        self._COL_STATUS   = self._SUMMARY_HEADERS.index('Align Status')
+        self._COL_SNR          = self._SUMMARY_HEADERS.index('Pair SNR')
+        self._COL_BASE_SNR_RAW = self._SUMMARY_HEADERS.index('Base SNR (raw)')
+        self._COL_BASE_SNR_NRM = self._SUMMARY_HEADERS.index('Base SNR (norm)')
+        self._COL_COMP_SNR     = self._SUMMARY_HEADERS.index('Comp SNR')
+        self._COL_STATUS       = self._SUMMARY_HEADERS.index('Align Status')
 
         self._summary_table = QtWidgets.QTableWidget(0, len(self._SUMMARY_HEADERS))
         self._summary_table.setHorizontalHeaderLabels(self._SUMMARY_HEADERS)
@@ -2945,50 +2953,61 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             if base_filter is not None and r.base_label != base_filter:
                 continue
             roi_full  = self._roi_results.get(r.base_label)
-            snr_entry = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
+            snr_entry      = roi_full.snr_per_diff.get(r.compare_label)    if roi_full else None
+            comp_snr_entry = roi_full.snr_per_compare.get(r.compare_label) if roi_full else None
             align_status  = (r.alignment.status if r.alignment else None) or '—'
             align_score_v = r.alignment.final_score if r.alignment else None
             alpha_str     = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else "—"
             align_str     = f"{align_score_v:.1f}" if align_score_v is not None else "—"
 
-            # Base SNR (same for all pairs sharing the same base)
+            # Base SNR (norm) — from normalized base layer; same for all pairs of this base
             if r.base_label not in _base_snr_cache:
                 _base_snr_cache[r.base_label] = self._compute_base_snr(r.base_label)
-            base_snr_v = _base_snr_cache[r.base_label]
-            base_snr_s = f"{base_snr_v:.4f}" if base_snr_v is not None else "—"
+            base_snr_norm_v = _base_snr_cache[r.base_label]
+            base_snr_norm_s = f"{base_snr_norm_v:.4f}" if base_snr_norm_v is not None else "—"
 
+            # Base SNR (raw) — from raw (un-normalized) base image
+            raw_entry = roi_full.raw_snr_base if roi_full else None
+            base_snr_raw_v = raw_entry.snr if raw_entry is not None else None
+            base_snr_raw_s = f"{base_snr_raw_v:.4f}" if base_snr_raw_v is not None else "—"
+
+            comp_snr_s = f"{comp_snr_entry.snr:.4f}" if comp_snr_entry is not None else "—"
+            comp_snr_v = comp_snr_entry.snr           if comp_snr_entry is not None else None
+
+            _common = {
+                'base':              r.base_label,
+                'compare':           r.compare_label,
+                'align_status':      align_status,
+                'alpha':             alpha_str,
+                'align_score':       align_str,
+                'align_score_v':     align_score_v,
+                'base_snr_raw':      base_snr_raw_s,
+                'base_snr_raw_v':    base_snr_raw_v,
+                'base_snr_norm':     base_snr_norm_s,
+                'base_snr_norm_v':   base_snr_norm_v,
+                'comp_snr':          comp_snr_s,
+                'comp_snr_v':        comp_snr_v,
+            }
             if snr_entry is not None:
                 # Scale from [0,1] normalized range to GLV (0-255) for display.
                 mu_t_glv    = snr_entry.mu_target * 255.0
                 mu_r_glv    = snr_entry.mu_ref    * 255.0
                 sigma_r_glv = snr_entry.sigma_ref * 255.0
                 delta_v     = mu_t_glv - mu_r_glv
-                data.append({
-                    'base':         r.base_label,
-                    'compare':      r.compare_label,
-                    'align_status': align_status,
-                    'alpha':        alpha_str,
-                    'align_score':  align_str,
-                    'align_score_v': align_score_v,
-                    'mu_t':         f"{mu_t_glv:.2f}",
-                    'mu_r':         f"{mu_r_glv:.2f}",
-                    'sigma_r':      f"{sigma_r_glv:.2f}",
-                    'delta':        f"{delta_v:+.2f}",
-                    'delta_v':      delta_v,
-                    'snr':          f"{snr_entry.snr:.4f}",
-                    'snr_v':        snr_entry.snr,
-                    'base_snr':     base_snr_s,
-                    'base_snr_v':   base_snr_v,
+                data.append({**_common,
+                    'mu_t':     f"{mu_t_glv:.2f}",
+                    'mu_r':     f"{mu_r_glv:.2f}",
+                    'sigma_r':  f"{sigma_r_glv:.2f}",
+                    'delta':    f"{delta_v:+.2f}",
+                    'delta_v':  delta_v,
+                    'snr':      f"{snr_entry.snr:.4f}",
+                    'snr_v':    snr_entry.snr,
                 })
             else:
-                data.append({
-                    'base': r.base_label, 'compare': r.compare_label,
-                    'align_status': align_status,
-                    'alpha': alpha_str, 'align_score': align_str, 'align_score_v': align_score_v,
+                data.append({**_common,
                     'mu_t': '—', 'mu_r': '—', 'sigma_r': '—',
                     'delta': '—', 'delta_v': None,
                     'snr': '—',  'snr_v': None,
-                    'base_snr': base_snr_s, 'base_snr_v': base_snr_v,
                 })
         return data
 
@@ -2996,7 +3015,8 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         """Flat string rows in SUMMARY_HEADERS column order (for CSV export)."""
         return [
             [d['base'], d['compare'], d['align_status'], d['alpha'], d['align_score'],
-             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'], d['snr'], d['base_snr']]
+             d['mu_t'], d['mu_r'], d['sigma_r'], d['delta'],
+             d['base_snr_raw'], d['base_snr_norm'], d['comp_snr'], d['snr']]
             for d in self._get_summary_data(base_filter)
         ]
 
@@ -3039,6 +3059,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
             self._summary_table.insertRow(row_idx)
 
             # Build items in column order matching _SUMMARY_HEADERS
+            # SNR group (right side): Base(raw) | Base(norm) | Comp SNR | Pair SNR
             items = [
                 self._make_sort_item(d['base']),
                 self._make_sort_item(d['compare']),
@@ -3049,8 +3070,10 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                 self._make_sort_item(d['mu_r']),
                 self._make_sort_item(d['sigma_r']),
                 self._make_sort_item(d['delta'], d['delta_v']),
-                self._make_sort_item(d['snr'], d['snr_v']),
-                self._make_sort_item(d['base_snr'], d['base_snr_v']),
+                self._make_sort_item(d['base_snr_raw'],  d['base_snr_raw_v']),
+                self._make_sort_item(d['base_snr_norm'], d['base_snr_norm_v']),
+                self._make_sort_item(d['comp_snr'],      d['comp_snr_v']),
+                self._make_sort_item(d['snr'],           d['snr_v']),
             ]
 
             # Color: Align Status cell
@@ -3061,17 +3084,17 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                     QtGui.QColor(self._STATUS_COLOR.get(d['align_status'].lower(), '#D1D5DB'))
                 )
 
-            # Color: SNR cell
-            snr_bg = self._snr_bg(d['snr_v'])
-            if snr_bg is not None:
-                items[self._COL_SNR].setBackground(snr_bg)
-                items[self._COL_SNR].setForeground(QtGui.QColor('#D1D5DB'))
-
-            # Color: Base SNR cell
-            base_snr_bg = self._snr_bg(d['base_snr_v'])
-            if base_snr_bg is not None:
-                items[self._COL_BASE_SNR].setBackground(base_snr_bg)
-                items[self._COL_BASE_SNR].setForeground(QtGui.QColor('#D1D5DB'))
+            # Color: all four SNR cells
+            for col_idx, snr_val in [
+                (self._COL_BASE_SNR_RAW, d['base_snr_raw_v']),
+                (self._COL_BASE_SNR_NRM, d['base_snr_norm_v']),
+                (self._COL_COMP_SNR,     d['comp_snr_v']),
+                (self._COL_SNR,          d['snr_v']),
+            ]:
+                bg = self._snr_bg(snr_val)
+                if bg is not None:
+                    items[col_idx].setBackground(bg)
+                    items[col_idx].setForeground(QtGui.QColor('#D1D5DB'))
 
             for col, item in enumerate(items):
                 self._summary_table.setItem(row_idx, col, item)
@@ -3088,7 +3111,7 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         headers = [
             'base', 'compare_le', 'align_status', 'roi_match_alpha', 'align_score',
             'target_mean_diff_glv', 'ref_mean_diff_glv', 'ref_std_diff_glv', 'delta_glv',
-            'snr', 'base_snr',
+            'base_snr_raw', 'base_snr_norm', 'comp_snr', 'pair_snr',
         ]
         try:
             with open(path, 'w', newline='', encoding='utf-8') as f:
@@ -3542,6 +3565,153 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         return w
 
     # ------------------------------------------------------------------
+    # Tab 2d — Compare SNR Matrix (auto-pair only)
+    # ------------------------------------------------------------------
+
+    def _build_compare_snr_matrix_tab(self) -> QtWidgets.QWidget:
+        """N×N heatmap of normalized-compare SNR — rows=base anchor, cols=compare LE.
+
+        Each cell shows the ROI SNR of the *compare* image after it has been
+        normalised through the base anchor's p2/p98 (i.e. before subtraction).
+        Comparing this matrix to the Diff SNR Pair Matrix reveals how much the
+        cross-LE clip degrades or preserves defect visibility.
+        """
+        from matplotlib.colors import LinearSegmentedColormap
+
+        w = QtWidgets.QWidget()
+        w.setStyleSheet("background: white;")
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(16, 12, 16, 8)
+        lay.setSpacing(6)
+
+        # ── Collect ordered labels ─────────────────────────────────────
+        all_labels = sorted(set(
+            [r.base_label    for r in self._all_results] +
+            [r.compare_label for r in self._all_results]
+        ))
+        n = len(all_labels)
+        label_idx = {lbl: i for i, lbl in enumerate(all_labels)}
+
+        matrix = np.full((n, n), np.nan)
+        for r in self._all_results:
+            roi_full = self._roi_results.get(r.base_label)
+            if roi_full:
+                entry = roi_full.snr_per_compare.get(r.compare_label)
+                if entry is not None:
+                    matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
+
+        # ── Pastel colormap: red → amber → green ──────────────────────
+        pastel_cmap = LinearSegmentedColormap.from_list(
+            'comp_snr_pastel',
+            [
+                (0.00, '#FECACA'),
+                (0.35, '#FDE68A'),
+                (0.65, '#BBF7D0'),
+                (1.00, '#6EE7B7'),
+            ]
+        )
+        pastel_cmap.set_bad(color='#F1F5F9')
+
+        valid = matrix[~np.isnan(matrix)]
+        vmin = 0.0
+        vmax = max(float(np.max(valid)) if valid.size else 0.0, self._SNR_GOOD) * 1.05
+
+        # ── Figure ────────────────────────────────────────────────────
+        cell_in = 1.1
+        margin  = 2.4
+        fig_w   = n * cell_in + margin
+        fig_h   = max(4.0, n * cell_in + 1.2)
+        fig = Figure(figsize=(fig_w, fig_h))
+        fig.patch.set_facecolor('white')
+        fig.subplots_adjust(left=0.18, right=0.82, top=0.88, bottom=0.18)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('white')
+
+        im = ax.imshow(matrix, cmap=pastel_cmap, aspect='equal',
+                       vmin=vmin, vmax=vmax, interpolation='nearest')
+
+        # ── Grid lines ────────────────────────────────────────────────
+        ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+        ax.grid(which='minor', color='#CBD5E1', linewidth=0.8)
+        ax.tick_params(which='minor', length=0)
+
+        # ── Colorbar ──────────────────────────────────────────────────
+        cbar = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.03)
+        cbar.set_label("Comp SNR", color='#374151', fontsize=11,
+                       fontweight='bold', labelpad=8)
+        cbar.ax.tick_params(labelcolor='#374151', color='#CBD5E1', labelsize=10)
+        cbar.outline.set_edgecolor('#CBD5E1')
+        cbar.ax.set_facecolor('white')
+        for thresh, color in [(self._SNR_OK, '#F59E0B'), (self._SNR_GOOD, '#10B981')]:
+            norm_pos = thresh / max(vmax, 1e-9)
+            if 0.0 < norm_pos < 1.0:
+                cbar.ax.axhline(norm_pos, color=color, linewidth=1.5,
+                                linestyle='--', alpha=0.85)
+                cbar.ax.text(1.25, norm_pos, f'{thresh:.0f}',
+                             transform=cbar.ax.transAxes,
+                             va='center', ha='left',
+                             color=color, fontsize=9, fontweight='bold')
+
+        # ── Cell annotations ──────────────────────────────────────────
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    ax.add_patch(
+                        __import__('matplotlib.patches', fromlist=['FancyBboxPatch'])
+                        .FancyBboxPatch(
+                            (j - 0.45, i - 0.45), 0.90, 0.90,
+                            boxstyle='round,pad=0.05',
+                            facecolor='#E2E8F0', edgecolor='none', zorder=2,
+                        )
+                    )
+                    ax.text(j, i, '—', ha='center', va='center',
+                            fontsize=12, color='#94A3B8', zorder=3)
+                elif not np.isnan(matrix[i, j]):
+                    val = matrix[i, j]
+                    if val >= self._SNR_GOOD:
+                        txt_col = '#065F46'
+                    elif val >= self._SNR_OK:
+                        txt_col = '#78350F'
+                    else:
+                        txt_col = '#7F1D1D'
+                    ax.text(j, i, f"{val:.2f}", ha='center', va='center',
+                            fontsize=12, color=txt_col, fontweight='bold', zorder=3)
+                else:
+                    ax.text(j, i, 'n/a', ha='center', va='center',
+                            fontsize=10, color='#94A3B8', zorder=3)
+
+        # ── Axes labels ───────────────────────────────────────────────
+        ax.set_xticks(range(n))
+        ax.set_yticks(range(n))
+        ax.set_xticklabels(all_labels, rotation=35, ha='right',
+                           color='#1E293B', fontsize=11, fontweight='semibold')
+        ax.set_yticklabels(all_labels, color='#1E293B', fontsize=11,
+                           fontweight='semibold')
+        ax.set_xlabel("Compare (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_ylabel("Base Anchor (LE)", color='#475569', fontsize=11,
+                      labelpad=10, fontweight='bold')
+        ax.set_title("Compare SNR Matrix  (after normalization, before subtraction)",
+                     color='#0F172A', fontsize=13, fontweight='bold', pad=14)
+        ax.tick_params(which='major', length=0, pad=6)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#E2E8F0')
+            spine.set_linewidth(1.0)
+
+        self._comp_snr_matrix_fig = fig
+        canvas = FigureCanvas(fig)
+        canvas.setStyleSheet("background: white;")
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(
+            self._make_save_btn(lambda: self._comp_snr_matrix_fig, "roi_compare_snr_matrix"))
+        lay.addWidget(canvas, stretch=1)
+        lay.addLayout(btn_row)
+        return w
+
+    # ------------------------------------------------------------------
     # Tab 3 — Per-ROI Mean across LE
     # ------------------------------------------------------------------
 
@@ -3627,10 +3797,44 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         if vxd:
             ax.plot(vxd, vyd, marker='^', color='#F87171', linewidth=1.5, label='Diff')
 
+        # Comp SNR — secondary y-axis so SNR scale doesn't compress mean intensity.
+        # SNR is computed on the normalized compare image (before subtraction);
+        # a drop here relative to the Diff SNR Matrix reveals clip-induced degradation.
+        comp_snr_vals = [
+            roi_result.snr_per_compare[le_label].snr
+            if le_label in roi_result.snr_per_compare else None
+            for le_label in le_labels
+        ]
+        vxs = [i for i, v in enumerate(comp_snr_vals) if v is not None]
+        vys = [v for v in comp_snr_vals if v is not None]
+        if vxs:
+            ax2 = ax.twinx()
+            ax2.set_facecolor(self._BG_AX)
+            ax2.tick_params(colors=self._COL_MUT, labelsize=8)
+            ax2.spines['right'].set_color(self._COL_SPL)
+            ax2.spines['top'].set_visible(False)
+            ax2.spines['left'].set_visible(False)
+            ax2.spines['bottom'].set_visible(False)
+            ax2.set_ylabel("Comp SNR", color='#A78BFA', fontsize=8, labelpad=6)
+            ax2.yaxis.label.set_color('#A78BFA')
+            ax2.tick_params(axis='y', colors='#A78BFA')
+            ax2.plot(vxs, vys, marker='D', color='#A78BFA', linewidth=1.5,
+                     linestyle=':', label='Comp SNR')
+            ax2.axhline(self._SNR_OK,   color='#F59E0B', linewidth=0.8,
+                        linestyle='--', alpha=0.6)
+            ax2.axhline(self._SNR_GOOD, color='#10B981', linewidth=0.8,
+                        linestyle='--', alpha=0.6)
+            # Merge legends from both axes
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax2.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2,
+                      facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
+        else:
+            ax.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
+
         ax.set_xticks(list(x))
         ax.set_xticklabels(le_labels, rotation=20, ha='right',
                            color=self._COL_TXT, fontsize=9)
-        ax.legend(facecolor=self._BG_FIG, labelcolor=self._COL_TXT, fontsize=8)
         self._mean_canvas.draw()
 
     # ------------------------------------------------------------------
@@ -4950,6 +5154,205 @@ def _ppt_add_condition_gallery(prs, result_rows, crop_size,
                           size=9, color=C_TEXT_SEC, align=PP_ALIGN.CENTER)
 
 
+def _ppt_add_comp_snr_matrix_slide(prs, roi_full_results, roi_all_results,
+                                    _fill_bg, _add_text,
+                                    C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                    Inches, Pt):
+    """Slide: Compare SNR Matrix (left) | Base SNR comparison bar chart (right).
+
+    Left panel  — N×N heatmap where cell[i,j] = SNR of the compare image (LE j)
+                  after being normalised through the base anchor (LE i).  This
+                  shows whether the compare image itself retains defect visibility
+                  after cross-LE normalization (GLV Mask / Percentile clip).
+
+    Right panel — Grouped bar chart: Base SNR (raw) vs Base SNR (norm) for each
+                  base LE, making it easy to see whether normalization improves
+                  or degrades the base image's own defect visibility.
+    """
+    from io import BytesIO
+    import numpy as np
+    from matplotlib.figure import Figure as _MplFig
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as _MplAgg
+    from matplotlib.colors import LinearSegmentedColormap
+    try:
+        from pptx.dml.color import RGBColor
+    except Exception:
+        return
+
+    SNR_OK, SNR_GOOD = 1.0, 2.0
+    _EPS = 1e-7
+
+    all_labels = sorted(set(
+        [r.base_label for r in roi_all_results] +
+        [r.compare_label for r in roi_all_results]
+    ))
+    n = len(all_labels)
+    if n == 0:
+        return
+    label_idx = {lbl: i for i, lbl in enumerate(all_labels)}
+
+    sl = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_bg(sl, C_BG)
+
+    # Vertical divider
+    div = sl.shapes.add_shape(1, Inches(6.63), Inches(0.05), Inches(0.03), Inches(7.4))
+    div.fill.solid()
+    div.fill.fore_color.rgb = RGBColor(0x33, 0x41, 0x55)
+    div.line.fill.background()
+
+    # ── Left: Comp SNR Matrix ─────────────────────────────────────────────
+    _add_text(sl, "Compare SNR Matrix  (normalized, before subtraction)",
+              Inches(0.2), Inches(0.05), Inches(6.3), Inches(0.48),
+              size=14, bold=True, color=C_PRIMARY)
+
+    comp_matrix = np.full((n, n), np.nan)
+    for r in roi_all_results:
+        roi_full = roi_full_results.get(r.base_label)
+        if roi_full:
+            entry = roi_full.snr_per_compare.get(r.compare_label)
+            if entry is not None:
+                comp_matrix[label_idx[r.base_label], label_idx[r.compare_label]] = entry.snr
+
+    pastel_cmap = LinearSegmentedColormap.from_list(
+        'comp_snr_pastel',
+        [(0.00, '#FECACA'), (0.35, '#FDE68A'), (0.65, '#BBF7D0'), (1.00, '#6EE7B7')]
+    )
+    pastel_cmap.set_bad(color='#F1F5F9')
+    valid_c = comp_matrix[~np.isnan(comp_matrix)]
+    vmax_c = max(float(np.max(valid_c)) if valid_c.size else 0.0, SNR_GOOD) * 1.05
+
+    cell_in = 0.9
+    fw_c = n * cell_in + 2.0
+    fh_c = max(3.8, n * cell_in + 1.0)
+    fig_c = _MplFig(figsize=(fw_c, fh_c), dpi=130)
+    fig_c.patch.set_facecolor('white')
+    fig_c.subplots_adjust(left=0.20, right=0.82, top=0.92, bottom=0.20)
+    ax_c = fig_c.add_subplot(111)
+    ax_c.set_facecolor('white')
+    im_c = ax_c.imshow(comp_matrix, cmap=pastel_cmap, aspect='equal',
+                       vmin=0.0, vmax=vmax_c, interpolation='nearest')
+    ax_c.set_xticks(np.arange(-0.5, n, 1), minor=True)
+    ax_c.set_yticks(np.arange(-0.5, n, 1), minor=True)
+    ax_c.grid(which='minor', color='#CBD5E1', linewidth=0.8)
+    ax_c.tick_params(which='minor', length=0)
+    cbar_c = fig_c.colorbar(im_c, ax=ax_c, fraction=0.038, pad=0.03)
+    cbar_c.set_label("Comp SNR", color='#374151', fontsize=9, fontweight='bold', labelpad=6)
+    cbar_c.ax.tick_params(labelcolor='#374151', labelsize=8)
+    for thresh, color in [(SNR_OK, '#F59E0B'), (SNR_GOOD, '#10B981')]:
+        npos = thresh / max(vmax_c, 1e-9)
+        if 0.0 < npos < 1.0:
+            cbar_c.ax.axhline(npos, color=color, linewidth=1.5, linestyle='--', alpha=0.85)
+    lbl_fs = max(7, min(10, 72 // n))
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                ax_c.text(j, i, '—', ha='center', va='center',
+                          fontsize=9, color='#94A3B8', zorder=3)
+            elif not np.isnan(comp_matrix[i, j]):
+                v = comp_matrix[i, j]
+                c = '#065F46' if v >= SNR_GOOD else ('#78350F' if v >= SNR_OK else '#7F1D1D')
+                ax_c.text(j, i, f"{v:.2f}", ha='center', va='center',
+                          fontsize=9, color=c, fontweight='bold', zorder=3)
+            else:
+                ax_c.text(j, i, 'n/a', ha='center', va='center',
+                          fontsize=7, color='#94A3B8', zorder=3)
+    ax_c.set_xticks(range(n))
+    ax_c.set_yticks(range(n))
+    ax_c.set_xticklabels(all_labels, rotation=35, ha='right',
+                         color='#1E293B', fontsize=lbl_fs)
+    ax_c.set_yticklabels(all_labels, color='#1E293B', fontsize=lbl_fs)
+    ax_c.set_xlabel("Compare (LE)", color='#475569', fontsize=9,
+                    labelpad=6, fontweight='bold')
+    ax_c.set_ylabel("Base Anchor (LE)", color='#475569', fontsize=9,
+                    labelpad=6, fontweight='bold')
+    ax_c.tick_params(which='major', length=0, pad=4)
+    for spine in ax_c.spines.values():
+        spine.set_edgecolor('#E2E8F0')
+    buf_c = BytesIO()
+    _MplAgg(fig_c).print_figure(buf_c, format='png', dpi=130, facecolor='white')
+    buf_c.seek(0)
+    sl.shapes.add_picture(buf_c, Inches(0.2), Inches(0.6), width=Inches(6.3))
+
+    # ── Right: Base SNR raw vs norm grouped bar chart ─────────────────────
+    _add_text(sl, "Base SNR: Raw vs Normalized",
+              Inches(6.8), Inches(0.05), Inches(6.35), Inches(0.48),
+              size=14, bold=True, color=C_PRIMARY)
+
+    BG_FIG = '#1F2937'
+    BG_AX  = '#111827'
+    COL_TXT = '#D1D5DB'
+    COL_GRD = '#374151'
+    COL_SPL = '#4B5563'
+
+    base_labels_sorted = sorted(roi_full_results.keys())
+    raw_vals, norm_vals = [], []
+    for bl in base_labels_sorted:
+        rf = roi_full_results[bl]
+        # raw
+        raw_v = rf.raw_snr_base.snr if rf.raw_snr_base is not None else None
+        raw_vals.append(raw_v if raw_v is not None else 0.0)
+        # norm (from base layer)
+        _bl2  = rf.get_base_layer()
+        _tr2  = rf.roi_set.get_target()
+        _rrs2 = rf.roi_set.get_references()
+        norm_v = None
+        if _bl2 and _tr2 and _rrs2:
+            _ts2  = _bl2.roi_stats.get(_tr2.id)
+            _rms2 = [_bl2.roi_stats[_r.id].mean for _r in _rrs2 if _r.id in _bl2.roi_stats]
+            if _ts2 and _rms2:
+                _rm2 = float(np.mean(_rms2))
+                _rs2 = (float(np.std(_rms2)) if len(_rms2) >= 2
+                        else float(_bl2.roi_stats[_rrs2[0].id].std) if _rrs2 else 0.0)
+                norm_v = max(0.0, (_ts2.mean - _rm2) / _rs2) if _rs2 > _EPS else 0.0
+        norm_vals.append(norm_v if norm_v is not None else 0.0)
+
+    nb = len(base_labels_sorted)
+    xs = np.arange(nb)
+    fw_b = max(4.0, nb * 1.4 + 2.0)
+    fig_b = _MplFig(figsize=(fw_b, 4.2), dpi=130)
+    fig_b.patch.set_facecolor(BG_FIG)
+    fig_b.subplots_adjust(left=0.14, right=0.96, top=0.88, bottom=0.26)
+    ax_b = fig_b.add_subplot(111)
+    ax_b.set_facecolor(BG_AX)
+    ax_b.tick_params(colors=COL_TXT, labelsize=8)
+    for side in ('bottom', 'left'):
+        ax_b.spines[side].set_color(COL_SPL)
+    ax_b.spines['top'].set_visible(False)
+    ax_b.spines['right'].set_visible(False)
+    ax_b.grid(True, axis='y', color=COL_GRD, linewidth=0.5, linestyle='--')
+
+    bar_w = 0.35
+    bars_raw  = ax_b.bar(xs - bar_w / 2, raw_vals,  width=bar_w, color='#60A5FA',
+                          alpha=0.85, label='Raw',  zorder=3)
+    bars_norm = ax_b.bar(xs + bar_w / 2, norm_vals, width=bar_w, color='#34D399',
+                          alpha=0.85, label='Norm', zorder=3)
+    sp = 0.04
+    for xi, (rv, nv) in enumerate(zip(raw_vals, norm_vals)):
+        ax_b.text(xi - bar_w / 2, rv + sp, f"{rv:.2f}", ha='center', va='bottom',
+                  fontsize=7.5, color=COL_TXT)
+        ax_b.text(xi + bar_w / 2, nv + sp, f"{nv:.2f}", ha='center', va='bottom',
+                  fontsize=7.5, color=COL_TXT)
+
+    y_max = max(max(raw_vals + norm_vals, default=SNR_GOOD), SNR_GOOD) * 1.20
+    ax_b.set_ylim(0, y_max)
+    ax_b.axhline(SNR_OK,   color='#FBBF24', linewidth=1.2, linestyle='--', alpha=0.8,
+                 label=f'OK (≥{SNR_OK})')
+    ax_b.axhline(SNR_GOOD, color='#34D399', linewidth=1.2, linestyle='--', alpha=0.6,
+                 label=f'Good (≥{SNR_GOOD})')
+    ax_b.set_xticks(xs)
+    ax_b.set_xticklabels(base_labels_sorted, rotation=30, ha='right',
+                         color=COL_TXT, fontsize=8)
+    ax_b.set_ylabel("Base SNR", color=COL_TXT, fontsize=9, labelpad=4)
+    ax_b.set_title("Base SNR: Raw (🔵) vs Normalized (🟢)",
+                   color=COL_TXT, fontsize=9, fontweight='bold', pad=6)
+    ax_b.legend(facecolor=BG_FIG, labelcolor=COL_TXT, fontsize=8, loc='upper right')
+
+    buf_b = BytesIO()
+    _MplAgg(fig_b).print_figure(buf_b, format='png', dpi=130, facecolor=BG_FIG)
+    buf_b.seek(0)
+    sl.shapes.add_picture(buf_b, Inches(6.8), Inches(0.60), width=Inches(6.35))
+
+
 def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
                         _fill_bg, _add_text, _score_color,
                         C_BG, C_CARD, C_TEXT, C_TEXT_SEC,
@@ -4978,17 +5381,36 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
     # ── Build row data ───────────────────────────────────────────────────
     roi_rows = []
     for r in roi_all_results:
-        roi_full = roi_full_results.get(r.base_label)
-        entry    = roi_full.snr_per_diff.get(r.compare_label) if roi_full else None
-        status   = (r.alignment.status if r.alignment else '—')
-        score_v  = r.alignment.final_score if r.alignment else None
-        alpha    = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else '—'
+        roi_full   = roi_full_results.get(r.base_label)
+        entry      = roi_full.snr_per_diff.get(r.compare_label)    if roi_full else None
+        comp_entry = roi_full.snr_per_compare.get(r.compare_label) if roi_full else None
+        raw_entry  = roi_full.raw_snr_base                          if roi_full else None
+
+        # Base SNR (norm) from the normalized base layer using same formula
+        _base_snr_norm = None
+        if roi_full:
+            _bl  = roi_full.get_base_layer()
+            _tr  = roi_full.roi_set.get_target()
+            _rrs = roi_full.roi_set.get_references()
+            if _bl and _tr and _rrs:
+                _ts  = _bl.roi_stats.get(_tr.id)
+                _rms = [_bl.roi_stats[_r.id].mean for _r in _rrs if _r.id in _bl.roi_stats]
+                if _ts and _rms:
+                    import numpy as _np2
+                    _rm = float(_np2.mean(_rms))
+                    _rs = float(_np2.std(_rms)) if len(_rms) >= 2 else (
+                          float(_bl.roi_stats[_rrs[0].id].std) if _rrs else 0.0)
+                    _base_snr_norm = max(0.0, (_ts.mean - _rm) / _rs) if _rs > 1e-7 else 0.0
+
+        status  = (r.alignment.status if r.alignment else '—')
+        score_v = r.alignment.final_score if r.alignment else None
+        alpha   = f"{r.roi_match_alpha:.4f}" if r.roi_match_alpha is not None else '—'
+
         if entry is not None:
-            # Scale to GLV (0-255) for display.
-            mu_t_glv    = entry.mu_target * 255.0
-            mu_r_glv    = entry.mu_ref    * 255.0
-            sigma_glv   = entry.sigma_ref * 255.0
-            delta       = mu_t_glv - mu_r_glv
+            mu_t_glv  = entry.mu_target * 255.0
+            mu_r_glv  = entry.mu_ref    * 255.0
+            sigma_glv = entry.sigma_ref * 255.0
+            delta     = mu_t_glv - mu_r_glv
             roi_rows.append({
                 'base': r.base_label, 'compare': r.compare_label,
                 'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
@@ -4998,7 +5420,13 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
                 'mu_r':  f"{mu_r_glv:.2f}",
                 'sigma': f"{sigma_glv:.2f}",
                 'delta': f"{delta:+.2f}",
-                'snr':   f"{entry.snr:.3f}", 'snr_v': entry.snr,
+                'snr':   f"{entry.snr:.3f}",        'snr_v':      entry.snr,
+                'comp_snr': f"{comp_entry.snr:.3f}" if comp_entry else '—',
+                            'comp_snr_v': comp_entry.snr if comp_entry else None,
+                'base_raw':  f"{raw_entry.snr:.3f}" if raw_entry  else '—',
+                             'base_raw_v': raw_entry.snr  if raw_entry  else None,
+                'base_norm': f"{_base_snr_norm:.3f}" if _base_snr_norm is not None else '—',
+                             'base_norm_v': _base_snr_norm,
             })
         else:
             roi_rows.append({
@@ -5006,21 +5434,33 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
                 'status': status, 'status_col': _STATUS_COLS.get(status.lower(), C_TEXT_SEC),
                 'alpha': alpha,
                 'score': f"{score_v:.1f}" if score_v is not None else '—', 'score_v': score_v,
-                'mu_t': '—', 'mu_r': '—', 'sigma': '—', 'delta': '—', 'snr': '—', 'snr_v': None,
+                'mu_t': '—', 'mu_r': '—', 'sigma': '—', 'delta': '—',
+                'snr': '—', 'snr_v': None,
+                'comp_snr': f"{comp_entry.snr:.3f}" if comp_entry else '—',
+                            'comp_snr_v': comp_entry.snr if comp_entry else None,
+                'base_raw':  f"{raw_entry.snr:.3f}" if raw_entry  else '—',
+                             'base_raw_v': raw_entry.snr  if raw_entry  else None,
+                'base_norm': f"{_base_snr_norm:.3f}" if _base_snr_norm is not None else '—',
+                             'base_norm_v': _base_snr_norm,
             })
 
     # ── Column layout (x in inches, width in inches) ─────────────────────
+    # SNR group is on the right: Base(raw) | Base(norm) | Comp SNR | Pair SNR
+    # Slide width = 13.33". Total used ≈ 12.85" leaving 0.25" right margin.
     roi_cols = [
-        ("Base",     0.40, 1.85),
-        ("Compare",  2.30, 1.85),
-        ("Status",   4.20, 0.95),
-        ("α",        5.20, 0.80),
-        ("Score",    6.05, 0.80),
-        ("T Mean",   6.90, 1.05),
-        ("R Mean",   8.00, 1.05),
-        ("R Std",    9.10, 1.05),
-        ("Δ",       10.20, 1.05),
-        ("SNR",     11.30, 1.60),
+        ("Base",       0.20, 1.40),
+        ("Compare",    1.65, 1.40),
+        ("Status",     3.10, 0.75),
+        ("α",          3.90, 0.65),
+        ("Score",      4.60, 0.65),
+        ("T Mean",     5.30, 0.82),
+        ("R Mean",     6.17, 0.82),
+        ("R Std",      7.04, 0.78),
+        ("Δ",          7.87, 0.78),
+        ("Base(raw)",  8.70, 0.82),
+        ("Base(norm)", 9.57, 0.82),
+        ("Comp SNR",  10.44, 0.82),
+        ("Pair SNR",  11.31, 1.29),
     ]
 
     ROWS_PER = 20
@@ -5052,26 +5492,28 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
             bg.fill.fore_color.rgb = C_CARD if ri % 2 == 0 else C_BG
             bg.line.fill.background()
 
-            snr_v = d['snr_v']
-            snr_c = (C_SNR_GOOD if snr_v is not None and snr_v >= 2.0 else
-                     C_SNR_MID  if snr_v is not None and snr_v >= 1.0 else
-                     C_SNR_BAD  if snr_v is not None else C_TEXT_SEC)
+            def _snr_col(v):
+                if v is None: return C_TEXT_SEC
+                return C_SNR_GOOD if v >= 2.0 else (C_SNR_MID if v >= 1.0 else C_SNR_BAD)
 
             cell_vals = [
-                (d['base'],    C_TEXT),
-                (d['compare'], C_TEXT),
-                (d['status'],  d['status_col']),
-                (d['alpha'],   C_TEXT_SEC),
-                (d['score'],   _score_color(d['score_v']) if d['score_v'] is not None else C_TEXT_SEC),
-                (d['mu_t'],    C_TEXT),
-                (d['mu_r'],    C_TEXT),
-                (d['sigma'],   C_TEXT_SEC),
-                (d['delta'],   C_TEXT),
-                (d['snr'],     snr_c),
+                (d['base'],       C_TEXT),
+                (d['compare'],    C_TEXT),
+                (d['status'],     d['status_col']),
+                (d['alpha'],      C_TEXT_SEC),
+                (d['score'],      _score_color(d['score_v']) if d['score_v'] is not None else C_TEXT_SEC),
+                (d['mu_t'],       C_TEXT),
+                (d['mu_r'],       C_TEXT),
+                (d['sigma'],      C_TEXT_SEC),
+                (d['delta'],      C_TEXT),
+                (d['base_raw'],   _snr_col(d['base_raw_v'])),
+                (d['base_norm'],  _snr_col(d['base_norm_v'])),
+                (d['comp_snr'],   _snr_col(d['comp_snr_v'])),
+                (d['snr'],        _snr_col(d['snr_v'])),
             ]
             for (val, col), (_, cx, cw) in zip(cell_vals, roi_cols):
                 _add_text(sl, val, Inches(cx), y + Inches(0.02), Inches(cw), row_h,
-                          size=8, color=col)
+                          size=7.5, color=col)
 
     # ── SNR Chart slide ──────────────────────────────────────────────────
     BG_FIG  = '#1F2937'
@@ -5178,6 +5620,12 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
                           _fill_bg, _add_text,
                           C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
                           Inches, Pt)
+
+    # ── Comp SNR Matrix slide ─────────────────────────────────────────────
+    _ppt_add_comp_snr_matrix_slide(prs, roi_full_results, roi_all_results,
+                                   _fill_bg, _add_text,
+                                   C_BG, C_CARD, C_TEXT, C_TEXT_SEC, C_PRIMARY,
+                                   Inches, Pt)
 
 
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
