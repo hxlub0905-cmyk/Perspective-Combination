@@ -32,40 +32,94 @@ from perscomb.ui.design_tokens import (
 # Constants
 # ---------------------------------------------------------------------------
 IMAGE_FILTERS = "Images (*.tif *.tiff *.png *.bmp *.jpg *.jpeg);;All Files (*)"
+IMAGE_EXTENSIONS = {".tif", ".tiff", ".png", ".bmp", ".jpg", ".jpeg"}
 DEFAULT_SUFFIX = "_matched"
 THUMB_SIZE = 200  # preview thumbnail edge length
 
+# Matching method identifiers
+METHOD_EXACT = "Exact Histogram Matching"
+METHOD_LINEAR = "Linear (Mean / Std)"
+METHOD_PERCENTILE = "Percentile Stretch (P2 / P98)"
+
 
 # ============================================================================
-# Core: histogram matching (pure numpy, no extra dependency)
+# Core: matching algorithms (pure numpy, no extra dependency)
 # ============================================================================
 
-def match_histogram(source: np.ndarray, reference: np.ndarray) -> np.ndarray:
-    """Match the histogram of *source* to that of *reference*.
+def match_histogram_exact(source: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """CDF-based exact histogram matching.
 
-    Supports 8-bit and 16-bit grayscale images.  The output has the same
-    dtype as the source.
+    Maps the source histogram to match the reference histogram exactly
+    via cumulative distribution function inversion.
+    Supports 8-bit and 16-bit grayscale.
     """
     src_dtype = source.dtype
-    if src_dtype == np.uint16:
-        max_val = 65536
-    else:
-        max_val = 256
+    max_val = 65536 if src_dtype == np.uint16 else 256
 
-    # Compute CDFs
     src_hist, _ = np.histogram(source.flatten(), bins=max_val, range=(0, max_val))
     ref_hist, _ = np.histogram(reference.flatten(), bins=max_val, range=(0, max_val))
 
     src_cdf = src_hist.cumsum().astype(np.float64)
     ref_cdf = ref_hist.cumsum().astype(np.float64)
-
     src_cdf /= src_cdf[-1]
     ref_cdf /= ref_cdf[-1]
 
-    # Build look-up table: for each source intensity find closest ref intensity
     mapping = np.interp(src_cdf, ref_cdf, np.arange(max_val)).astype(src_dtype)
-
     return mapping[source]
+
+
+def match_histogram_linear(source: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Linear normalisation — shift & scale so mean/std match reference.
+
+    Preserves the original histogram *shape* while aligning brightness
+    and contrast.  Most natural-looking result for SEM images.
+    """
+    src_dtype = source.dtype
+    max_val = 65535 if src_dtype == np.uint16 else 255
+
+    src_f = source.astype(np.float64)
+    ref_f = reference.astype(np.float64)
+
+    s_mean, s_std = src_f.mean(), src_f.std()
+    r_mean, r_std = ref_f.mean(), ref_f.std()
+
+    if s_std < 1e-6:
+        return source.copy()
+
+    result = (src_f - s_mean) * (r_std / s_std) + r_mean
+    return np.clip(result, 0, max_val).astype(src_dtype)
+
+
+def match_histogram_percentile(source: np.ndarray, reference: np.ndarray,
+                                low: float = 2.0, high: float = 98.0) -> np.ndarray:
+    """Percentile-based linear stretch.
+
+    Maps the [P_low, P_high] range of the source to match that of the
+    reference.  More robust to outliers than mean/std.
+    """
+    src_dtype = source.dtype
+    max_val = 65535 if src_dtype == np.uint16 else 255
+
+    src_f = source.astype(np.float64)
+    ref_f = reference.astype(np.float64)
+
+    s_lo, s_hi = np.percentile(src_f, [low, high])
+    r_lo, r_hi = np.percentile(ref_f, [low, high])
+
+    if (s_hi - s_lo) < 1e-6:
+        return source.copy()
+
+    scale = (r_hi - r_lo) / (s_hi - s_lo)
+    result = (src_f - s_lo) * scale + r_lo
+    return np.clip(result, 0, max_val).astype(src_dtype)
+
+
+# Dispatch table
+_MATCH_FN = {
+    METHOD_EXACT: match_histogram_exact,
+    METHOD_LINEAR: match_histogram_linear,
+    METHOD_PERCENTILE: match_histogram_percentile,
+}
 
 
 def compute_histogram(image: np.ndarray, bins: int = 256) -> tuple[np.ndarray, np.ndarray]:
@@ -73,6 +127,42 @@ def compute_histogram(image: np.ndarray, bins: int = 256) -> tuple[np.ndarray, n
     max_val = 65536 if image.dtype == np.uint16 else 256
     counts, edges = np.histogram(image.flatten(), bins=bins, range=(0, max_val))
     return counts, edges
+
+
+def image_stats(image: np.ndarray) -> dict:
+    """Compute summary statistics for a grayscale image."""
+    flat = image.astype(np.float64).ravel()
+    p2, p50, p98 = np.percentile(flat, [2, 50, 98])
+    return {
+        "mean": flat.mean(),
+        "std": flat.std(),
+        "min": flat.min(),
+        "max": flat.max(),
+        "P2": p2,
+        "median": p50,
+        "P98": p98,
+    }
+
+
+# ============================================================================
+# Utility: load grayscale image
+# ============================================================================
+
+def _load_gray(path: str) -> Optional[np.ndarray]:
+    """Load an image as grayscale, returning None on failure."""
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        return None
+    if img.ndim == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return img
+
+
+def _to_display_8bit(img: np.ndarray) -> np.ndarray:
+    """Convert to 8-bit for display (handles 16-bit)."""
+    if img.dtype == np.uint16:
+        return (img / 256).astype(np.uint8)
+    return img.astype(np.uint8)
 
 
 # ============================================================================
@@ -136,15 +226,26 @@ def _global_stylesheet() -> str:
         QPushButton#primary:disabled {{
             background: {Colors.TEXT_MUTED};
         }}
-        QLineEdit {{
+        QLineEdit, QComboBox {{
             border: 1px solid {Colors.BORDER_DEFAULT};
             border-radius: {BorderRadius.SM};
             padding: {Spacing.INPUT_PADDING};
             min-height: {Sizing.INPUT_HEIGHT};
             background: {Colors.BG_INPUT};
         }}
-        QLineEdit:focus {{
+        QLineEdit:focus, QComboBox:focus {{
             border-color: {Colors.BORDER_FOCUS};
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 24px;
+        }}
+        QComboBox::down-arrow {{
+            image: none;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid {Colors.TEXT_SECONDARY};
+            margin-right: 8px;
         }}
         QListWidget {{
             border: 1px solid {Colors.BORDER_DEFAULT};
@@ -179,6 +280,25 @@ def _global_stylesheet() -> str:
             color: {Colors.TEXT_MUTED};
             font-size: {Typography.FONT_SIZE_SMALL};
         }}
+        QTableWidget {{
+            border: 1px solid {Colors.BORDER_DEFAULT};
+            border-radius: {BorderRadius.SM};
+            background: {Colors.BG_INPUT};
+            gridline-color: {Colors.BORDER_DEFAULT};
+            font-size: {Typography.FONT_SIZE_SMALL};
+        }}
+        QTableWidget::item {{
+            padding: 2px 6px;
+        }}
+        QHeaderView::section {{
+            background: {Colors.BG_SUBTLE};
+            border: none;
+            border-bottom: 1px solid {Colors.BORDER_DEFAULT};
+            border-right: 1px solid {Colors.BORDER_DEFAULT};
+            padding: 4px 6px;
+            font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+            font-size: {Typography.FONT_SIZE_SMALL};
+        }}
     """
 
 
@@ -190,9 +310,7 @@ class HistogramCanvas(FigureCanvas):
         self._fig.patch.set_facecolor(Colors.BG_PANEL)
         super().__init__(self._fig)
         self.setParent(parent)
-        self.setMinimumHeight(180)
-
-    # -- public API ----------------------------------------------------------
+        self.setMinimumHeight(170)
 
     def plot_single(self, image: np.ndarray, title: str = "Histogram",
                     color: str = Colors.BRAND_PRIMARY) -> None:
@@ -246,6 +364,48 @@ class HistogramCanvas(FigureCanvas):
         self.draw()
 
 
+class ImagePreviewCanvas(FigureCanvas):
+    """Matplotlib canvas that shows Before / After image side-by-side."""
+
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
+        self._fig = Figure(figsize=(5, 2.8), dpi=100)
+        self._fig.patch.set_facecolor(Colors.BG_PANEL)
+        super().__init__(self._fig)
+        self.setParent(parent)
+        self.setMinimumHeight(200)
+
+    def show_comparison(self, before: np.ndarray, after: np.ndarray,
+                        name: str = "") -> None:
+        """Display before/after images side-by-side."""
+        self._fig.clear()
+
+        ax1 = self._fig.add_subplot(121)
+        ax2 = self._fig.add_subplot(122)
+
+        before_8 = _to_display_8bit(before)
+        after_8 = _to_display_8bit(after)
+
+        ax1.imshow(before_8, cmap="gray", vmin=0, vmax=255)
+        ax1.set_title("Before", fontsize=10, fontweight="semibold",
+                      color=Colors.TEXT_PRIMARY)
+        ax1.axis("off")
+
+        ax2.imshow(after_8, cmap="gray", vmin=0, vmax=255)
+        ax2.set_title("After", fontsize=10, fontweight="semibold",
+                      color=Colors.TEXT_PRIMARY)
+        ax2.axis("off")
+
+        if name:
+            self._fig.suptitle(name, fontsize=10, fontweight="semibold",
+                               color=Colors.TEXT_PRIMARY, y=0.99)
+        self._fig.tight_layout()
+        self.draw()
+
+    def clear_display(self) -> None:
+        self._fig.clear()
+        self.draw()
+
+
 class ImageThumbLabel(QtWidgets.QLabel):
     """A small label that displays a grayscale thumbnail."""
 
@@ -254,16 +414,17 @@ class ImageThumbLabel(QtWidgets.QLabel):
         self._size = size
         self.setFixedSize(size, size)
         self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setStyleSheet(
+        self._base_style = (
             f"border: 1px solid {Colors.BORDER_DEFAULT}; "
             f"border-radius: {BorderRadius.SM}; "
             f"background: {Colors.BG_VIEWER};"
         )
+        self.setStyleSheet(self._base_style)
         self._set_placeholder()
 
     def _set_placeholder(self):
         self.setText("No image")
-        self.setStyleSheet(self.styleSheet() + f" color: {Colors.TEXT_MUTED};")
+        self.setStyleSheet(self._base_style + f" color: {Colors.TEXT_MUTED};")
 
     def set_image(self, img: np.ndarray) -> None:
         """Display a grayscale numpy array as a thumbnail."""
@@ -272,16 +433,119 @@ class ImageThumbLabel(QtWidgets.QLabel):
         new_w, new_h = int(w * scale), int(h * scale)
         resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        # Normalize to 8-bit for display
-        if resized.dtype == np.uint16:
-            disp = (resized / 256).astype(np.uint8)
-        else:
-            disp = resized.astype(np.uint8)
-
+        disp = _to_display_8bit(resized)
         qimg = QtGui.QImage(disp.data, new_w, new_h, new_w,
                             QtGui.QImage.Format_Grayscale8)
         pixmap = QtGui.QPixmap.fromImage(qimg)
         self.setPixmap(pixmap)
+        self.setStyleSheet(self._base_style)
+
+
+class StatsTable(QtWidgets.QTableWidget):
+    """Compact statistics table showing Base / Before / After columns."""
+
+    _ROWS = ["Mean", "Std", "Min", "Max", "P2", "Median", "P98"]
+    _KEYS = ["mean", "std", "min", "max", "P2", "median", "P98"]
+
+    def __init__(self, parent=None):
+        super().__init__(len(self._ROWS), 3, parent)
+        self.setHorizontalHeaderLabels(["Base", "Before", "After"])
+        self.setVerticalHeaderLabels(self._ROWS)
+        self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.Stretch
+        )
+        self.verticalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents
+        )
+        self.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.setMaximumHeight(210)
+
+    def update_stats(self, base_stats: dict, before_stats: Optional[dict] = None,
+                     after_stats: Optional[dict] = None) -> None:
+        cols = [base_stats, before_stats, after_stats]
+        for col_idx, stats in enumerate(cols):
+            for row_idx, key in enumerate(self._KEYS):
+                if stats is not None:
+                    val = stats[key]
+                    text = f"{val:.1f}"
+                else:
+                    text = "—"
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self.setItem(row_idx, col_idx, item)
+
+
+# ---------------------------------------------------------------------------
+# Drag-and-drop helpers
+# ---------------------------------------------------------------------------
+
+def _image_paths_from_mime(mime_data: QtCore.QMimeData) -> list[str]:
+    """Extract valid image file paths from drag-and-drop mime data."""
+    paths = []
+    if mime_data.hasUrls():
+        for url in mime_data.urls():
+            p = url.toLocalFile()
+            if p and Path(p).suffix.lower() in IMAGE_EXTENSIONS:
+                paths.append(p)
+    return paths
+
+
+class DropTargetListWidget(QtWidgets.QListWidget):
+    """QListWidget that accepts image file drops."""
+
+    files_dropped = QtCore.Signal(list)  # list[str]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
+        if _image_paths_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent):
+        event.acceptProposedAction()
+
+    def dropEvent(self, event: QtGui.QDropEvent):
+        paths = _image_paths_from_mime(event.mimeData())
+        if paths:
+            self.files_dropped.emit(paths)
+            event.acceptProposedAction()
+
+
+class DropTargetThumb(ImageThumbLabel):
+    """ImageThumbLabel that accepts a single image drop."""
+
+    file_dropped = QtCore.Signal(str)
+
+    def __init__(self, parent=None, size: int = THUMB_SIZE):
+        super().__init__(parent, size)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
+        paths = _image_paths_from_mime(event.mimeData())
+        if len(paths) >= 1:
+            event.acceptProposedAction()
+            self.setStyleSheet(
+                self._base_style
+                + f" border: 2px solid {Colors.BRAND_PRIMARY};"
+            )
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet(self._base_style)
+
+    def dropEvent(self, event: QtGui.QDropEvent):
+        paths = _image_paths_from_mime(event.mimeData())
+        if paths:
+            self.file_dropped.emit(paths[0])
+            event.acceptProposedAction()
+        self.setStyleSheet(self._base_style)
 
 
 # ============================================================================
@@ -293,13 +557,15 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Histogram Matcher \u2014 Fusi\u00b3")
-        self.setMinimumSize(960, 720)
+        self.setMinimumSize(1100, 780)
 
         self._base_path: Optional[str] = None
         self._base_image: Optional[np.ndarray] = None
+        self._base_stats: Optional[dict] = None
         self._target_paths: list[str] = []
         self._output_dir: Optional[str] = None
-        self._results: list[tuple[str, np.ndarray, np.ndarray]] = []  # (name, before, after)
+        # (name, before_img, after_img)
+        self._results: list[tuple[str, np.ndarray, np.ndarray]] = []
 
         self._build_ui()
 
@@ -320,7 +586,9 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
             f"font-weight: {Typography.FONT_WEIGHT_BOLD}; "
             f"color: {Colors.BRAND_PRIMARY};"
         )
-        subtitle_lbl = QtWidgets.QLabel("Match target image histograms to a base reference")
+        subtitle_lbl = QtWidgets.QLabel(
+            "Match target image histograms to a base reference"
+        )
         subtitle_lbl.setObjectName("muted")
         title_bar.addWidget(title_lbl)
         title_bar.addSpacing(12)
@@ -331,7 +599,9 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         # ---- Top accent line ----
         accent = QtWidgets.QFrame()
         accent.setFixedHeight(3)
-        accent.setStyleSheet(f"background: {Colors.BRAND_PRIMARY}; border: none;")
+        accent.setStyleSheet(
+            f"background: {Colors.BRAND_PRIMARY}; border: none;"
+        )
         root.addWidget(accent)
 
         # ---- Content: left panel + right preview ----
@@ -339,7 +609,7 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         content.setSpacing(16)
         root.addLayout(content, stretch=1)
 
-        # LEFT: controls
+        # LEFT: controls --------------------------------------------------
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(10)
         content.addLayout(left, stretch=0)
@@ -347,7 +617,8 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         # -- Base image group --
         base_grp = QtWidgets.QGroupBox("Base Image (Reference)")
         base_lay = QtWidgets.QHBoxLayout(base_grp)
-        self._base_thumb = ImageThumbLabel(size=120)
+        self._base_thumb = DropTargetThumb(size=120)
+        self._base_thumb.file_dropped.connect(self._load_base)
         base_lay.addWidget(self._base_thumb)
 
         base_right = QtWidgets.QVBoxLayout()
@@ -355,6 +626,12 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         self._base_path_lbl.setObjectName("muted")
         self._base_path_lbl.setWordWrap(True)
         base_right.addWidget(self._base_path_lbl)
+        drop_hint = QtWidgets.QLabel("Drop image here or click Browse")
+        drop_hint.setObjectName("muted")
+        drop_hint.setStyleSheet(
+            f"color: {Colors.TEXT_MUTED}; font-size: {Typography.FONT_SIZE_CAPTION};"
+        )
+        base_right.addWidget(drop_hint)
         btn_base = QtWidgets.QPushButton("Browse...")
         btn_base.setFixedWidth(120)
         btn_base.clicked.connect(self._on_browse_base)
@@ -367,11 +644,21 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         target_grp = QtWidgets.QGroupBox("Target Images")
         target_lay = QtWidgets.QVBoxLayout(target_grp)
 
-        self._target_list = QtWidgets.QListWidget()
+        target_hint = QtWidgets.QLabel(
+            "Drag & drop image files here, or use Add Files"
+        )
+        target_hint.setObjectName("muted")
+        target_hint.setStyleSheet(
+            f"color: {Colors.TEXT_MUTED}; font-size: {Typography.FONT_SIZE_CAPTION};"
+        )
+        target_lay.addWidget(target_hint)
+
+        self._target_list = DropTargetListWidget()
         self._target_list.setSelectionMode(
             QtWidgets.QAbstractItemView.ExtendedSelection
         )
-        self._target_list.setMinimumHeight(120)
+        self._target_list.setMinimumHeight(110)
+        self._target_list.files_dropped.connect(self._add_target_paths)
         target_lay.addWidget(self._target_list)
 
         tgt_btns = QtWidgets.QHBoxLayout()
@@ -386,9 +673,14 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         target_lay.addLayout(tgt_btns)
         left.addWidget(target_grp)
 
-        # -- Output settings group --
-        out_grp = QtWidgets.QGroupBox("Output Settings")
-        out_lay = QtWidgets.QFormLayout(out_grp)
+        # -- Method & Output settings group --
+        settings_grp = QtWidgets.QGroupBox("Settings")
+        settings_lay = QtWidgets.QFormLayout(settings_grp)
+
+        self._method_combo = QtWidgets.QComboBox()
+        self._method_combo.addItems([METHOD_EXACT, METHOD_LINEAR, METHOD_PERCENTILE])
+        self._method_combo.setCurrentText(METHOD_EXACT)
+        settings_lay.addRow("Method:", self._method_combo)
 
         out_dir_row = QtWidgets.QHBoxLayout()
         self._out_dir_edit = QtWidgets.QLineEdit()
@@ -399,12 +691,12 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         btn_out.clicked.connect(self._on_browse_output)
         out_dir_row.addWidget(self._out_dir_edit, stretch=1)
         out_dir_row.addWidget(btn_out)
-        out_lay.addRow("Output folder:", out_dir_row)
+        settings_lay.addRow("Output folder:", out_dir_row)
 
         self._suffix_edit = QtWidgets.QLineEdit(DEFAULT_SUFFIX)
         self._suffix_edit.setMaximumWidth(200)
-        out_lay.addRow("Filename suffix:", self._suffix_edit)
-        left.addWidget(out_grp)
+        settings_lay.addRow("Filename suffix:", self._suffix_edit)
+        left.addWidget(settings_grp)
 
         # -- Run button --
         self._btn_run = QtWidgets.QPushButton("\u25b6  Run Matching")
@@ -425,18 +717,26 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
 
         left.addStretch()
 
-        # RIGHT: preview area
+        # RIGHT: preview area ------------------------------------------------
         right = QtWidgets.QVBoxLayout()
-        right.setSpacing(8)
+        right.setSpacing(6)
         content.addLayout(right, stretch=1)
 
         # Base histogram
         self._base_canvas = HistogramCanvas()
-        right.addWidget(self._base_canvas, stretch=1)
+        right.addWidget(self._base_canvas, stretch=2)
 
-        # Result comparison
+        # Before/After image preview
+        self._preview_canvas = ImagePreviewCanvas()
+        right.addWidget(self._preview_canvas, stretch=3)
+
+        # Before/After histogram comparison
         self._result_canvas = HistogramCanvas()
-        right.addWidget(self._result_canvas, stretch=1)
+        right.addWidget(self._result_canvas, stretch=2)
+
+        # Statistics table
+        self._stats_table = StatsTable()
+        right.addWidget(self._stats_table, stretch=0)
 
         # Navigation for results
         nav = QtWidgets.QHBoxLayout()
@@ -459,39 +759,47 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
 
     # -- Slots: file selection ------------------------------------------------
 
+    def _load_base(self, path: str) -> None:
+        """Load a base image from *path* (used by both Browse and drag-drop)."""
+        img = _load_gray(path)
+        if img is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Error", f"Cannot read image:\n{path}"
+            )
+            return
+
+        self._base_path = path
+        self._base_image = img
+        self._base_stats = image_stats(img)
+        self._base_path_lbl.setText(Path(path).name)
+        self._base_thumb.set_image(img)
+        self._base_canvas.plot_single(
+            img, title="Base Histogram", color=Colors.BRAND_PRIMARY
+        )
+        self._stats_table.update_stats(self._base_stats)
+
+        if not self._output_dir:
+            self._out_dir_edit.setPlaceholderText(str(Path(path).parent))
+
     def _on_browse_base(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select Base Image", "", IMAGE_FILTERS
         )
-        if not path:
-            return
-        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-        if img is None:
-            QtWidgets.QMessageBox.warning(self, "Error",
-                                          f"Cannot read image:\n{path}")
-            return
-        if img.ndim == 3:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if path:
+            self._load_base(path)
 
-        self._base_path = path
-        self._base_image = img
-        self._base_path_lbl.setText(Path(path).name)
-        self._base_thumb.set_image(img)
-        self._base_canvas.plot_single(img, title="Base Histogram",
-                                       color=Colors.BRAND_PRIMARY)
-
-        # default output dir
-        if not self._output_dir:
-            self._out_dir_edit.setPlaceholderText(str(Path(path).parent))
+    def _add_target_paths(self, paths: list[str]) -> None:
+        """Add target paths (from Browse or drag-drop), avoiding duplicates."""
+        for p in paths:
+            if p not in self._target_paths and p != self._base_path:
+                self._target_paths.append(p)
+                self._target_list.addItem(Path(p).name)
 
     def _on_add_targets(self):
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self, "Select Target Images", "", IMAGE_FILTERS
         )
-        for p in paths:
-            if p not in self._target_paths and p != self._base_path:
-                self._target_paths.append(p)
-                self._target_list.addItem(Path(p).name)
+        self._add_target_paths(paths)
 
     def _on_remove_targets(self):
         for item in reversed(self._target_list.selectedItems()):
@@ -515,14 +823,18 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
 
     def _on_run(self):
         if self._base_image is None:
-            QtWidgets.QMessageBox.warning(self, "Error",
-                                          "Please select a base image first.")
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "Please select a base image first."
+            )
             return
         if not self._target_paths:
-            QtWidgets.QMessageBox.warning(self, "Error",
-                                          "Please add at least one target image.")
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "Please add at least one target image."
+            )
             return
 
+        method_name = self._method_combo.currentText()
+        match_fn = _MATCH_FN[method_name]
         out_dir = self._output_dir or str(Path(self._base_path).parent)
         suffix = self._suffix_edit.text().strip() or DEFAULT_SUFFIX
 
@@ -540,19 +852,18 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
 
         for i, tgt_path in enumerate(self._target_paths):
             name = Path(tgt_path).name
-            self._status_lbl.setText(f"Processing {name}  ({i + 1}/{total})")
+            self._status_lbl.setText(
+                f"Processing {name}  ({i + 1}/{total})"
+            )
             QtWidgets.QApplication.processEvents()
 
-            img = cv2.imread(tgt_path, cv2.IMREAD_UNCHANGED)
+            img = _load_gray(tgt_path)
             if img is None:
                 errors.append(name)
                 self._progress.setValue(i + 1)
                 continue
 
-            if img.ndim == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            matched = match_histogram(img, self._base_image)
+            matched = match_fn(img, self._base_image)
             self._results.append((name, img, matched))
 
             # Save
@@ -572,7 +883,7 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
             )
         else:
             self._status_lbl.setText(
-                f"Done — {total} image(s) matched and saved to {out_dir}"
+                f"Done \u2014 {total} image(s) matched and saved to {out_dir}"
             )
 
         if self._results:
@@ -585,8 +896,16 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
         if not self._results:
             return
         name, before, after = self._results[self._result_idx]
-        self._result_canvas.plot_comparison(before, after, self._base_image,
-                                            name=name)
+        self._result_canvas.plot_comparison(
+            before, after, self._base_image, name=name
+        )
+        self._preview_canvas.show_comparison(before, after, name=name)
+
+        before_stats = image_stats(before)
+        after_stats = image_stats(after)
+        self._stats_table.update_stats(
+            self._base_stats, before_stats, after_stats
+        )
         self._update_nav_state()
 
     def _show_prev_result(self):
@@ -619,7 +938,7 @@ class HistogramMatchWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("Histogram Matcher — Fusi\u00b3")
+    app.setApplicationName("Histogram Matcher \u2014 Fusi\u00b3")
     app.setStyleSheet(_global_stylesheet())
 
     window = HistogramMatchWindow()
