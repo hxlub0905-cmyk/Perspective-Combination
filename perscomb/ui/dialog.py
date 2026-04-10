@@ -38,6 +38,7 @@ from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
 from .welcome_tutorial import WelcomeTutorialOverlay, should_show_tutorial, mark_tutorial_completed
 from .preview_worker import AlignmentCache, LivePreviewManager
+from .live_preview_window import LivePreviewWindow
 
 UI_PRIMARY = Colors.BRAND_PRIMARY
 UI_PRIMARY_HOVER = Colors.BRAND_PRIMARY_HOVER
@@ -5695,6 +5696,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._is_live_preview: bool = False   # True when current display is a preview
         self._alignment_cache: AlignmentCache = AlignmentCache()
         self._live_manager: Optional[LivePreviewManager] = None
+        self._live_preview_window: Optional[LivePreviewWindow] = None
+        self._preview_sync_lock: bool = False  # prevent bidirectional sync loops
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -5764,6 +5767,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._compute_thread.requestInterruption()
             self._compute_thread.quit()
             self._compute_worker = None
+        if self._live_preview_window is not None:
+            self._live_preview_window.close()
         event.accept()
 
     def showEvent(self, event):
@@ -6585,6 +6590,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         left_layout.addWidget(self.btn_live_preview)
 
+        # Preview Panel button — opens the independent floating split-panel
+        self.btn_preview_panel = QtWidgets.QPushButton("\u29c9  Preview Panel")
+        self.btn_preview_panel.setCheckable(True)
+        self.btn_preview_panel.setMinimumHeight(34)
+        self.btn_preview_panel.setProperty("variant", "ghost")
+        self.btn_preview_panel.setToolTip(
+            "Open the Live Preview split panel (Base | Compare | Diff).\n"
+            "Adjust parameters in either window and both stay in sync."
+        )
+        left_layout.addWidget(self.btn_preview_panel)
+
         self.lbl_live_status = QtWidgets.QLabel("")
         self.lbl_live_status.setAlignment(Qt.AlignCenter)
         self.lbl_live_status.setStyleSheet(
@@ -7276,6 +7292,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
         self.btn_compute.clicked.connect(self._on_compute)
         self.btn_live_preview.toggled.connect(self._on_live_toggle)
+        self.btn_preview_panel.toggled.connect(self._on_preview_panel_toggle)
         self.btn_abort_compute.clicked.connect(self._on_abort_compute)
         self.btn_export.clicked.connect(self._on_export)
         self.btn_select_all.clicked.connect(self._select_all_compare)
@@ -7872,6 +7889,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_param_changed(self, is_align_change: bool = False) -> None:
         """Called when any watched parameter widget changes."""
+        # Sync current settings to preview window (skip if the change came from the panel)
+        if not self._preview_sync_lock:
+            self._sync_main_settings_to_preview()
+
         if not self._live_preview_enabled:
             return
         if not self._images:
@@ -7959,9 +7980,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_preview_started(self) -> None:
         self.lbl_live_status.setText("Computing…")
+        if self._live_preview_window is not None and self._live_preview_window.isVisible():
+            self._live_preview_window.set_state_computing()
 
     def _on_live_preview_error(self, msg: str) -> None:
         self.lbl_live_status.setText("\u26a0 Preview error")
+        if self._live_preview_window is not None and self._live_preview_window.isVisible():
+            self._live_preview_window.set_state_error(msg)
         import logging
         logging.getLogger(__name__).warning("Live preview error: %s", msg)
 
@@ -7989,7 +8014,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self._is_live_preview = True
 
-        # Show diff section if not yet visible (pre-compute first-fire)
+        # When the floating preview panel is open, push result there and keep the
+        # main window showing the settings panel (do not switch to diff view).
+        if self._live_preview_window is not None and self._live_preview_window.isVisible():
+            self._live_preview_window.update_preview(result)
+            self.lbl_live_status.setText("Preview ready \u2014 see Preview Panel")
+            return
+
+        # Normal (no panel) path: show diff section if not yet visible
         if not self.wgt_diff_section.isVisible():
             self._show_live_preview_layout()
 
@@ -8015,6 +8047,120 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # No multi-result navigation until a full Compute has run
         self.btn_prev_result.setVisible(self._has_computed)
         self.btn_next_result.setVisible(self._has_computed)
+
+    # ── Preview Panel (floating split window) ────────────────────────────────
+
+    def _on_preview_panel_toggle(self, checked: bool) -> None:
+        """Open or close the floating Live Preview split panel."""
+        if checked:
+            self._open_preview_panel()
+        else:
+            self._close_preview_panel()
+
+    def _open_preview_panel(self) -> None:
+        """Create (if needed) and show the LivePreviewWindow."""
+        if self._live_preview_window is None:
+            self._live_preview_window = LivePreviewWindow()
+            self._live_preview_window.settings_changed.connect(
+                self._on_preview_window_settings_changed
+            )
+            self._live_preview_window.closed.connect(
+                self._on_preview_panel_closed
+            )
+
+        # Push current main-dialog settings into the panel
+        self._sync_main_settings_to_preview()
+
+        self._live_preview_window.show()
+        self._live_preview_window.raise_()
+
+        # Auto-enable live preview and fire immediately
+        if not self._live_preview_enabled:
+            self.btn_live_preview.setChecked(True)  # triggers _on_live_toggle
+        elif self._images:
+            self._on_live_param_changed(False)
+
+    def _close_preview_panel(self) -> None:
+        if self._live_preview_window is not None:
+            self._live_preview_window.hide()
+
+    def _on_preview_panel_closed(self) -> None:
+        """Called when the user closes the floating window via its ✕ button."""
+        self.btn_preview_panel.blockSignals(True)
+        self.btn_preview_panel.setChecked(False)
+        self.btn_preview_panel.blockSignals(False)
+
+    # ── Settings synchronisation ──────────────────────────────────────────────
+
+    def _collect_main_settings_for_sync(self) -> dict:
+        """Collect current main-dialog settings in the format expected by
+        LivePreviewWindow.apply_settings()."""
+        norm_idx = self.cmb_normalize_mode.currentIndex()
+        _method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
+        normalize_method = _method_map.get(norm_idx, "percentile")
+        glv_range = None
+        if norm_idx == 1:
+            lo, hi = self.spn_glv_low.value(), self.spn_glv_high.value()
+            if lo < hi:
+                glv_range = (lo, hi)
+        sub_idx = self.cmb_subtract_mode.currentIndex()
+        return {
+            "operation": "subtract" if self.cmb_operation.currentIndex() == 0 else "blend",
+            "alpha": self.spin_alpha.value(),
+            "beta": self.spin_beta.value(),
+            "invert_base": self.chk_invert_base.isChecked(),
+            "invert_compare": self.chk_invert_compare.isChecked(),
+            "invert_result": self.chk_invert_result.isChecked(),
+            "norm_mode_index": norm_idx,
+            "normalize_method": normalize_method,
+            "glv_range": glv_range,
+            "subtract_mode_index": sub_idx,
+            "align_method": "phase" if self.cmb_align_method.currentIndex() == 0 else "ncc",
+        }
+
+    def _sync_main_settings_to_preview(self) -> None:
+        """Push current main-dialog settings to the preview window (no loop)."""
+        if self._live_preview_window is None:
+            return
+        self._live_preview_window.apply_settings(self._collect_main_settings_for_sync())
+
+    def _on_preview_window_settings_changed(self, s: dict) -> None:
+        """Apply settings from the preview window back to the main dialog."""
+        if self._preview_sync_lock:
+            return
+        self._preview_sync_lock = True
+        try:
+            if "operation" in s:
+                self.cmb_operation.setCurrentIndex(0 if s["operation"] == "subtract" else 1)
+            if "alpha" in s:
+                self.spin_alpha.setValue(s["alpha"])
+            if "beta" in s:
+                self.spin_beta.setValue(s["beta"])
+            if "invert_base" in s:
+                self.chk_invert_base.setChecked(s["invert_base"])
+            if "invert_compare" in s:
+                self.chk_invert_compare.setChecked(s["invert_compare"])
+            if "invert_result" in s:
+                self.chk_invert_result.setChecked(s["invert_result"])
+            if "norm_mode_index" in s:
+                self.cmb_normalize_mode.setCurrentIndex(s["norm_mode_index"])
+            if "glv_range" in s and s["glv_range"]:
+                self.spn_glv_low.setValue(s["glv_range"][0])
+                self.spn_glv_high.setValue(s["glv_range"][1])
+            if "subtract_mode_index" in s:
+                self.cmb_subtract_mode.setCurrentIndex(s["subtract_mode_index"])
+            if "align_method" in s:
+                self.cmb_align_method.setCurrentIndex(
+                    0 if s["align_method"] == "phase" else 1
+                )
+        finally:
+            self._preview_sync_lock = False
+
+        # Trigger live preview with the updated params
+        is_align = s.get("_is_align_change", False)
+        if is_align:
+            self._alignment_cache.clear()
+        self._on_live_param_changed(is_align)
 
     # ── End Live Preview ──────────────────────────────────────────────────────
 

@@ -44,6 +44,7 @@ class SinglePairResult:
     norm_a: float = 1.0             # Normalize scale coefficient (I' = a*I + b)
     norm_b: float = 0.0             # Normalize offset coefficient
     normalize_method: str = 'percentile'  # Method used for normalization
+    normalized_base: Optional[np.ndarray] = None     # Normalized base image (uint8) — for preview
     normalized_compare: Optional[np.ndarray] = None  # Normalized compare image (uint8)
     aligned_compare: Optional[np.ndarray] = None  # Aligned compare image after inversion (uint8)
     defect_rois: List = field(default_factory=list)  # List[DefectROI] from segmentation
@@ -667,7 +668,10 @@ def compute_single_pair(
         comp_norm_uint8 = (comp_norm * 255).astype(np.uint8)
     else:
         comp_norm_uint8 = np.clip(norm_a * comp_proc + norm_b, 0, 255).astype(np.uint8)
-    
+
+    # base_norm_uint8: normalized base image for display in Live Preview window
+    base_norm_uint8 = np.clip(base_norm * 255, 0, 255).astype(np.uint8)
+
     # Step 4: Apply operation
     #
     # Subtract modes (mutually exclusive, checked in priority order):
@@ -781,6 +785,7 @@ def compute_single_pair(
         norm_a=norm_a,
         norm_b=norm_b,
         normalize_method=effective_method,
+        normalized_base=base_norm_uint8,
         normalized_compare=comp_norm_uint8,
         aligned_compare=comp_aligned_uint8,
         defect_rois=defect_rois,
@@ -806,6 +811,7 @@ def _empty_single_result(base_label: str, compare_label: str, operation: str,
         stats={'error': error},
         blend_alpha=0.5,
         blend_beta=0.5,
+        normalized_base=np.zeros((100, 100), dtype=np.uint8),
         normalized_compare=np.zeros((100, 100), dtype=np.uint8),
         aligned_compare=np.zeros((100, 100), dtype=np.uint8)
     )
