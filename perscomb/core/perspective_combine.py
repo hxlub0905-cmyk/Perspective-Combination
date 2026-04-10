@@ -430,6 +430,10 @@ def compute_single_pair(
     roi_rect: Optional[Tuple[int, int, int, int]] = None,
     roi_set: Optional[MultiROISet] = None,
     roi_match: bool = False,
+    # ── Live-preview optimisations ────────────────────────────────────────
+    skip_snr_map: bool = False,
+    pre_aligned_compare: Optional[np.ndarray] = None,
+    pre_alignment_result: Optional[AlignResult] = None,
 ) -> SinglePairResult:
     """Compute a single Base-Compare pair operation.
 
@@ -472,47 +476,53 @@ def compute_single_pair(
         return _empty_single_result(base_label, compare_label, operation, 
                                      error="Shape mismatch")
     
-    # Step 1: Align compare to base
-    alignment = _calculate_alignment(base, compare, alignment_method, search_radius)
-    manual_dx, manual_dy = manual_offset if manual_offset is not None else (0, 0)
-    # Sub-pixel warp uses float offsets; integer fields kept for display
-    applied_dx_f = alignment.dx_subpixel + manual_dx
-    applied_dy_f = alignment.dy_subpixel + manual_dy
-    applied_dx = int(round(applied_dx_f))
-    applied_dy = int(round(applied_dy_f))
-    if manual_offset is not None and (manual_dx != 0 or manual_dy != 0):
-        score_ncc, score_residual, final_score = _calculate_alignment_scores(
-            base,
-            compare,
-            applied_dx,
-            applied_dy,
-            phase_score=alignment.score_phase,
-            method=alignment.method
-        )
-        status = 'ok'
-        if final_score < 75:
-            status = 'warn'
-        if final_score < 55:
-            status = 'fail'
+    # Step 1: Align compare to base.
+    # When pre_aligned_compare + pre_alignment_result are supplied (live-preview
+    # fast-path), skip the expensive alignment computation entirely.
+    if pre_aligned_compare is not None and pre_alignment_result is not None:
+        aligned_compare = pre_aligned_compare
+        alignment = pre_alignment_result
     else:
-        score_ncc = alignment.score_ncc
-        score_residual = alignment.score_residual
-        final_score = alignment.final_score
-        status = alignment.status
-    alignment = AlignResult(
-        dx=applied_dx,
-        dy=applied_dy,
-        score_phase=alignment.score_phase,
-        score_ncc=score_ncc,
-        score_residual=score_residual,
-        final_score=final_score,
-        status=status,
-        method=alignment.method,
-        dx_subpixel=applied_dx_f,
-        dy_subpixel=applied_dy_f,
-    )
-    # Use sub-pixel float offset for actual warp (INTER_LINEAR handles fractional shifts)
-    aligned_compare = _apply_alignment(compare, applied_dx_f, applied_dy_f)
+        alignment = _calculate_alignment(base, compare, alignment_method, search_radius)
+        manual_dx, manual_dy = manual_offset if manual_offset is not None else (0, 0)
+        # Sub-pixel warp uses float offsets; integer fields kept for display
+        applied_dx_f = alignment.dx_subpixel + manual_dx
+        applied_dy_f = alignment.dy_subpixel + manual_dy
+        applied_dx = int(round(applied_dx_f))
+        applied_dy = int(round(applied_dy_f))
+        if manual_offset is not None and (manual_dx != 0 or manual_dy != 0):
+            score_ncc, score_residual, final_score = _calculate_alignment_scores(
+                base,
+                compare,
+                applied_dx,
+                applied_dy,
+                phase_score=alignment.score_phase,
+                method=alignment.method
+            )
+            status = 'ok'
+            if final_score < 75:
+                status = 'warn'
+            if final_score < 55:
+                status = 'fail'
+        else:
+            score_ncc = alignment.score_ncc
+            score_residual = alignment.score_residual
+            final_score = alignment.final_score
+            status = alignment.status
+        alignment = AlignResult(
+            dx=applied_dx,
+            dy=applied_dy,
+            score_phase=alignment.score_phase,
+            score_ncc=score_ncc,
+            score_residual=score_residual,
+            final_score=final_score,
+            status=status,
+            method=alignment.method,
+            dx_subpixel=applied_dx_f,
+            dy_subpixel=applied_dy_f,
+        )
+        # Use sub-pixel float offset for actual warp (INTER_LINEAR handles fractional shifts)
+        aligned_compare = _apply_alignment(compare, applied_dx_f, applied_dy_f)
     
     # Step 2: Apply inversion if requested
     base_proc = base.astype(np.float32)
@@ -688,17 +698,22 @@ def compute_single_pair(
     # Convert to uint8
     result_uint8 = (result_float * 255).astype(np.uint8)
     
-    # Step 6: Compute SNR map
-    # NOTE:
-    # Large alignment shifts can introduce strong border artifacts after warpAffine.
-    # Increase excluded border margin based on absolute shift to reduce false border peaks.
-    dynamic_exclude_border = max(16, int(max(abs(alignment.dx), abs(alignment.dy)) + 8))
-    snr_map, raw_snr_max = compute_snr_map(
-        result_float,
-        window_size=snr_window_size,
-        clip_sigma=3.0,
-        exclude_border=dynamic_exclude_border,
-    )
+    # Step 6: Compute SNR map.
+    # Skipped during live-preview (skip_snr_map=True) for speed; the caller
+    # is responsible for preserving the SNR map from the last full compute.
+    if skip_snr_map:
+        snr_map = np.zeros(result_uint8.shape, dtype=np.uint8)
+        raw_snr_max = 0.0
+    else:
+        # Large alignment shifts can introduce strong border artifacts after warpAffine.
+        # Increase excluded border margin based on absolute shift to reduce false border peaks.
+        dynamic_exclude_border = max(16, int(max(abs(alignment.dx), abs(alignment.dy)) + 8))
+        snr_map, raw_snr_max = compute_snr_map(
+            result_float,
+            window_size=snr_window_size,
+            clip_sigma=3.0,
+            exclude_border=dynamic_exclude_border,
+        )
     
     # Step 7: Compute histogram
     hist_counts, hist_edges = np.histogram(result_uint8.flatten(), bins=256, range=(0, 256))
@@ -748,8 +763,8 @@ def compute_single_pair(
         'center_focused': bool(center_snr_peak > 0.7 * float(snr_map.max()) if snr_map.max() > 0 else False),
     }
 
-    # Step 9: Defect segmentation from SNR map
-    defect_rois = segment_defects(snr_map, result_float)
+    # Step 9: Defect segmentation from SNR map (skipped when SNR map was not computed)
+    defect_rois = [] if skip_snr_map else segment_defects(snr_map, result_float)
 
     return SinglePairResult(
         base_label=base_label,

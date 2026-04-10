@@ -37,6 +37,7 @@ from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 # 使用 design_tokens 統一配色（遵循 AGENTS.md 規範）
 from .design_tokens import Colors, Typography, Spacing, BorderRadius
 from .welcome_tutorial import WelcomeTutorialOverlay, should_show_tutorial, mark_tutorial_completed
+from .preview_worker import AlignmentCache, LivePreviewManager
 
 UI_PRIMARY = Colors.BRAND_PRIMARY
 UI_PRIMARY_HOVER = Colors.BRAND_PRIMARY_HOVER
@@ -5689,9 +5690,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._compute_lock_effects: Dict[QtWidgets.QWidget, QtWidgets.QGraphicsOpacityEffect] = {}
         self._compute_lock_targets: Tuple[QtWidgets.QWidget, ...] = ()
 
+        # Live Preview state
+        self._live_preview_enabled: bool = False
+        self._is_live_preview: bool = False   # True when current display is a preview
+        self._alignment_cache: AlignmentCache = AlignmentCache()
+        self._live_manager: Optional[LivePreviewManager] = None
+
         self._setup_ui()
         self._apply_toolbar_icons()
         self._connect_signals()
+        self._init_live_preview()
         self._setup_tutorial_overlay()
         self._load_images()
         # Initial badge and step-state update after all widgets exist
@@ -6565,6 +6573,25 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         left_layout.addWidget(self.lbl_space_hint)
 
+        # Live Preview toggle — placed below Compute so it's clearly secondary
+        self.btn_live_preview = QtWidgets.QPushButton("\u26a1  Live Preview")
+        self.btn_live_preview.setCheckable(True)
+        self.btn_live_preview.setMinimumHeight(34)
+        self.btn_live_preview.setProperty("variant", "ghost")
+        self.btn_live_preview.setToolTip(
+            "Live Preview: parameter changes instantly update the diff view.\n"
+            "Alignment is cached after the first preview; SNR map is computed\n"
+            "only when you press Compute."
+        )
+        left_layout.addWidget(self.btn_live_preview)
+
+        self.lbl_live_status = QtWidgets.QLabel("")
+        self.lbl_live_status.setAlignment(Qt.AlignCenter)
+        self.lbl_live_status.setStyleSheet(
+            "color: #9CA3AF; font-size: 10px; border: none; background: transparent; padding-top: 1px;"
+        )
+        left_layout.addWidget(self.lbl_live_status)
+
         self.left_panel_scroll = QtWidgets.QScrollArea()
         self.left_panel_scroll.setObjectName("LeftPanelScroll")
         self.left_panel_scroll.setWidgetResizable(True)
@@ -6749,6 +6776,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         right_ctrl_layout.addWidget(self.chk_roi_view)
 
         right_ctrl_layout.addStretch(1)
+
+        # Live Preview badge — visible only when a live preview is showing
+        self.lbl_live_badge = QtWidgets.QLabel("\u26a1 LIVE PREVIEW")
+        self.lbl_live_badge.setStyleSheet(
+            "color: #F59E0B; font-size: 10px; font-weight: 600;"
+            " border: 1px solid #F59E0B; border-radius: 3px;"
+            " padding: 1px 6px; background: transparent;"
+        )
+        self.lbl_live_badge.setVisible(False)
+        right_ctrl_layout.addWidget(self.lbl_live_badge)
+        right_ctrl_layout.addSpacing(4)
 
         right_section.addWidget(right_ctrl_bar)
 
@@ -7237,6 +7275,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Connect UI signals."""
         self.btn_load_folder.clicked.connect(self._on_load_image_folder)
         self.btn_compute.clicked.connect(self._on_compute)
+        self.btn_live_preview.toggled.connect(self._on_live_toggle)
         self.btn_abort_compute.clicked.connect(self._on_abort_compute)
         self.btn_export.clicked.connect(self._on_export)
         self.btn_select_all.clicked.connect(self._select_all_compare)
@@ -7568,6 +7607,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_base_changed(self):
         """Update compare checkboxes when base changes and display base image immediately."""
+        # Base changed → all cached alignments are now against a different base image
+        self._alignment_cache.clear()
+
         base_label = self.cmb_base.currentText()
 
         for chk in self._compare_checkboxes:
@@ -7781,6 +7823,201 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         else:  # Auto - use full range
             return img
 
+    # ── Live Preview ─────────────────────────────────────────────────────────
+
+    def _init_live_preview(self) -> None:
+        """Wire up the LivePreviewManager and connect parameter widgets."""
+        self._live_manager = LivePreviewManager(self._alignment_cache, parent=self)
+        self._live_manager.preview_ready.connect(self._on_live_preview_ready)
+        self._live_manager.preview_error.connect(self._on_live_preview_error)
+        self._live_manager.preview_started.connect(self._on_live_preview_started)
+
+        # Tier-2 params: non-alignment changes (use cached alignment)
+        _tier2_signals = [
+            (self.cmb_operation, "currentIndexChanged"),
+            (self.spin_alpha, "valueChanged"),
+            (self.spin_beta, "valueChanged"),
+            (self.chk_invert_base, "stateChanged"),
+            (self.chk_invert_compare, "stateChanged"),
+            (self.chk_invert_result, "stateChanged"),
+            (self.cmb_normalize_mode, "currentIndexChanged"),
+            (self.spn_glv_low, "valueChanged"),
+            (self.spn_glv_high, "valueChanged"),
+            (self.cmb_subtract_mode, "currentIndexChanged"),
+        ]
+        for widget, sig_name in _tier2_signals:
+            getattr(widget, sig_name).connect(
+                lambda *_: self._on_live_param_changed(False)
+            )
+
+        # Tier-1 params: alignment changes (invalidate cache)
+        self.cmb_align_method.currentIndexChanged.connect(
+            lambda *_: self._on_live_param_changed(True)
+        )
+
+    def _on_live_toggle(self, checked: bool) -> None:
+        """Enable or disable live preview mode."""
+        self._live_preview_enabled = checked
+        if checked:
+            self.btn_live_preview.setText("\u26a1  Live Preview  \u25cf")
+            self.lbl_live_status.setText("Ready — adjust params to preview")
+            # Trigger an immediate preview if images are already loaded
+            if self._images:
+                self._on_live_param_changed(False)
+        else:
+            self.btn_live_preview.setText("\u26a1  Live Preview")
+            self.lbl_live_status.setText("")
+            if self._live_manager:
+                self._live_manager.cancel()
+
+    def _on_live_param_changed(self, is_align_change: bool = False) -> None:
+        """Called when any watched parameter widget changes."""
+        if not self._live_preview_enabled:
+            return
+        if not self._images:
+            return
+        if self._compute_thread is not None:
+            # Full compute in progress — don't overlap
+            return
+
+        if is_align_change:
+            self._alignment_cache.clear()
+
+        params = self._collect_preview_params()
+        if params is None:
+            return
+        self._live_manager.schedule(params, is_align_change)
+
+    def _collect_preview_params(self) -> Optional[dict]:
+        """Return current UI parameter dict for preview, or None if not ready."""
+        base_label = self.cmb_base.currentText()
+        if not base_label or base_label not in self._images:
+            return None
+
+        # Prefer the currently displayed result's compare label; fall back to
+        # the first checked compare checkbox.
+        compare_label: Optional[str] = None
+        if self._results:
+            compare_label = self._results[self._current_result_idx].compare_label
+        if compare_label is None or compare_label not in self._images:
+            for chk in self._compare_checkboxes:
+                if chk.isChecked() and chk.isEnabled():
+                    compare_label = chk.text()
+                    break
+        if compare_label is None or compare_label not in self._images:
+            return None
+
+        operation = "subtract" if self.cmb_operation.currentIndex() == 0 else "blend"
+        alpha = self.spin_alpha.value()
+        beta = self.spin_beta.value()
+        invert_base = self.chk_invert_base.isChecked()
+        invert_compare = self.chk_invert_compare.isChecked()
+        invert_result = self.chk_invert_result.isChecked()
+        align_method = "phase" if self.cmb_align_method.currentIndex() == 0 else "ncc"
+
+        norm_mode = self.cmb_normalize_mode.currentIndex()
+        _method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
+        normalize_method = _method_map.get(norm_mode, "percentile")
+        normalize = normalize_method not in ("skip", "roi_match")
+        glv_range = None
+        if norm_mode == 1:
+            glv_low = self.spn_glv_low.value()
+            glv_high = self.spn_glv_high.value()
+            if glv_low < glv_high:
+                glv_range = (glv_low, glv_high)
+
+        sub_mode = self.cmb_subtract_mode.currentIndex()
+        preserve_positive_diff = sub_mode == 2
+        abs_no_gain = sub_mode == 1
+
+        use_roi_match = norm_mode == 3 and len(self._multi_roi_set) > 0
+
+        return {
+            "base_label": base_label,
+            "compare_label": compare_label,
+            "base_img": self._images[base_label],
+            "compare_img": self._images[compare_label],
+            "operation": operation,
+            "alpha": alpha,
+            "beta": beta,
+            "invert_base": invert_base,
+            "invert_compare": invert_compare,
+            "invert_result": invert_result,
+            "normalize": normalize,
+            "normalize_method": normalize_method,
+            "glv_range": glv_range,
+            "clahe_clip_limit": 2.0,
+            "search_radius": 50,
+            "align_method": align_method,
+            "preserve_positive_diff": preserve_positive_diff,
+            "abs_no_gain": abs_no_gain,
+            "snr_window_size": 31,
+            "roi_rect": None,
+            "roi_set": self._multi_roi_set,
+            "roi_match": use_roi_match,
+        }
+
+    def _on_live_preview_started(self) -> None:
+        self.lbl_live_status.setText("Computing…")
+
+    def _on_live_preview_error(self, msg: str) -> None:
+        self.lbl_live_status.setText("\u26a0 Preview error")
+        import logging
+        logging.getLogger(__name__).warning("Live preview error: %s", msg)
+
+    def _on_live_preview_ready(self, result: SinglePairResult) -> None:
+        """Update diff display, histogram and stats from a live preview result."""
+        import dataclasses
+
+        # If a full-compute result exists for this pair, preserve its SNR map
+        # so Z-Map mode continues to work correctly.
+        existing_snr = None
+        if self._results:
+            cur = self._results[self._current_result_idx]
+            if cur.compare_label == result.compare_label:
+                existing_snr = cur.snr_map
+
+        if existing_snr is not None:
+            result = dataclasses.replace(result, snr_map=existing_snr)
+
+        # Store / update result
+        if self._results and self._results[self._current_result_idx].compare_label == result.compare_label:
+            self._results[self._current_result_idx] = result
+        else:
+            self._results = [result]
+            self._current_result_idx = 0
+
+        self._is_live_preview = True
+
+        # Show diff section if not yet visible (pre-compute first-fire)
+        if not self.wgt_diff_section.isVisible():
+            self._show_live_preview_layout()
+
+        # Update displays (reuse existing methods)
+        self._refresh_diff_display()
+        counts, edges = result.histogram
+        self.histogram_canvas.plot_histogram(counts, edges)
+        self._update_alignment_display(result)
+        self._update_stats_display(result)
+
+        # Show badge and update status label
+        self.lbl_live_badge.setVisible(True)
+        self.lbl_live_status.setText("Preview ready \u2014 press Compute for full result")
+
+    def _show_live_preview_layout(self) -> None:
+        """Switch to diff-viewer layout for the first live preview (pre-compute)."""
+        self.left_panel_scroll.setVisible(False)
+        self.wgt_diff_section.setVisible(True)
+        self.btn_back_to_settings.setVisible(True)
+        self.wgt_bottom_row.setVisible(True)
+        self.btn_split_view.setVisible(True)
+        self.btn_mode_compare.setVisible(True)
+        # No multi-result navigation until a full Compute has run
+        self.btn_prev_result.setVisible(self._has_computed)
+        self.btn_next_result.setVisible(self._has_computed)
+
+    # ── End Live Preview ──────────────────────────────────────────────────────
+
     def _on_compute(self):
         """Run the combination computation for all selected pairs."""
         base_label = self.cmb_base.currentText()
@@ -7879,6 +8116,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "roi_match": use_roi_match,
             "roi_rect_px": roi_rect_px,
         }
+
+        # Cancel any in-flight live preview before starting a full compute
+        if self._live_manager is not None:
+            self._live_manager.cancel()
 
         # Get images
         base_img = self._images[base_label] if base_label in self._images else None
@@ -8088,6 +8329,19 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._results = results
         self._current_result_idx = 0
         self._has_computed = True  # P0-3: flag for Re-compute button state
+        self._is_live_preview = False
+        self.lbl_live_badge.setVisible(False)
+
+        # Populate alignment cache from full-compute results so subsequent
+        # live-preview calls can skip re-alignment (Tier-2 fast path).
+        align_method = self._last_settings.get("alignment_method", "phase")
+        for r in results:
+            if r.aligned_compare is not None:
+                key = self._alignment_cache.make_key(
+                    r.base_label, r.compare_label, align_method, 50
+                )
+                self._alignment_cache.store(key, r.aligned_compare, r.alignment)
+
         self._update_current_result()
         self._update_navigation()
         self.btn_export.setEnabled(bool(self._results))
