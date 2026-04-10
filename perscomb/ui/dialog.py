@@ -1,4 +1,4 @@
-"""Perspective Combination Dialog - Multi-image comparison for defect detection.
+﻿"""Perspective Combination Dialog - Multi-image comparison for defect detection.
 
 This dialog allows users to:
 1. Select a base image and multiple compare images
@@ -5709,6 +5709,12 @@ class LivePreviewWindow(QtWidgets.QDialog):
                 color: {UI_TEXT_SECONDARY};
                 font-size: {Typography.FONT_SIZE_CAPTION};
             }}
+            QLabel#PreviewMeta {{
+                color: {UI_TEXT_SECONDARY};
+                font-size: {Typography.FONT_SIZE_CAPTION};
+                min-height: 18px;
+                max-height: 18px;
+            }}
             QLabel#PreviewBadge {{
                 border-radius: {BorderRadius.SM};
                 padding: 3px 8px;
@@ -5763,13 +5769,13 @@ class LivePreviewWindow(QtWidgets.QDialog):
         header = QtWidgets.QFrame()
         header.setObjectName("PreviewHeader")
         header_layout = QtWidgets.QHBoxLayout(header)
-        header_layout.setContentsMargins(16, 12, 16, 12)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(14, 10, 14, 10)
+        header_layout.setSpacing(8)
 
         title = QtWidgets.QLabel("⚡ Live Preview")
         title.setObjectName("PreviewTitle")
         header_layout.addWidget(title)
-        header_layout.addSpacing(12)
+        header_layout.addSpacing(8)
 
         header_layout.addWidget(QtWidgets.QLabel("Base"))
         self.cmb_base = QtWidgets.QComboBox()
@@ -5781,8 +5787,7 @@ class LivePreviewWindow(QtWidgets.QDialog):
         self.cmb_compare.setMinimumWidth(200)
         header_layout.addWidget(self.cmb_compare)
 
-        header_layout.addSpacing(6)
-        self.btn_reset_from_main = QtWidgets.QPushButton("Reset from Main")
+        self.btn_reset_from_main = QtWidgets.QPushButton("Reload from Main")
         self.btn_reset_from_main.setObjectName("PreviewGhost")
         header_layout.addWidget(self.btn_reset_from_main)
 
@@ -5793,11 +5798,11 @@ class LivePreviewWindow(QtWidgets.QDialog):
         header_layout.addStretch(1)
 
         self.btn_apply = QtWidgets.QPushButton("Apply to Main")
-        self.btn_apply.setObjectName("PreviewSecondary")
+        self.btn_apply.setObjectName("PreviewPrimary")
         header_layout.addWidget(self.btn_apply)
 
         self.btn_apply_close = QtWidgets.QPushButton("Apply & Close")
-        self.btn_apply_close.setObjectName("PreviewPrimary")
+        self.btn_apply_close.setObjectName("PreviewSecondary")
         header_layout.addWidget(self.btn_apply_close)
 
         root.addWidget(header)
@@ -5807,14 +5812,18 @@ class LivePreviewWindow(QtWidgets.QDialog):
 
         settings_card = QtWidgets.QFrame()
         settings_card.setObjectName("PreviewCard")
-        settings_card.setFixedWidth(300)
+        settings_card.setFixedWidth(280)
         settings_layout = QtWidgets.QVBoxLayout(settings_card)
-        settings_layout.setContentsMargins(16, 16, 16, 16)
-        settings_layout.setSpacing(12)
+        settings_layout.setContentsMargins(14, 14, 14, 14)
+        settings_layout.setSpacing(10)
 
         lbl_settings = QtWidgets.QLabel("Settings")
         lbl_settings.setObjectName("PreviewSectionTitle")
         settings_layout.addWidget(lbl_settings)
+        self.lbl_settings_summary = QtWidgets.QLabel("Preview edits stay here until you apply them back to Main.")
+        self.lbl_settings_summary.setObjectName("PreviewHint")
+        self.lbl_settings_summary.setWordWrap(True)
+        settings_layout.addWidget(self.lbl_settings_summary)
 
         settings_layout.addWidget(QtWidgets.QLabel("Operation"))
         self.cmb_operation = QtWidgets.QComboBox()
@@ -5891,7 +5900,7 @@ class LivePreviewWindow(QtWidgets.QDialog):
         lbl_roi = QtWidgets.QLabel("ROI (Optional)")
         lbl_roi.setObjectName("PreviewSectionTitle")
         settings_layout.addWidget(lbl_roi)
-        self.lbl_roi_hint = QtWidgets.QLabel("ROI source: shared with Main (0 ROI)")
+        self.lbl_roi_hint = QtWidgets.QLabel("Shared with Main (0 ROI)")
         self.lbl_roi_hint.setObjectName("PreviewHint")
         self.lbl_roi_hint.setWordWrap(True)
         settings_layout.addWidget(self.lbl_roi_hint)
@@ -5920,36 +5929,46 @@ class LivePreviewWindow(QtWidgets.QDialog):
         viewer_layout = QtWidgets.QHBoxLayout()
         viewer_layout.setSpacing(10)
 
-        def _make_viewer_column(title_text: str):
+        def _make_viewer_column(title_text: str, meta_text: str):
             card = QtWidgets.QFrame()
             card.setObjectName("PreviewCard")
             layout = QtWidgets.QVBoxLayout(card)
             layout.setContentsMargins(12, 12, 12, 12)
             layout.setSpacing(8)
+            header_widget = QtWidgets.QWidget()
+            header_widget.setFixedHeight(32)
+            head_row = QtWidgets.QHBoxLayout()
+            head_row.setContentsMargins(0, 0, 0, 0)
+            head_row.setSpacing(8)
             title_label = QtWidgets.QLabel(title_text)
             title_label.setObjectName("PreviewSectionTitle")
-            layout.addWidget(title_label)
-            return card, layout
+            head_row.addWidget(title_label)
+            head_row.addStretch(1)
+            header_widget.setLayout(head_row)
+            layout.addWidget(header_widget)
+            meta_label = QtWidgets.QLabel(meta_text)
+            meta_label.setObjectName("PreviewMeta")
+            layout.addWidget(meta_label)
+            return card, layout, head_row, meta_label
 
-        base_card, base_layout = _make_viewer_column("Base")
+        base_card, base_layout, _base_head, self.lbl_base_meta = _make_viewer_column("Base", "Original source")
         self.img_preview_base = SyncZoomImageWidget("Preview Base")
         base_layout.addWidget(self.img_preview_base, 1)
         viewer_layout.addWidget(base_card, 1)
 
-        compare_card, compare_layout = _make_viewer_column("Aligned Compare")
+        compare_card, compare_layout, _compare_head, self.lbl_compare_meta = _make_viewer_column(
+            "Aligned Compare",
+            "Aligned into base space",
+        )
         self.img_preview_compare = SyncZoomImageWidget("Preview Compare")
         compare_layout.addWidget(self.img_preview_compare, 1)
         viewer_layout.addWidget(compare_card, 1)
 
-        diff_card, diff_layout = _make_viewer_column("Diff")
-        diff_ctrl_row = QtWidgets.QHBoxLayout()
-        diff_ctrl_row.setContentsMargins(0, 0, 0, 0)
-        diff_ctrl_row.addWidget(QtWidgets.QLabel("Colormap"))
+        diff_card, diff_layout, diff_head, self.lbl_diff_meta = _make_viewer_column("Diff", "Pair: -")
+        diff_head.addWidget(QtWidgets.QLabel("Colormap"))
         self.cmb_diff_colormap = QtWidgets.QComboBox()
         self.cmb_diff_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
-        diff_ctrl_row.addWidget(self.cmb_diff_colormap)
-        diff_ctrl_row.addStretch(1)
-        diff_layout.addLayout(diff_ctrl_row)
+        diff_head.addWidget(self.cmb_diff_colormap)
         self.img_preview_diff = SyncZoomImageWidget("Preview Diff")
         diff_layout.addWidget(self.img_preview_diff, 1)
         viewer_layout.addWidget(diff_card, 1)
@@ -6116,6 +6135,17 @@ class LivePreviewWindow(QtWidgets.QDialog):
         self._update_compute_hint(is_computing=is_computing)
         self._set_badge(*badge)
 
+    def set_diff_meta(
+        self,
+        *,
+        pair_text: str,
+        align_text: str = "-",
+        latency_text: str = "-",
+        cached: bool = False,
+    ) -> None:
+        cache_text = " | cached" if cached else ""
+        self.lbl_diff_meta.setText(f"{pair_text} | Align {align_text} | {latency_text}{cache_text}")
+
     def update_preview(
         self,
         *,
@@ -6129,6 +6159,8 @@ class LivePreviewWindow(QtWidgets.QDialog):
         self.img_preview_compare.setImage(aligned_compare) if aligned_compare is not None else self.img_preview_compare.setImage(None)
         self._raw_diff_image = result.result_image.copy() if result.result_image is not None else None
         self._refresh_diff_view()
+        self.lbl_base_meta.setText("Original source")
+        self.lbl_compare_meta.setText("Aligned into base space")
 
         align = result.alignment
         self.lbl_metric_align.setText(f"Align: {align.final_score:.1f} ({align.status.upper()})")
@@ -6138,6 +6170,13 @@ class LivePreviewWindow(QtWidgets.QDialog):
         if cache_hit:
             latency_text += "  cached"
         self.lbl_metric_latency.setText(f"Latency: {latency_text}")
+        self.set_diff_meta(
+            pair_text=f"{result.base_label} -> {result.compare_label}",
+            align_text=f"{align.final_score:.1f}",
+            latency_text=f"{latency_ms:.0f} ms" if latency_ms is not None else "-",
+            cached=cache_hit,
+        )
+        self.lbl_settings_summary.setText("Preview is up to date. Apply to Main when this draft looks correct.")
         self.set_rendering_state("Preview updated. Apply to Main when ready.", "ready")
 
     def set_source_images(
@@ -6148,6 +6187,8 @@ class LivePreviewWindow(QtWidgets.QDialog):
     ) -> None:
         self.img_preview_base.setImage(base_image)
         self.img_preview_compare.setImage(compare_image)
+        self.lbl_base_meta.setText("Original source")
+        self.lbl_compare_meta.setText("Selected compare" if compare_image is not None else "Aligned into base space")
 
     def clear_diff_preview(self) -> None:
         self._raw_diff_image = None
@@ -6156,22 +6197,28 @@ class LivePreviewWindow(QtWidgets.QDialog):
         self.lbl_metric_shift.setText("Shift: -")
         self.lbl_metric_mean.setText("μ: -")
         self.lbl_metric_latency.setText("Latency: -")
+        self.lbl_diff_meta.setText("Pair: -")
         self.progress_preview.setVisible(False)
         self.progress_preview.setRange(0, 1)
         self.progress_preview.setValue(0)
+        self.lbl_settings_summary.setText("Preview edits stay here until you apply them back to Main.")
 
     def clear_preview(self) -> None:
         self._raw_diff_image = None
         self.img_preview_base.setImage(None)
         self.img_preview_compare.setImage(None)
         self.img_preview_diff.setImage(None)
+        self.lbl_base_meta.setText("Original source")
+        self.lbl_compare_meta.setText("Aligned into base space")
         self.lbl_metric_align.setText("Align: -")
         self.lbl_metric_shift.setText("Shift: -")
         self.lbl_metric_mean.setText("μ: -")
         self.lbl_metric_latency.setText("Latency: -")
+        self.lbl_diff_meta.setText("Pair: -")
         self.progress_preview.setVisible(False)
         self.progress_preview.setRange(0, 1)
         self.progress_preview.setValue(0)
+        self.lbl_settings_summary.setText("Preview edits stay here until you apply them back to Main.")
         self._update_compute_hint()
 
     def closeEvent(self, event) -> None:
@@ -6199,6 +6246,13 @@ class LivePreviewWindow(QtWidgets.QDialog):
     def _emit_state_changed(self, is_align_change: bool) -> None:
         if self._syncing:
             return
+        self.set_diff_meta(
+            pair_text=f"{self.cmb_base.currentText()} -> {self.cmb_compare.currentText()}",
+            align_text="pending",
+            latency_text="pending",
+            cached=False,
+        )
+        self.lbl_settings_summary.setText("Draft changed. Review the preview, then apply the settings back to Main.")
         self.set_rendering_state("Preview parameters changed. Rendering…", "computing")
         self.preview_state_changed.emit(is_align_change)
 
