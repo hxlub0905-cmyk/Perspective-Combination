@@ -704,6 +704,7 @@ def compute_single_pair(
     if skip_snr_map:
         snr_map = np.zeros(result_uint8.shape, dtype=np.uint8)
         raw_snr_max = 0.0
+        dynamic_exclude_border = max(16, int(max(abs(alignment.dx), abs(alignment.dy)) + 8))
     else:
         # Large alignment shifts can introduce strong border artifacts after warpAffine.
         # Increase excluded border margin based on absolute shift to reduce false border peaks.
