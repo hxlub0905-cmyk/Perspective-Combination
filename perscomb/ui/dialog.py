@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
+import time
 
 from PySide6 import QtWidgets, QtCore, QtGui
 from PySide6.QtCore import Qt, Signal
@@ -4076,9 +4077,7 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
         self._spn_rows.valueChanged.connect(self._auto_preview_grid)
         self._spn_w.valueChanged.connect(self._auto_preview_grid)
         self._spn_h.valueChanged.connect(self._auto_preview_grid)
-        # Signals from base widget
-        self._base_widget.multi_roi_drawn.connect(self._on_roi_drawn)
-        self._base_widget.multi_roi_anchor.connect(self._on_anchor_set)
+        self._connect_base_widget_signals()
 
     # ------------------------------------------------------------------
     # Public API
@@ -4087,6 +4086,41 @@ class MultiROIManagerWidget(QtWidgets.QDialog):
     def set_image_shape(self, shape: Tuple[int, int]) -> None:
         """Inform the manager of the base image shape (H, W) for pixel→norm conversion."""
         self._img_shape = shape
+
+    def set_base_widget(self, base_widget: SyncZoomImageWidget) -> None:
+        """Retarget ROI drawing to a different image widget."""
+        if base_widget is self._base_widget:
+            return
+        self._clear_multi_add_markers()
+        self._disconnect_base_widget_signals()
+        self._base_widget = base_widget
+        self._connect_base_widget_signals()
+        self._base_widget.set_multi_roi_set(self._roi_set)
+        self._base_widget.clear_grid_preview()
+        self._base_widget.set_grid_anchors(None, None)
+        if self._btn_multi.isChecked() and self._multi_grp.isVisible():
+            self._base_widget.set_multi_draw_mode('multi_add')
+        elif self._btn_drag.isChecked():
+            self._base_widget.set_multi_draw_mode('drag', add_size_norm=self._get_add_size_norm())
+        elif self._btn_single.isChecked():
+            self._base_widget.set_multi_draw_mode('single_add', add_size_norm=self._get_add_size_norm())
+        else:
+            self._base_widget.set_multi_draw_mode('idle')
+        self._base_widget._update_display()
+
+    def _connect_base_widget_signals(self) -> None:
+        self._base_widget.multi_roi_drawn.connect(self._on_roi_drawn)
+        self._base_widget.multi_roi_anchor.connect(self._on_anchor_set)
+
+    def _disconnect_base_widget_signals(self) -> None:
+        try:
+            self._base_widget.multi_roi_drawn.disconnect(self._on_roi_drawn)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self._base_widget.multi_roi_anchor.disconnect(self._on_anchor_set)
+        except (RuntimeError, TypeError):
+            pass
 
     # ------------------------------------------------------------------
     # Mode management
@@ -5629,6 +5663,593 @@ def _ppt_add_roi_slides(prs, roi_full_results, roi_all_results,
                                    Inches, Pt)
 
 
+class LivePreviewWindow(QtWidgets.QDialog):
+    """Independent live-preview workspace for real-time tuning."""
+
+    preview_state_changed = Signal(bool)
+    apply_to_main_requested = Signal(bool)
+    reset_from_main_requested = Signal()
+    open_roi_manager_requested = Signal()
+    window_closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Live Preview Workspace")
+        self.setModal(False)
+        self.resize(1520, 920)
+        self.setMinimumSize(1320, 760)
+
+        self._syncing = False
+        self._raw_diff_image: Optional[np.ndarray] = None
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {UI_BG_WINDOW};
+                color: {UI_TEXT};
+                font-family: {Typography.FONT_FAMILY};
+                font-size: {Typography.FONT_SIZE_BODY};
+            }}
+            QFrame#PreviewHeader, QFrame#PreviewStatusBar, QFrame#PreviewCard {{
+                background: {UI_BG_PANEL};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.MD};
+            }}
+            QLabel#PreviewTitle {{
+                font-size: {Typography.FONT_SIZE_H3};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                color: {UI_TEXT_PRIMARY_STRONG};
+            }}
+            QLabel#PreviewSectionTitle {{
+                font-size: {Typography.FONT_SIZE_BODY};
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+                color: {UI_TEXT_PRIMARY_STRONG};
+                padding-bottom: 2px;
+            }}
+            QLabel#PreviewHint {{
+                color: {UI_TEXT_SECONDARY};
+                font-size: {Typography.FONT_SIZE_CAPTION};
+            }}
+            QLabel#PreviewBadge {{
+                border-radius: {BorderRadius.SM};
+                padding: 3px 8px;
+                font-size: {Typography.FONT_SIZE_CAPTION};
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+            }}
+            QPushButton#PreviewGhost {{
+                background: {UI_BG_PANEL};
+                color: {UI_TEXT};
+                border: 1px solid {UI_BORDER};
+                border-radius: {BorderRadius.SM};
+                padding: 7px 12px;
+                min-height: 32px;
+                font-weight: {Typography.FONT_WEIGHT_MEDIUM};
+            }}
+            QPushButton#PreviewGhost:hover {{
+                background: {UI_BG_SUBTLE};
+                border-color: {UI_BORDER_ACTIVE};
+            }}
+            QPushButton#PreviewPrimary {{
+                background: {UI_PRIMARY};
+                color: {UI_TEXT_ON_PRIMARY};
+                border: 1px solid {UI_PRIMARY};
+                border-radius: {BorderRadius.SM};
+                padding: 7px 14px;
+                min-height: 32px;
+                font-weight: {Typography.FONT_WEIGHT_BOLD};
+            }}
+            QPushButton#PreviewPrimary:hover {{
+                background: {UI_PRIMARY_HOVER};
+                border-color: {UI_PRIMARY_HOVER};
+            }}
+            QPushButton#PreviewSecondary {{
+                background: {UI_ACCENT_LIGHT};
+                color: #92400E;
+                border: 1px solid {UI_PRIMARY};
+                border-radius: {BorderRadius.SM};
+                padding: 7px 14px;
+                min-height: 32px;
+                font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};
+            }}
+            QPushButton#PreviewSecondary:hover {{
+                background: #FDE68A;
+                border-color: {UI_PRIMARY_PRESSED};
+            }}
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        header = QtWidgets.QFrame()
+        header.setObjectName("PreviewHeader")
+        header_layout = QtWidgets.QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(10)
+
+        title = QtWidgets.QLabel("⚡ Live Preview")
+        title.setObjectName("PreviewTitle")
+        header_layout.addWidget(title)
+        header_layout.addSpacing(12)
+
+        header_layout.addWidget(QtWidgets.QLabel("Base"))
+        self.cmb_base = QtWidgets.QComboBox()
+        self.cmb_base.setMinimumWidth(200)
+        header_layout.addWidget(self.cmb_base)
+
+        header_layout.addWidget(QtWidgets.QLabel("Compare"))
+        self.cmb_compare = QtWidgets.QComboBox()
+        self.cmb_compare.setMinimumWidth(200)
+        header_layout.addWidget(self.cmb_compare)
+
+        header_layout.addSpacing(6)
+        self.btn_reset_from_main = QtWidgets.QPushButton("Reset from Main")
+        self.btn_reset_from_main.setObjectName("PreviewGhost")
+        header_layout.addWidget(self.btn_reset_from_main)
+
+        self.lbl_status_badge = QtWidgets.QLabel("Draft")
+        self.lbl_status_badge.setObjectName("PreviewBadge")
+        header_layout.addWidget(self.lbl_status_badge)
+
+        header_layout.addStretch(1)
+
+        self.btn_apply = QtWidgets.QPushButton("Apply to Main")
+        self.btn_apply.setObjectName("PreviewSecondary")
+        header_layout.addWidget(self.btn_apply)
+
+        self.btn_apply_close = QtWidgets.QPushButton("Apply & Close")
+        self.btn_apply_close.setObjectName("PreviewPrimary")
+        header_layout.addWidget(self.btn_apply_close)
+
+        root.addWidget(header)
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(10)
+
+        settings_card = QtWidgets.QFrame()
+        settings_card.setObjectName("PreviewCard")
+        settings_card.setFixedWidth(300)
+        settings_layout = QtWidgets.QVBoxLayout(settings_card)
+        settings_layout.setContentsMargins(16, 16, 16, 16)
+        settings_layout.setSpacing(12)
+
+        lbl_settings = QtWidgets.QLabel("Settings")
+        lbl_settings.setObjectName("PreviewSectionTitle")
+        settings_layout.addWidget(lbl_settings)
+
+        settings_layout.addWidget(QtWidgets.QLabel("Operation"))
+        self.cmb_operation = QtWidgets.QComboBox()
+        self.cmb_operation.addItems([
+            "Subtract (|Base − Compare|)",
+            "Blend (α×Base + β×Compare)",
+        ])
+        settings_layout.addWidget(self.cmb_operation)
+
+        self.wgt_blend_controls = QtWidgets.QWidget()
+        blend_layout = QtWidgets.QHBoxLayout(self.wgt_blend_controls)
+        blend_layout.setContentsMargins(0, 0, 0, 0)
+        blend_layout.setSpacing(6)
+        blend_layout.addWidget(QtWidgets.QLabel("α"))
+        self.spin_alpha = QtWidgets.QDoubleSpinBox()
+        self.spin_alpha.setRange(0.0, 1.0)
+        self.spin_alpha.setSingleStep(0.1)
+        self.spin_alpha.setDecimals(2)
+        blend_layout.addWidget(self.spin_alpha)
+        blend_layout.addWidget(QtWidgets.QLabel("β"))
+        self.spin_beta = QtWidgets.QDoubleSpinBox()
+        self.spin_beta.setRange(0.0, 1.0)
+        self.spin_beta.setSingleStep(0.1)
+        self.spin_beta.setDecimals(2)
+        blend_layout.addWidget(self.spin_beta)
+        settings_layout.addWidget(self.wgt_blend_controls)
+
+        settings_layout.addWidget(QtWidgets.QLabel("Subtract Mode"))
+        self.cmb_subtract_mode = QtWidgets.QComboBox()
+        self.cmb_subtract_mode.addItems([
+            "|diff| × 2 (default)",
+            "|diff| (abs, no gain)",
+            "clip ≥ 0 (keep direction)",
+        ])
+        settings_layout.addWidget(self.cmb_subtract_mode)
+
+        lbl_invert = QtWidgets.QLabel("Invert")
+        lbl_invert.setObjectName("PreviewSectionTitle")
+        settings_layout.addWidget(lbl_invert)
+        self.chk_invert_base = QtWidgets.QCheckBox("Base")
+        self.chk_invert_compare = QtWidgets.QCheckBox("Compare")
+        self.chk_invert_result = QtWidgets.QCheckBox("Result")
+        settings_layout.addWidget(self.chk_invert_base)
+        settings_layout.addWidget(self.chk_invert_compare)
+        settings_layout.addWidget(self.chk_invert_result)
+
+        lbl_norm = QtWidgets.QLabel("Normalize")
+        lbl_norm.setObjectName("PreviewSectionTitle")
+        settings_layout.addWidget(lbl_norm)
+        self.cmb_normalize_mode = QtWidgets.QComboBox()
+        self.cmb_normalize_mode.addItems([
+            "Percentile (P2–P98)",
+            "GLV-Mask",
+            "Skip (raw ÷ 255)",
+            "ROI-Match (EPI Nulling)",
+        ])
+        settings_layout.addWidget(self.cmb_normalize_mode)
+
+        self.wgt_glv_controls = QtWidgets.QWidget()
+        glv_layout = QtWidgets.QGridLayout(self.wgt_glv_controls)
+        glv_layout.setContentsMargins(0, 0, 0, 0)
+        glv_layout.setHorizontalSpacing(8)
+        glv_layout.setVerticalSpacing(6)
+        glv_layout.addWidget(QtWidgets.QLabel("GLV Min"), 0, 0)
+        self.spn_glv_low = QtWidgets.QSpinBox()
+        self.spn_glv_low.setRange(0, 254)
+        glv_layout.addWidget(self.spn_glv_low, 0, 1)
+        glv_layout.addWidget(QtWidgets.QLabel("GLV Max"), 1, 0)
+        self.spn_glv_high = QtWidgets.QSpinBox()
+        self.spn_glv_high.setRange(1, 255)
+        glv_layout.addWidget(self.spn_glv_high, 1, 1)
+        settings_layout.addWidget(self.wgt_glv_controls)
+
+        lbl_roi = QtWidgets.QLabel("ROI (Optional)")
+        lbl_roi.setObjectName("PreviewSectionTitle")
+        settings_layout.addWidget(lbl_roi)
+        self.lbl_roi_hint = QtWidgets.QLabel("ROI source: shared with Main (0 ROI)")
+        self.lbl_roi_hint.setObjectName("PreviewHint")
+        self.lbl_roi_hint.setWordWrap(True)
+        settings_layout.addWidget(self.lbl_roi_hint)
+        self.btn_open_roi_manager = QtWidgets.QPushButton("Open ROI Manager")
+        self.btn_open_roi_manager.setObjectName("PreviewGhost")
+        settings_layout.addWidget(self.btn_open_roi_manager)
+
+        self.wgt_roi_match_controls = QtWidgets.QWidget()
+        roi_layout = QtWidgets.QVBoxLayout(self.wgt_roi_match_controls)
+        roi_layout.setContentsMargins(0, 0, 0, 0)
+        roi_layout.setSpacing(6)
+        self.chk_roi_abs_diff = QtWidgets.QCheckBox("Use |diff| instead of keep-direction")
+        roi_layout.addWidget(self.chk_roi_abs_diff)
+        settings_layout.addWidget(self.wgt_roi_match_controls)
+
+        lbl_align = QtWidgets.QLabel("Alignment")
+        lbl_align.setObjectName("PreviewSectionTitle")
+        settings_layout.addWidget(lbl_align)
+        self.cmb_align_method = QtWidgets.QComboBox()
+        self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)"])
+        settings_layout.addWidget(self.cmb_align_method)
+
+        settings_layout.addStretch(1)
+        body.addWidget(settings_card, stretch=0)
+
+        viewer_layout = QtWidgets.QHBoxLayout()
+        viewer_layout.setSpacing(10)
+
+        def _make_viewer_column(title_text: str):
+            card = QtWidgets.QFrame()
+            card.setObjectName("PreviewCard")
+            layout = QtWidgets.QVBoxLayout(card)
+            layout.setContentsMargins(12, 12, 12, 12)
+            layout.setSpacing(8)
+            title_label = QtWidgets.QLabel(title_text)
+            title_label.setObjectName("PreviewSectionTitle")
+            layout.addWidget(title_label)
+            return card, layout
+
+        base_card, base_layout = _make_viewer_column("Base")
+        self.img_preview_base = SyncZoomImageWidget("Preview Base")
+        base_layout.addWidget(self.img_preview_base, 1)
+        viewer_layout.addWidget(base_card, 1)
+
+        compare_card, compare_layout = _make_viewer_column("Aligned Compare")
+        self.img_preview_compare = SyncZoomImageWidget("Preview Compare")
+        compare_layout.addWidget(self.img_preview_compare, 1)
+        viewer_layout.addWidget(compare_card, 1)
+
+        diff_card, diff_layout = _make_viewer_column("Diff")
+        diff_ctrl_row = QtWidgets.QHBoxLayout()
+        diff_ctrl_row.setContentsMargins(0, 0, 0, 0)
+        diff_ctrl_row.addWidget(QtWidgets.QLabel("Colormap"))
+        self.cmb_diff_colormap = QtWidgets.QComboBox()
+        self.cmb_diff_colormap.addItems(["Grayscale", "JET", "Hot", "Inferno", "Viridis"])
+        diff_ctrl_row.addWidget(self.cmb_diff_colormap)
+        diff_ctrl_row.addStretch(1)
+        diff_layout.addLayout(diff_ctrl_row)
+        self.img_preview_diff = SyncZoomImageWidget("Preview Diff")
+        diff_layout.addWidget(self.img_preview_diff, 1)
+        viewer_layout.addWidget(diff_card, 1)
+
+        body.addLayout(viewer_layout, stretch=1)
+        root.addLayout(body, 1)
+
+        status_bar = QtWidgets.QFrame()
+        status_bar.setObjectName("PreviewStatusBar")
+        status_layout = QtWidgets.QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(14, 10, 14, 10)
+        status_layout.setSpacing(18)
+
+        self.lbl_status_text = QtWidgets.QLabel("Adjust settings to preview.")
+        status_layout.addWidget(self.lbl_status_text, 1)
+        self.progress_preview = QtWidgets.QProgressBar()
+        self.progress_preview.setFixedWidth(160)
+        self.progress_preview.setTextVisible(False)
+        self.progress_preview.setRange(0, 1)
+        self.progress_preview.setValue(0)
+        self.progress_preview.setVisible(False)
+        status_layout.addWidget(self.progress_preview)
+        self.lbl_compute_hint = QtWidgets.QLabel("")
+        self.lbl_compute_hint.setObjectName("PreviewHint")
+        self.lbl_compute_hint.setMinimumWidth(240)
+        status_layout.addWidget(self.lbl_compute_hint)
+        self.lbl_metric_align = QtWidgets.QLabel("Align: -")
+        self.lbl_metric_shift = QtWidgets.QLabel("Shift: -")
+        self.lbl_metric_mean = QtWidgets.QLabel("μ: -")
+        self.lbl_metric_latency = QtWidgets.QLabel("Latency: -")
+        for lbl in (
+            self.lbl_metric_align,
+            self.lbl_metric_shift,
+            self.lbl_metric_mean,
+            self.lbl_metric_latency,
+        ):
+            lbl.setObjectName("PreviewHint")
+            status_layout.addWidget(lbl)
+
+        root.addWidget(status_bar)
+
+        self._connect_signals()
+        self._on_operation_changed()
+        self._on_normalize_mode_changed()
+        self._update_compute_hint()
+        self._set_badge("Draft", "#92400E", UI_ACCENT_LIGHT, UI_PRIMARY)
+
+    def _connect_signals(self) -> None:
+        self.cmb_base.currentIndexChanged.connect(self._on_base_changed)
+        self.cmb_compare.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_operation.currentIndexChanged.connect(self._on_operation_changed)
+        self.cmb_operation.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spin_alpha.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spin_beta.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_subtract_mode.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.chk_invert_base.stateChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.chk_invert_compare.stateChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.chk_invert_result.stateChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_normalize_mode.currentIndexChanged.connect(self._on_normalize_mode_changed)
+        self.cmb_normalize_mode.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spn_glv_low.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spn_glv_high.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.chk_roi_abs_diff.stateChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_align_method.currentIndexChanged.connect(self._update_compute_hint)
+        self.cmb_align_method.currentIndexChanged.connect(lambda *_: self._emit_state_changed(True))
+        self.cmb_diff_colormap.currentIndexChanged.connect(self._refresh_diff_view)
+        self.btn_reset_from_main.clicked.connect(self.reset_from_main_requested.emit)
+        self.btn_apply.clicked.connect(lambda: self.apply_to_main_requested.emit(False))
+        self.btn_apply_close.clicked.connect(lambda: self.apply_to_main_requested.emit(True))
+        self.btn_open_roi_manager.clicked.connect(self.open_roi_manager_requested.emit)
+
+        self.img_preview_base.cursor_moved.connect(
+            lambda nx, ny: (self.img_preview_compare.setCursorPos(nx, ny), self.img_preview_diff.setCursorPos(nx, ny))
+        )
+        self.img_preview_base.cursor_left.connect(
+            lambda: (self.img_preview_compare.clearCursor(), self.img_preview_diff.clearCursor())
+        )
+        self.img_preview_compare.cursor_moved.connect(
+            lambda nx, ny: (self.img_preview_base.setCursorPos(nx, ny), self.img_preview_diff.setCursorPos(nx, ny))
+        )
+        self.img_preview_compare.cursor_left.connect(
+            lambda: (self.img_preview_base.clearCursor(), self.img_preview_diff.clearCursor())
+        )
+        self.img_preview_diff.cursor_moved.connect(
+            lambda nx, ny: (self.img_preview_base.setCursorPos(nx, ny), self.img_preview_compare.setCursorPos(nx, ny))
+        )
+        self.img_preview_diff.cursor_left.connect(
+            lambda: (self.img_preview_base.clearCursor(), self.img_preview_compare.clearCursor())
+        )
+
+    def set_image_labels(self, labels: List[str]) -> None:
+        labels = [lbl for lbl in labels if lbl]
+        current_base = self.cmb_base.currentText()
+        current_compare = self.cmb_compare.currentText()
+        self._syncing = True
+        self.cmb_base.clear()
+        self.cmb_base.addItems(labels)
+        if current_base in labels:
+            self.cmb_base.setCurrentText(current_base)
+        elif labels:
+            self.cmb_base.setCurrentIndex(0)
+        self._refresh_compare_options(preferred=current_compare)
+        self._syncing = False
+
+    def set_state(self, state: dict, *, include_pair: bool = True) -> None:
+        self._syncing = True
+        if include_pair and state.get("base_label"):
+            self.cmb_base.setCurrentText(state["base_label"])
+            self._refresh_compare_options(preferred=state.get("compare_label"))
+            if state.get("compare_label"):
+                self.cmb_compare.setCurrentText(state["compare_label"])
+        self.cmb_operation.setCurrentIndex(state.get("operation_index", 0))
+        self.spin_alpha.setValue(state.get("alpha", 0.5))
+        self.spin_beta.setValue(state.get("beta", 0.5))
+        self.cmb_subtract_mode.setCurrentIndex(state.get("subtract_mode_index", 0))
+        self.chk_invert_base.setChecked(state.get("invert_base", False))
+        self.chk_invert_compare.setChecked(state.get("invert_compare", False))
+        self.chk_invert_result.setChecked(state.get("invert_result", False))
+        self.cmb_normalize_mode.setCurrentIndex(state.get("normalize_mode_index", 0))
+        self.spn_glv_low.setValue(state.get("glv_low", 100))
+        self.spn_glv_high.setValue(state.get("glv_high", 160))
+        self.chk_roi_abs_diff.setChecked(state.get("roi_abs_diff", False))
+        self.cmb_align_method.setCurrentIndex(state.get("align_method_index", 0))
+        self._syncing = False
+        self._on_operation_changed()
+        self._on_normalize_mode_changed()
+        self._set_badge("Draft", "#92400E", UI_ACCENT_LIGHT, UI_PRIMARY)
+
+    def current_state(self) -> dict:
+        return {
+            "base_label": self.cmb_base.currentText(),
+            "compare_label": self.cmb_compare.currentText(),
+            "operation_index": self.cmb_operation.currentIndex(),
+            "alpha": self.spin_alpha.value(),
+            "beta": self.spin_beta.value(),
+            "subtract_mode_index": self.cmb_subtract_mode.currentIndex(),
+            "invert_base": self.chk_invert_base.isChecked(),
+            "invert_compare": self.chk_invert_compare.isChecked(),
+            "invert_result": self.chk_invert_result.isChecked(),
+            "normalize_mode_index": self.cmb_normalize_mode.currentIndex(),
+            "glv_low": self.spn_glv_low.value(),
+            "glv_high": self.spn_glv_high.value(),
+            "roi_abs_diff": self.chk_roi_abs_diff.isChecked(),
+            "align_method_index": self.cmb_align_method.currentIndex(),
+        }
+
+    def set_rendering_state(self, text: str, tone: str = "neutral") -> None:
+        badge_map = {
+            "neutral": ("Draft", "#92400E", UI_ACCENT_LIGHT, UI_PRIMARY),
+            "computing": ("Computing", UI_INFO, "#DBEAFE", "#93C5FD"),
+            "ready": ("Ready", UI_SUCCESS, "#DCFCE7", "#86EFAC"),
+            "error": ("Preview Error", UI_WARNING, "#FEE2E2", "#FCA5A5"),
+            "applied": ("Applied", "#92400E", UI_ACCENT_LIGHT, UI_PRIMARY),
+        }
+        badge = badge_map.get(tone, badge_map["neutral"])
+        self.lbl_status_text.setText(text)
+        is_computing = tone == "computing"
+        self.progress_preview.setVisible(is_computing)
+        if is_computing:
+            self.progress_preview.setRange(0, 0)
+        else:
+            self.progress_preview.setRange(0, 1)
+            self.progress_preview.setValue(0)
+        self._update_compute_hint(is_computing=is_computing)
+        self._set_badge(*badge)
+
+    def update_preview(
+        self,
+        *,
+        base_image: Optional[np.ndarray],
+        aligned_compare: Optional[np.ndarray],
+        result: SinglePairResult,
+        latency_ms: Optional[float],
+        cache_hit: bool,
+    ) -> None:
+        self.img_preview_base.setImage(base_image) if base_image is not None else self.img_preview_base.setImage(None)
+        self.img_preview_compare.setImage(aligned_compare) if aligned_compare is not None else self.img_preview_compare.setImage(None)
+        self._raw_diff_image = result.result_image.copy() if result.result_image is not None else None
+        self._refresh_diff_view()
+
+        align = result.alignment
+        self.lbl_metric_align.setText(f"Align: {align.final_score:.1f} ({align.status.upper()})")
+        self.lbl_metric_shift.setText(f"Shift: ({align.dx:+d}, {align.dy:+d})")
+        self.lbl_metric_mean.setText(f"μ: {result.stats.get('diff_mean', 0.0):.4f}")
+        latency_text = f"{latency_ms:.0f} ms" if latency_ms is not None else "-"
+        if cache_hit:
+            latency_text += "  cached"
+        self.lbl_metric_latency.setText(f"Latency: {latency_text}")
+        self.set_rendering_state("Preview updated. Apply to Main when ready.", "ready")
+
+    def set_source_images(
+        self,
+        *,
+        base_image: Optional[np.ndarray],
+        compare_image: Optional[np.ndarray],
+    ) -> None:
+        self.img_preview_base.setImage(base_image)
+        self.img_preview_compare.setImage(compare_image)
+
+    def clear_diff_preview(self) -> None:
+        self._raw_diff_image = None
+        self.img_preview_diff.setImage(None)
+        self.lbl_metric_align.setText("Align: -")
+        self.lbl_metric_shift.setText("Shift: -")
+        self.lbl_metric_mean.setText("μ: -")
+        self.lbl_metric_latency.setText("Latency: -")
+        self.progress_preview.setVisible(False)
+        self.progress_preview.setRange(0, 1)
+        self.progress_preview.setValue(0)
+
+    def clear_preview(self) -> None:
+        self._raw_diff_image = None
+        self.img_preview_base.setImage(None)
+        self.img_preview_compare.setImage(None)
+        self.img_preview_diff.setImage(None)
+        self.lbl_metric_align.setText("Align: -")
+        self.lbl_metric_shift.setText("Shift: -")
+        self.lbl_metric_mean.setText("μ: -")
+        self.lbl_metric_latency.setText("Latency: -")
+        self.progress_preview.setVisible(False)
+        self.progress_preview.setRange(0, 1)
+        self.progress_preview.setValue(0)
+        self._update_compute_hint()
+
+    def closeEvent(self, event) -> None:
+        self.window_closed.emit()
+        super().closeEvent(event)
+
+    def _on_base_changed(self) -> None:
+        self._refresh_compare_options(preferred=self.cmb_compare.currentText())
+        self._emit_state_changed(True)
+
+    def _refresh_compare_options(self, preferred: Optional[str] = None) -> None:
+        base_label = self.cmb_base.currentText()
+        labels = [self.cmb_base.itemText(i) for i in range(self.cmb_base.count())]
+        compare_labels = [lbl for lbl in labels if lbl and lbl != base_label]
+        current = preferred if preferred in compare_labels else self.cmb_compare.currentText()
+        blocker = QtCore.QSignalBlocker(self.cmb_compare)
+        self.cmb_compare.clear()
+        self.cmb_compare.addItems(compare_labels)
+        del blocker
+        if current in compare_labels:
+            self.cmb_compare.setCurrentText(current)
+        elif compare_labels:
+            self.cmb_compare.setCurrentIndex(0)
+
+    def _emit_state_changed(self, is_align_change: bool) -> None:
+        if self._syncing:
+            return
+        self.set_rendering_state("Preview parameters changed. Rendering…", "computing")
+        self.preview_state_changed.emit(is_align_change)
+
+    def _update_compute_hint(self, *_args, is_computing: Optional[bool] = None) -> None:
+        if is_computing is None:
+            is_computing = self.progress_preview.isVisible()
+        if self.cmb_align_method.currentIndex() == 1:
+            if is_computing:
+                self.lbl_compute_hint.setText("NCC preview is slower on large images. Please wait for alignment.")
+            else:
+                self.lbl_compute_hint.setText("Tip: NCC is slower for tuning. Use Phase for faster live preview.")
+        else:
+            if is_computing:
+                self.lbl_compute_hint.setText("Rendering preview…")
+            else:
+                self.lbl_compute_hint.setText("")
+
+    def _on_operation_changed(self) -> None:
+        self.wgt_blend_controls.setVisible(self.cmb_operation.currentIndex() == 1)
+
+    def _on_normalize_mode_changed(self) -> None:
+        idx = self.cmb_normalize_mode.currentIndex()
+        self.wgt_glv_controls.setVisible(idx == 1)
+        self.wgt_roi_match_controls.setVisible(idx == 3)
+
+    def _refresh_diff_view(self) -> None:
+        if self._raw_diff_image is None:
+            return
+        img = self._raw_diff_image
+        cmap_name = self.cmb_diff_colormap.currentText()
+        if cmap_name == "Grayscale":
+            display_img = img
+        else:
+            cmap_map = {
+                "JET": cv2.COLORMAP_JET,
+                "Hot": cv2.COLORMAP_HOT,
+                "Inferno": cv2.COLORMAP_INFERNO,
+                "Viridis": cv2.COLORMAP_VIRIDIS,
+            }
+            display_img = cv2.applyColorMap(img, cmap_map.get(cmap_name, cv2.COLORMAP_JET))
+        self.img_preview_diff.setImage(display_img)
+
+    def _set_badge(self, text: str, fg: str, bg: str, border: str) -> None:
+        self.lbl_status_badge.setText(text)
+        self.lbl_status_badge.setStyleSheet(
+            f"color: {fg}; background: {bg}; border: 1px solid {border}; border-radius: {BorderRadius.SM};"
+            f" padding: 3px 8px; font-size: {Typography.FONT_SIZE_CAPTION};"
+            f" font-weight: {Typography.FONT_WEIGHT_SEMIBOLD};"
+        )
+
+
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
     """Dialog for multi-image perspective combination and defect detection."""
 
@@ -5695,6 +6316,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._is_live_preview: bool = False   # True when current display is a preview
         self._alignment_cache: AlignmentCache = AlignmentCache()
         self._live_manager: Optional[LivePreviewManager] = None
+        self._live_preview_window: Optional[LivePreviewWindow] = None
+        self._live_preview_started_at: Optional[float] = None
+        self._live_preview_cache_hit: bool = False
+        self._preview_roi_manager: Optional[MultiROIManagerWidget] = None
 
         self._setup_ui()
         self._apply_toolbar_icons()
@@ -5760,6 +6385,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def closeEvent(self, event):
         """Handle dialog close - ensure compute thread is stopped safely."""
+        if self._live_manager is not None:
+            self._live_manager.cancel()
+        if self._live_preview_window is not None:
+            self._live_preview_window.close()
+        if self._preview_roi_manager is not None:
+            self._preview_roi_manager.close()
         if self._compute_thread is not None:
             self._compute_thread.requestInterruption()
             self._compute_thread.quit()
@@ -7592,6 +8223,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self.cmb_base.setCurrentIndex(0)
             self._on_base_changed()
 
+        if self._live_preview_window is not None:
+            self._live_preview_window.set_image_labels(self._get_image_labels())
+            if has_images:
+                self._sync_live_preview_window_from_main()
+            else:
+                self._live_preview_window.clear_preview()
+
     def _update_sidebar_empty_state(self, has_images: bool):
         """Update sidebar placeholders and enablement when image set is empty/non-empty."""
         self.lbl_input_empty_hint.setVisible(not has_images)
@@ -7648,6 +8286,136 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Deselect all compare images."""
         for chk in self._compare_checkboxes:
             chk.setChecked(False)
+
+    def _get_image_labels(self) -> List[str]:
+        return [self.cmb_base.itemText(i) for i in range(self.cmb_base.count()) if self.cmb_base.itemText(i)]
+
+    def _get_primary_compare_label(self) -> Optional[str]:
+        if self._results:
+            compare_label = self._results[self._current_result_idx].compare_label
+            if compare_label in self._images:
+                return compare_label
+        for chk in self._compare_checkboxes:
+            if chk.isChecked() and chk.isEnabled():
+                return chk.text()
+        base_label = self.cmb_base.currentText()
+        for label in self._get_image_labels():
+            if label != base_label:
+                return label
+        return None
+
+    def _set_main_compare_selection(self, compare_label: Optional[str]) -> None:
+        for chk in self._compare_checkboxes:
+            chk.setChecked(chk.text() == compare_label and chk.isEnabled())
+        self._update_step_states()
+
+    def _collect_main_config_state(self) -> dict:
+        return {
+            "base_label": self.cmb_base.currentText(),
+            "compare_label": self._get_primary_compare_label(),
+            "operation_index": self.cmb_operation.currentIndex(),
+            "alpha": self.spin_alpha.value(),
+            "beta": self.spin_beta.value(),
+            "subtract_mode_index": self.cmb_subtract_mode.currentIndex(),
+            "invert_base": self.chk_invert_base.isChecked(),
+            "invert_compare": self.chk_invert_compare.isChecked(),
+            "invert_result": self.chk_invert_result.isChecked(),
+            "normalize_mode_index": self.cmb_normalize_mode.currentIndex(),
+            "glv_low": self.spn_glv_low.value(),
+            "glv_high": self.spn_glv_high.value(),
+            "roi_abs_diff": self.chk_roi_abs_diff.isChecked(),
+            "align_method_index": self.cmb_align_method.currentIndex(),
+        }
+
+    def _apply_config_state_to_main(self, state: dict) -> None:
+        blockers = [
+            QtCore.QSignalBlocker(self.cmb_operation),
+            QtCore.QSignalBlocker(self.spin_alpha),
+            QtCore.QSignalBlocker(self.spin_beta),
+            QtCore.QSignalBlocker(self.cmb_subtract_mode),
+            QtCore.QSignalBlocker(self.chk_invert_base),
+            QtCore.QSignalBlocker(self.chk_invert_compare),
+            QtCore.QSignalBlocker(self.chk_invert_result),
+            QtCore.QSignalBlocker(self.cmb_normalize_mode),
+            QtCore.QSignalBlocker(self.spn_glv_low),
+            QtCore.QSignalBlocker(self.spn_glv_high),
+            QtCore.QSignalBlocker(self.chk_roi_abs_diff),
+            QtCore.QSignalBlocker(self.cmb_align_method),
+        ]
+        self.cmb_operation.setCurrentIndex(state.get("operation_index", self.cmb_operation.currentIndex()))
+        self.spin_alpha.setValue(state.get("alpha", self.spin_alpha.value()))
+        self.spin_beta.setValue(state.get("beta", self.spin_beta.value()))
+        self.cmb_subtract_mode.setCurrentIndex(state.get("subtract_mode_index", self.cmb_subtract_mode.currentIndex()))
+        self.chk_invert_base.setChecked(state.get("invert_base", self.chk_invert_base.isChecked()))
+        self.chk_invert_compare.setChecked(state.get("invert_compare", self.chk_invert_compare.isChecked()))
+        self.chk_invert_result.setChecked(state.get("invert_result", self.chk_invert_result.isChecked()))
+        self.cmb_normalize_mode.setCurrentIndex(state.get("normalize_mode_index", self.cmb_normalize_mode.currentIndex()))
+        self.spn_glv_low.setValue(state.get("glv_low", self.spn_glv_low.value()))
+        self.spn_glv_high.setValue(state.get("glv_high", self.spn_glv_high.value()))
+        self.chk_roi_abs_diff.setChecked(state.get("roi_abs_diff", self.chk_roi_abs_diff.isChecked()))
+        self.cmb_align_method.setCurrentIndex(state.get("align_method_index", self.cmb_align_method.currentIndex()))
+        del blockers
+        self._on_operation_changed(self.cmb_operation.currentIndex())
+        self._on_normalize_mode_changed()
+        self._update_adv_badge()
+        self._update_step_states()
+
+    def _sync_live_preview_window_from_main(self) -> None:
+        if self._live_preview_window is None:
+            return
+        state = self._collect_main_config_state()
+        self._live_preview_window.set_image_labels(self._get_image_labels())
+        self._live_preview_window.set_state(state, include_pair=True)
+        self._update_live_preview_source_images(state.get("base_label"), state.get("compare_label"))
+        self._update_preview_roi_hint()
+
+    def _update_live_preview_source_images(
+        self,
+        base_label: Optional[str],
+        compare_label: Optional[str],
+    ) -> None:
+        if self._live_preview_window is None:
+            return
+        base_img = self._images.get(base_label) if base_label else None
+        compare_img = self._images.get(compare_label) if compare_label else None
+        self._live_preview_window.set_source_images(
+            base_image=base_img,
+            compare_image=compare_img,
+        )
+        if self._preview_roi_manager is not None and base_img is not None:
+            self._preview_roi_manager.set_base_widget(self._live_preview_window.img_preview_base)
+            self._preview_roi_manager.set_image_shape(base_img.shape[:2])
+        self._apply_roi_visibility()
+
+    def _update_preview_roi_hint(self) -> None:
+        if self._live_preview_window is None:
+            return
+        n = len(self._multi_roi_set)
+        if n == 0:
+            self._live_preview_window.lbl_roi_hint.setText("ROI source: shared with Main (0 ROI)")
+        else:
+            self._live_preview_window.lbl_roi_hint.setText(
+                f"ROI source: shared with Main ({n} ROI{'s' if n != 1 else ''})"
+            )
+
+    def _ensure_preview_roi_manager(self) -> Optional[MultiROIManagerWidget]:
+        if self._live_preview_window is None:
+            return None
+        if self._preview_roi_manager is None:
+            self._preview_roi_manager = MultiROIManagerWidget(
+                roi_set=self._multi_roi_set,
+                base_widget=self._live_preview_window.img_preview_base,
+                parent=self._live_preview_window,
+            )
+            self._preview_roi_manager.rois_changed.connect(self._on_multi_rois_changed)
+        else:
+            self._preview_roi_manager.set_base_widget(self._live_preview_window.img_preview_base)
+
+        base_label = self._live_preview_window.cmb_base.currentText()
+        base_img = self._images.get(base_label) if base_label else None
+        if base_img is not None:
+            self._preview_roi_manager.set_image_shape(base_img.shape[:2])
+        return self._preview_roi_manager
 
     def _on_display_mode(self, mode: str):
         """Switch left or right viewer display mode and keep button highlights in sync."""
@@ -7826,34 +8594,21 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     # ── Live Preview ─────────────────────────────────────────────────────────
 
     def _init_live_preview(self) -> None:
-        """Wire up the LivePreviewManager and connect parameter widgets."""
+        """Initialize the shared live-preview worker manager."""
         self._live_manager = LivePreviewManager(self._alignment_cache, parent=self)
         self._live_manager.preview_ready.connect(self._on_live_preview_ready)
         self._live_manager.preview_error.connect(self._on_live_preview_error)
         self._live_manager.preview_started.connect(self._on_live_preview_started)
 
-        # Tier-2 params: non-alignment changes (use cached alignment)
-        _tier2_signals = [
-            (self.cmb_operation, "currentIndexChanged"),
-            (self.spin_alpha, "valueChanged"),
-            (self.spin_beta, "valueChanged"),
-            (self.chk_invert_base, "stateChanged"),
-            (self.chk_invert_compare, "stateChanged"),
-            (self.chk_invert_result, "stateChanged"),
-            (self.cmb_normalize_mode, "currentIndexChanged"),
-            (self.spn_glv_low, "valueChanged"),
-            (self.spn_glv_high, "valueChanged"),
-            (self.cmb_subtract_mode, "currentIndexChanged"),
-        ]
-        for widget, sig_name in _tier2_signals:
-            getattr(widget, sig_name).connect(
-                lambda *_: self._on_live_param_changed(False)
-            )
-
-        # Tier-1 params: alignment changes (invalidate cache)
-        self.cmb_align_method.currentIndexChanged.connect(
-            lambda *_: self._on_live_param_changed(True)
-        )
+    def _ensure_live_preview_window(self) -> LivePreviewWindow:
+        if self._live_preview_window is None:
+            self._live_preview_window = LivePreviewWindow(self)
+            self._live_preview_window.preview_state_changed.connect(self._on_live_param_changed)
+            self._live_preview_window.apply_to_main_requested.connect(self._on_live_preview_apply_requested)
+            self._live_preview_window.reset_from_main_requested.connect(self._on_live_preview_reset_requested)
+            self._live_preview_window.open_roi_manager_requested.connect(self._on_live_preview_open_roi_manager)
+            self._live_preview_window.window_closed.connect(self._on_live_preview_window_closed)
+        return self._live_preview_window
 
     def _on_live_toggle(self, checked: bool) -> None:
         """Enable or disable live preview mode."""
@@ -8018,6 +8773,216 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     # ── End Live Preview ──────────────────────────────────────────────────────
 
+    def _on_live_toggle(self, checked: bool) -> None:
+        """Open or close the independent live-preview workspace."""
+        self._live_preview_enabled = checked
+        if checked:
+            self.btn_live_preview.setText("\u26a1  Live Preview  \u25cf")
+            if len(self._images) < 2:
+                self.btn_live_preview.setChecked(False)
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Live Preview",
+                    "Please load at least two images before opening the preview workspace.",
+                )
+                return
+            window = self._ensure_live_preview_window()
+            self._sync_live_preview_window_from_main()
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            self.lbl_live_status.setText("Preview workspace open")
+            self._on_live_param_changed(False)
+        else:
+            self.btn_live_preview.setText("\u26a1  Live Preview")
+            if self._live_manager:
+                self._live_manager.cancel()
+            if self._live_preview_window is not None and self._live_preview_window.isVisible():
+                self._live_preview_window.close()
+            self.lbl_live_status.setText("")
+
+    def _on_live_param_changed(self, is_align_change: bool = False) -> None:
+        """Schedule preview rendering from the preview workspace state."""
+        if not self._live_preview_enabled:
+            return
+        if self._live_preview_window is None or not self._live_preview_window.isVisible():
+            return
+        if self._compute_thread is not None:
+            return
+
+        if is_align_change:
+            self._alignment_cache.clear()
+
+        state = self._live_preview_window.current_state()
+        self._update_live_preview_source_images(
+            state.get("base_label"),
+            state.get("compare_label"),
+        )
+        self._live_preview_window.clear_diff_preview()
+        params = self._collect_preview_params(
+            base_label=state.get("base_label"),
+            compare_label=state.get("compare_label"),
+            settings=state,
+        )
+        if params is None:
+            return
+        cache_key = self._alignment_cache.make_key(
+            params["base_label"],
+            params["compare_label"],
+            params["align_method"],
+            params["search_radius"],
+        )
+        self._live_preview_cache_hit = self._alignment_cache.get(cache_key) is not None
+        self._live_preview_started_at = time.perf_counter()
+        self._live_manager.schedule(params, is_align_change)
+
+    def _collect_preview_params(
+        self,
+        *,
+        base_label: Optional[str] = None,
+        compare_label: Optional[str] = None,
+        settings: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """Return preview parameters for the requested pair/settings."""
+        settings = settings or self._collect_main_config_state()
+        base_label = base_label or settings.get("base_label") or self.cmb_base.currentText()
+        if not base_label or base_label not in self._images:
+            return None
+
+        compare_label = compare_label or settings.get("compare_label") or self._get_primary_compare_label()
+        if compare_label is None or compare_label not in self._images:
+            return None
+
+        operation = "subtract" if settings.get("operation_index", 0) == 0 else "blend"
+        alpha = float(settings.get("alpha", self.spin_alpha.value()))
+        beta = float(settings.get("beta", self.spin_beta.value()))
+        invert_base = bool(settings.get("invert_base", self.chk_invert_base.isChecked()))
+        invert_compare = bool(settings.get("invert_compare", self.chk_invert_compare.isChecked()))
+        invert_result = bool(settings.get("invert_result", self.chk_invert_result.isChecked()))
+        align_method = "phase" if settings.get("align_method_index", self.cmb_align_method.currentIndex()) == 0 else "ncc"
+
+        norm_mode = int(settings.get("normalize_mode_index", self.cmb_normalize_mode.currentIndex()))
+        method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
+        normalize_method = method_map.get(norm_mode, "percentile")
+        normalize = normalize_method not in ("skip", "roi_match")
+        glv_range = None
+        if norm_mode == 1:
+            glv_low = int(settings.get("glv_low", self.spn_glv_low.value()))
+            glv_high = int(settings.get("glv_high", self.spn_glv_high.value()))
+            if glv_low < glv_high:
+                glv_range = (glv_low, glv_high)
+
+        sub_mode = int(settings.get("subtract_mode_index", self.cmb_subtract_mode.currentIndex()))
+        preserve_positive_diff = sub_mode == 2
+        abs_no_gain = sub_mode == 1
+
+        use_roi_match = norm_mode == 3 and len(self._multi_roi_set) > 0
+        if use_roi_match and settings.get("roi_abs_diff", False):
+            abs_no_gain = True
+            preserve_positive_diff = False
+
+        return {
+            "base_label": base_label,
+            "compare_label": compare_label,
+            "base_img": self._images[base_label],
+            "compare_img": self._images[compare_label],
+            "operation": operation,
+            "alpha": alpha,
+            "beta": beta,
+            "invert_base": invert_base,
+            "invert_compare": invert_compare,
+            "invert_result": invert_result,
+            "normalize": normalize,
+            "normalize_method": normalize_method,
+            "glv_range": glv_range,
+            "clahe_clip_limit": 2.0,
+            "search_radius": 50,
+            "align_method": align_method,
+            "preserve_positive_diff": preserve_positive_diff,
+            "abs_no_gain": abs_no_gain,
+            "snr_window_size": 31,
+            "roi_rect": None,
+            "roi_set": self._multi_roi_set,
+            "roi_match": use_roi_match,
+        }
+
+    def _on_live_preview_started(self) -> None:
+        self.lbl_live_status.setText("Preview computing…")
+        if self._live_preview_window is not None:
+            self._live_preview_window.set_rendering_state("Rendering preview…", "computing")
+
+    def _on_live_preview_error(self, msg: str) -> None:
+        self.lbl_live_status.setText("\u26a0 Preview error")
+        if self._live_preview_window is not None:
+            self._live_preview_window.set_rendering_state(f"Preview error: {msg}", "error")
+        import logging
+        logging.getLogger(__name__).warning("Live preview error: %s", msg)
+
+    def _on_live_preview_ready(self, result: SinglePairResult) -> None:
+        """Render preview output inside the independent preview workspace."""
+        if self._live_preview_window is None:
+            return
+        latency_ms = None
+        if self._live_preview_started_at is not None:
+            latency_ms = (time.perf_counter() - self._live_preview_started_at) * 1000.0
+        base_img = self._images.get(result.base_label)
+        compare_img = result.aligned_compare if result.aligned_compare is not None else self._images.get(result.compare_label)
+        self._live_preview_window.update_preview(
+            base_image=base_img,
+            aligned_compare=compare_img,
+            result=result,
+            latency_ms=latency_ms,
+            cache_hit=self._live_preview_cache_hit,
+        )
+        self.lbl_live_status.setText("Preview ready")
+
+    def _on_live_preview_apply_requested(self, close_after: bool) -> None:
+        if self._live_preview_window is None:
+            return
+        state = self._live_preview_window.current_state()
+        base_label = state.get("base_label")
+        compare_label = state.get("compare_label")
+        if base_label and base_label in self._images:
+            self.cmb_base.setCurrentText(base_label)
+            self._on_base_changed()
+        self._set_main_compare_selection(compare_label)
+        self._apply_config_state_to_main(state)
+        self.lbl_live_status.setText("Preview settings applied to main")
+        self._live_preview_window.set_rendering_state("Applied to main window.", "applied")
+        if close_after:
+            self.btn_live_preview.setChecked(False)
+
+    def _on_live_preview_reset_requested(self) -> None:
+        self._sync_live_preview_window_from_main()
+        if self._live_preview_window is not None:
+            self._live_preview_window.clear_preview()
+        self._on_live_param_changed(False)
+
+    def _on_live_preview_open_roi_manager(self) -> None:
+        if self._live_preview_window is None:
+            return
+        manager = self._ensure_preview_roi_manager()
+        if manager is None:
+            return
+        self._capture_roi_ref_base()
+        self._apply_roi_visibility()
+        manager.show()
+        manager.raise_()
+        manager.activateWindow()
+
+    def _on_live_preview_window_closed(self) -> None:
+        if self.btn_live_preview.isChecked():
+            self.btn_live_preview.blockSignals(True)
+            self.btn_live_preview.setChecked(False)
+            self.btn_live_preview.blockSignals(False)
+        self._live_preview_enabled = False
+        self.btn_live_preview.setText("\u26a1  Live Preview")
+        self.lbl_live_status.setText("")
+        if self._live_manager is not None:
+            self._live_manager.cancel()
+        if self._preview_roi_manager is not None:
+            self._preview_roi_manager.close()
+
     def _on_compute(self):
         """Run the combination computation for all selected pairs."""
         base_label = self.cmb_base.currentText()
@@ -8120,6 +9085,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Cancel any in-flight live preview before starting a full compute
         if self._live_manager is not None:
             self._live_manager.cancel()
+        if self._live_preview_window is not None and self._live_preview_window.isVisible():
+            self._live_preview_window.set_rendering_state(
+                "Compute is running in the main window. Preview is paused.",
+                "neutral",
+            )
 
         # Get images
         base_img = self._images[base_label] if base_label in self._images else None
@@ -9161,6 +10131,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _capture_roi_ref_base(self) -> None:
         """Record the base-image label currently shown in the base viewer."""
+        if self._live_preview_window is not None and self._live_preview_window.isVisible():
+            preview_base = self._live_preview_window.cmb_base.currentText()
+            if preview_base:
+                self._roi_ref_base_label = preview_base
+                return
         if self._results and 0 <= self._current_result_idx < len(self._results):
             self._roi_ref_base_label = self._results[self._current_result_idx].base_label
         elif self.cmb_base.currentText():
@@ -9170,6 +10145,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Refresh all image widgets when ROI set changes."""
         self._apply_roi_visibility()
         self._update_roi_status_label()
+        self._update_preview_roi_hint()
         # Keep the ref-base up to date when the user adds/modifies ROIs
         self._capture_roi_ref_base()
         self._update_step_states()  # P0-2: update Step 3 ✓ indicator
@@ -9182,6 +10158,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if not show:
             self.img_base_mag.set_multi_roi_set(None)
             self.img_diff.set_multi_roi_set(None)
+            if self._live_preview_window is not None:
+                self._live_preview_window.img_preview_base.set_multi_roi_set(None)
+                self._live_preview_window.img_preview_diff.set_multi_roi_set(None)
             return
 
         # In auto-pair mode, use the remapped ROI set for the currently
@@ -9193,6 +10172,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self.img_base_mag.set_multi_roi_set(roi_set)
         self.img_diff.set_multi_roi_set(roi_set)
+        if self._live_preview_window is not None:
+            self._live_preview_window.img_preview_base.set_multi_roi_set(self._multi_roi_set)
+            self._live_preview_window.img_preview_diff.set_multi_roi_set(self._multi_roi_set)
 
     def _update_roi_status_label(self) -> None:
         """Update the ROI count status label below the ROI Manager button."""
