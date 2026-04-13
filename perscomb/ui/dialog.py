@@ -3364,7 +3364,12 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
         for i in range(n):
             for j in range(n):
                 if i == j:
-                    # Diagonal: self-compare placeholder
+                    # Diagonal: show raw (un-normalised) base SNR
+                    lbl = all_labels[i]
+                    roi_full_diag = self._roi_results.get(lbl)
+                    raw_snr = (roi_full_diag.raw_snr_base.snr
+                               if roi_full_diag and roi_full_diag.raw_snr_base is not None
+                               else None)
                     ax.add_patch(
                         __import__('matplotlib.patches', fromlist=['FancyBboxPatch'])
                         .FancyBboxPatch(
@@ -3373,8 +3378,18 @@ class ROIIntensityProfileDialog(QtWidgets.QDialog):
                             facecolor='#E2E8F0', edgecolor='none', zorder=2,
                         )
                     )
-                    ax.text(j, i, '—', ha='center', va='center',
-                            fontsize=12, color='#94A3B8', zorder=3)
+                    if raw_snr is not None:
+                        if raw_snr >= self._SNR_GOOD:
+                            diag_col = '#065F46'
+                        elif raw_snr >= self._SNR_OK:
+                            diag_col = '#78350F'
+                        else:
+                            diag_col = '#7F1D1D'
+                        ax.text(j, i, f"{raw_snr:.2f}", ha='center', va='center',
+                                fontsize=11, color=diag_col, fontweight='bold', zorder=3)
+                    else:
+                        ax.text(j, i, '—', ha='center', va='center',
+                                fontsize=12, color='#94A3B8', zorder=3)
                 elif not np.isnan(matrix[i, j]):
                     val = matrix[i, j]
                     # Text always dark on the pastel background
