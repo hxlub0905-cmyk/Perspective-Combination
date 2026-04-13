@@ -353,8 +353,10 @@ def _calculate_alignment_ecc(
 
     # Step 2: Normalise to float32 [0, 1].  ECC already handles contrast /
     # brightness differences, so plain percentile normalisation is sufficient.
-    base_f   = _normalize_image(base.astype(np.float32))
-    target_f = _normalize_image(target.astype(np.float32))
+    # Cast explicitly: _normalize_image upcasts to float64 due to numpy
+    # percentile, but findTransformECC only accepts CV_8U or CV_32F.
+    base_f   = _normalize_image(base.astype(np.float32)).astype(np.float32)
+    target_f = _normalize_image(target.astype(np.float32)).astype(np.float32)
 
     # _apply_alignment uses M = [[1,0,-dx],[0,1,-dy]], so warpMatrix tx = -dx
     warp_matrix = np.float32([
@@ -440,10 +442,11 @@ def _calculate_alignment_template(
     if h <= 2 * sr + 8 or w <= 2 * sr + 8:
         return calculate_alignment_robust(base, target, sr)
 
-    # Normalise to float32 [0, 1]; TM_CCOEFF_NORMED is already
-    # contrast/brightness invariant so no edge-map preprocessing needed.
-    base_f   = _normalize_image(base.astype(np.float32))
-    target_f = _normalize_image(target.astype(np.float32))
+    # Normalise to float32 [0, 1]; cast explicitly to float32 because
+    # _normalize_image upcasts to float64 (numpy percentile returns float64)
+    # and matchTemplate only accepts CV_8U or CV_32F.
+    base_f   = _normalize_image(base.astype(np.float32)).astype(np.float32)
+    target_f = _normalize_image(target.astype(np.float32)).astype(np.float32)
 
     # Template = centre crop of base; result_map shape = (2*sr+1, 2*sr+1)
     template   = base_f[sr: h - sr, sr: w - sr]
