@@ -414,6 +414,92 @@ def _calculate_alignment_ecc(
     )
 
 
+def _calculate_alignment_template(
+    base: np.ndarray,
+    target: np.ndarray,
+    search_radius: int = 40,
+) -> AlignResult:
+    """Template-matching alignment using a centre-crop template.
+
+    Strategy:
+    1. Crop the centre (image − 2×search_radius) region of the normalised
+       base as the template; this avoids border scan-artifacts common in SEM.
+    2. Run cv2.matchTemplate(TM_CCOEFF_NORMED) against the full normalised
+       target.  OpenCV uses FFT internally → O(N log N), comparable to Phase.
+    3. Sub-pixel precision via parabolic fit on the correlation peak,
+       identical to the NCC method.
+    4. Fall back to Phase when the image is too small for the search radius.
+    """
+    if base is None or target is None:
+        return AlignResult(0, 0, 0.0, 0.0, 0.0, 0.0, 'fail', 'none')
+
+    h, w = base.shape[:2]
+    sr = search_radius
+
+    # Guard: template must be at least 8 px in each dimension
+    if h <= 2 * sr + 8 or w <= 2 * sr + 8:
+        return calculate_alignment_robust(base, target, sr)
+
+    # Normalise to float32 [0, 1]; TM_CCOEFF_NORMED is already
+    # contrast/brightness invariant so no edge-map preprocessing needed.
+    base_f   = _normalize_image(base.astype(np.float32))
+    target_f = _normalize_image(target.astype(np.float32))
+
+    # Template = centre crop of base; result_map shape = (2*sr+1, 2*sr+1)
+    template   = base_f[sr: h - sr, sr: w - sr]
+    result_map = cv2.matchTemplate(target_f, template, cv2.TM_CCOEFF_NORMED)
+
+    # Peak location → integer shift
+    _, best_score, _, max_loc = cv2.minMaxLoc(result_map)
+    peak_x, peak_y = max_loc          # (col, row) in result_map
+    best_dx = peak_x - sr             # shift in x (cols)
+    best_dy = peak_y - sr             # shift in y (rows)
+
+    # Parabolic sub-pixel refinement along each axis
+    def _val(x: int, y: int) -> float:
+        if 0 <= y < result_map.shape[0] and 0 <= x < result_map.shape[1]:
+            return float(result_map[y, x])
+        return -1.0
+
+    def _parabolic_offset(f_neg: float, f_0: float, f_pos: float) -> float:
+        denom = 2.0 * (f_pos - 2.0 * f_0 + f_neg)
+        if abs(denom) < 1e-8:
+            return 0.0
+        return -(f_pos - f_neg) / denom
+
+    dx_sub = best_dx + _parabolic_offset(
+        _val(peak_x - 1, peak_y), best_score, _val(peak_x + 1, peak_y)
+    )
+    dy_sub = best_dy + _parabolic_offset(
+        _val(peak_x, peak_y - 1), best_score, _val(peak_x, peak_y + 1)
+    )
+
+    # Final composite score (NCC on aligned overlap + residual)
+    score_ncc, score_residual, final_score = _calculate_alignment_scores(
+        base, target, int(round(dx_sub)), int(round(dy_sub)),
+        phase_score=0.0, method='ncc',
+    )
+
+    status = 'ok'
+    if final_score < 75:
+        status = 'warn'
+    if final_score < 55:
+        status = 'fail'
+
+    return AlignResult(
+        dx=int(round(dx_sub)),
+        dy=int(round(dy_sub)),
+        score_phase=float(best_score),
+        score_ncc=score_ncc,
+        score_residual=score_residual,
+        final_score=final_score,
+        status=status,
+        method='template',
+        dx_subpixel=float(dx_sub),
+        dy_subpixel=float(dy_sub),
+    )
+
+
 def _calculate_alignment(
     base: np.ndarray,
     target: np.ndarray,
@@ -428,6 +514,8 @@ def _calculate_alignment(
         return _calculate_alignment_ncc(base, target, search_radius)
     if method_norm == "ecc":
         return _calculate_alignment_ecc(base, target, search_radius)
+    if method_norm == "template":
+        return _calculate_alignment_template(base, target, search_radius)
     return calculate_alignment_robust(base, target, search_radius)
 
 
