@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from .ebeam_snr import calculate_alignment_robust, AlignResult, _preprocess_for_align
+from .ebeam_snr import calculate_alignment_robust, AlignResult
 from .roi_set import MultiROISet, ROIStats, ROIImageLayer, ROIFullResult, ROISNREntry
 
 
@@ -337,10 +337,13 @@ def _calculate_alignment_ecc(
 
     Strategy:
     1. Run Phase Correlation for a fast initial shift estimate.
-    2. Refine with cv2.findTransformECC on Sobel edge maps so the result
-       is invariant to cross-LE brightness/contrast differences.
-    3. Score with NCC + residual (same weights as NCC method).
-    4. Fall back to the Phase estimate when ECC fails to converge.
+    2. Refine with cv2.findTransformECC on percentile-normalised grayscale.
+       ECC's criterion is inherently invariant to affine intensity changes
+       (brightness + contrast), so Sobel edge-map preprocessing is not needed
+       and would actually hurt convergence (sparse maps → near-zero gradients).
+    3. Accept the ECC result only when it stays within search_radius; otherwise
+       fall back to the Phase estimate.
+    4. Score with NCC + residual (same weights as NCC method).
     """
     if base is None or target is None:
         return AlignResult(0, 0, 0.0, 0.0, 0.0, 0.0, 'fail', 'none')
@@ -348,9 +351,10 @@ def _calculate_alignment_ecc(
     # Step 1: Phase initial estimate
     phase_result = calculate_alignment_robust(base, target, search_radius)
 
-    # Step 2: Edge-map preprocessing (brightness-invariant, same as Phase)
-    base_edge  = _preprocess_for_align(base).astype(np.float32)
-    target_edge = _preprocess_for_align(target).astype(np.float32)
+    # Step 2: Normalise to float32 [0, 1].  ECC already handles contrast /
+    # brightness differences, so plain percentile normalisation is sufficient.
+    base_f   = _normalize_image(base.astype(np.float32))
+    target_f = _normalize_image(target.astype(np.float32))
 
     # _apply_alignment uses M = [[1,0,-dx],[0,1,-dy]], so warpMatrix tx = -dx
     warp_matrix = np.float32([
@@ -360,28 +364,26 @@ def _calculate_alignment_ecc(
 
     criteria = (
         cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
-        200,   # max iterations
+        100,   # max iterations
         1e-4,  # convergence epsilon
     )
 
+    dx_ecc = phase_result.dx_subpixel
+    dy_ecc = phase_result.dy_subpixel
+
     try:
-        _cc, warp_matrix = cv2.findTransformECC(
-            base_edge, target_edge,
-            warpMatrix=warp_matrix,
-            motionType=cv2.MOTION_TRANSLATION,
-            criteria=criteria,
-            inputMask=None,
-            gaussFiltSize=5,
+        # Use positional arguments for broader OpenCV version compatibility.
+        _cc, warp_out = cv2.findTransformECC(
+            base_f, target_f, warp_matrix, cv2.MOTION_TRANSLATION, criteria,
         )
-        dx_ecc = float(-warp_matrix[0, 2])
-        dy_ecc = float(-warp_matrix[1, 2])
-        # If ECC wandered far outside the search range, revert to Phase
-        if abs(dx_ecc) > search_radius * 1.5 or abs(dy_ecc) > search_radius * 1.5:
-            dx_ecc = phase_result.dx_subpixel
-            dy_ecc = phase_result.dy_subpixel
+        dx_candidate = float(-warp_out[0, 2])
+        dy_candidate = float(-warp_out[1, 2])
+        # Accept only when ECC stayed within the expected search range.
+        if abs(dx_candidate) <= search_radius and abs(dy_candidate) <= search_radius:
+            dx_ecc = dx_candidate
+            dy_ecc = dy_candidate
     except cv2.error:
-        dx_ecc = phase_result.dx_subpixel
-        dy_ecc = phase_result.dy_subpixel
+        pass  # keep Phase fallback
 
     dx_ecc = float(np.clip(dx_ecc, -search_radius, search_radius))
     dy_ecc = float(np.clip(dy_ecc, -search_radius, search_radius))
