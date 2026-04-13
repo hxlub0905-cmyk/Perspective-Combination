@@ -5935,7 +5935,7 @@ class LivePreviewWindow(QtWidgets.QDialog):
         lbl_align.setObjectName("PreviewSectionTitle")
         settings_layout.addWidget(lbl_align)
         self.cmb_align_method = QtWidgets.QComboBox()
-        self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)"])
+        self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)", "ECC (accurate)"])
         settings_layout.addWidget(self.cmb_align_method)
 
         settings_layout.addStretch(1)
@@ -6274,11 +6274,17 @@ class LivePreviewWindow(QtWidgets.QDialog):
     def _update_compute_hint(self, *_args, is_computing: Optional[bool] = None) -> None:
         if is_computing is None:
             is_computing = self.progress_preview.isVisible()
-        if self.cmb_align_method.currentIndex() == 1:
+        idx = self.cmb_align_method.currentIndex()
+        if idx == 1:
             if is_computing:
                 self.lbl_compute_hint.setText("NCC preview is slower on large images. Please wait for alignment.")
             else:
                 self.lbl_compute_hint.setText("Tip: NCC is slower for tuning. Use Phase for faster live preview.")
+        elif idx == 2:
+            if is_computing:
+                self.lbl_compute_hint.setText("ECC is running… please wait for alignment.")
+            else:
+                self.lbl_compute_hint.setText("Tip: ECC is accurate but slower. Use Phase for faster live preview.")
         else:
             if is_computing:
                 self.lbl_compute_hint.setText("Rendering preview…")
@@ -7222,7 +7228,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         align_method_row.setSpacing(6)
         align_method_row.addWidget(QtWidgets.QLabel("Method"))
         self.cmb_align_method = QtWidgets.QComboBox()
-        self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)"])
+        self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)", "ECC (accurate)"])
         align_method_row.addWidget(self.cmb_align_method)
         align_layout.addLayout(align_method_row)
 
@@ -8737,7 +8743,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         invert_base = self.chk_invert_base.isChecked()
         invert_compare = self.chk_invert_compare.isChecked()
         invert_result = self.chk_invert_result.isChecked()
-        align_method = "phase" if self.cmb_align_method.currentIndex() == 0 else "ncc"
+        align_method = {0: "phase", 1: "ncc", 2: "ecc"}.get(self.cmb_align_method.currentIndex(), "phase")
 
         norm_mode = self.cmb_normalize_mode.currentIndex()
         _method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
@@ -8928,7 +8934,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         invert_base = bool(settings.get("invert_base", self.chk_invert_base.isChecked()))
         invert_compare = bool(settings.get("invert_compare", self.chk_invert_compare.isChecked()))
         invert_result = bool(settings.get("invert_result", self.chk_invert_result.isChecked()))
-        align_method = "phase" if settings.get("align_method_index", self.cmb_align_method.currentIndex()) == 0 else "ncc"
+        align_method = {0: "phase", 1: "ncc", 2: "ecc"}.get(settings.get("align_method_index", self.cmb_align_method.currentIndex()), "phase")
 
         norm_mode = int(settings.get("normalize_mode_index", self.cmb_normalize_mode.currentIndex()))
         method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
@@ -9085,7 +9091,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         invert_base = self.chk_invert_base.isChecked()
         invert_compare = self.chk_invert_compare.isChecked()
         invert_result = self.chk_invert_result.isChecked()
-        alignment_method = "phase" if self.cmb_align_method.currentIndex() == 0 else "ncc"
+        alignment_method = {0: "phase", 1: "ncc", 2: "ecc"}.get(self.cmb_align_method.currentIndex(), "phase")
         snr_window_size = self.spn_snr_window.value()
         # Ensure window_size is odd
         if snr_window_size % 2 == 0:
@@ -9808,7 +9814,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             return
         norm_labels = ["Percentile", "GLV-Mask", "Skip", "ROI-Match"]
         sub_labels   = ["|diff|×2", "|diff|", "clip≥0"]
-        align_labels = ["Phase", "NCC"]
+        align_labels = ["Phase", "NCC", "ECC"]
         norm  = norm_labels[min(self.cmb_normalize_mode.currentIndex(),  len(norm_labels)  - 1)]
         sub   = sub_labels  [min(self.cmb_subtract_mode.currentIndex(),  len(sub_labels)   - 1)]
         align = align_labels[min(self.cmb_align_method.currentIndex(),   len(align_labels) - 1)]

@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from .ebeam_snr import calculate_alignment_robust, AlignResult
+from .ebeam_snr import calculate_alignment_robust, AlignResult, _preprocess_for_align
 from .roi_set import MultiROISet, ROIStats, ROIImageLayer, ROIFullResult, ROISNREntry
 
 
@@ -328,6 +328,90 @@ def _calculate_alignment_ncc(
     )
 
 
+def _calculate_alignment_ecc(
+    base: np.ndarray,
+    target: np.ndarray,
+    search_radius: int = 40
+) -> AlignResult:
+    """ECC (Enhanced Correlation Coefficient) alignment.
+
+    Strategy:
+    1. Run Phase Correlation for a fast initial shift estimate.
+    2. Refine with cv2.findTransformECC on Sobel edge maps so the result
+       is invariant to cross-LE brightness/contrast differences.
+    3. Score with NCC + residual (same weights as NCC method).
+    4. Fall back to the Phase estimate when ECC fails to converge.
+    """
+    if base is None or target is None:
+        return AlignResult(0, 0, 0.0, 0.0, 0.0, 0.0, 'fail', 'none')
+
+    # Step 1: Phase initial estimate
+    phase_result = calculate_alignment_robust(base, target, search_radius)
+
+    # Step 2: Edge-map preprocessing (brightness-invariant, same as Phase)
+    base_edge  = _preprocess_for_align(base).astype(np.float32)
+    target_edge = _preprocess_for_align(target).astype(np.float32)
+
+    # _apply_alignment uses M = [[1,0,-dx],[0,1,-dy]], so warpMatrix tx = -dx
+    warp_matrix = np.float32([
+        [1.0, 0.0, -phase_result.dx_subpixel],
+        [0.0, 1.0, -phase_result.dy_subpixel],
+    ])
+
+    criteria = (
+        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
+        200,   # max iterations
+        1e-4,  # convergence epsilon
+    )
+
+    try:
+        _cc, warp_matrix = cv2.findTransformECC(
+            base_edge, target_edge,
+            warpMatrix=warp_matrix,
+            motionType=cv2.MOTION_TRANSLATION,
+            criteria=criteria,
+            inputMask=None,
+            gaussFiltSize=5,
+        )
+        dx_ecc = float(-warp_matrix[0, 2])
+        dy_ecc = float(-warp_matrix[1, 2])
+        # If ECC wandered far outside the search range, revert to Phase
+        if abs(dx_ecc) > search_radius * 1.5 or abs(dy_ecc) > search_radius * 1.5:
+            dx_ecc = phase_result.dx_subpixel
+            dy_ecc = phase_result.dy_subpixel
+    except cv2.error:
+        dx_ecc = phase_result.dx_subpixel
+        dy_ecc = phase_result.dy_subpixel
+
+    dx_ecc = float(np.clip(dx_ecc, -search_radius, search_radius))
+    dy_ecc = float(np.clip(dy_ecc, -search_radius, search_radius))
+
+    # Score using NCC + residual on aligned overlap
+    score_ncc, score_residual, final_score = _calculate_alignment_scores(
+        base, target, int(round(dx_ecc)), int(round(dy_ecc)),
+        phase_score=0.0, method='ncc',
+    )
+
+    status = 'ok'
+    if final_score < 75:
+        status = 'warn'
+    if final_score < 55:
+        status = 'fail'
+
+    return AlignResult(
+        dx=int(round(dx_ecc)),
+        dy=int(round(dy_ecc)),
+        score_phase=phase_result.score_phase,
+        score_ncc=score_ncc,
+        score_residual=score_residual,
+        final_score=final_score,
+        status=status,
+        method='ecc',
+        dx_subpixel=dx_ecc,
+        dy_subpixel=dy_ecc,
+    )
+
+
 def _calculate_alignment(
     base: np.ndarray,
     target: np.ndarray,
@@ -340,6 +424,8 @@ def _calculate_alignment(
         return calculate_alignment_robust(base, target, search_radius)
     if method_norm == "ncc":
         return _calculate_alignment_ncc(base, target, search_radius)
+    if method_norm == "ecc":
+        return _calculate_alignment_ecc(base, target, search_radius)
     return calculate_alignment_robust(base, target, search_radius)
 
 
