@@ -1360,6 +1360,42 @@ class ImageDisplayWidget(QtWidgets.QLabel):
         self._update_display()
 
 
+class _ScalableThumbLabel(QtWidgets.QLabel):
+    """QLabel that rescales its source pixmap on resize to fill available space.
+
+    Use ``set_source_pixmap()`` instead of ``setPixmap()`` so the image stays
+    sharp regardless of how the panel is resized.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._src_pixmap: Optional[QtGui.QPixmap] = None
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+
+    def set_source_pixmap(self, pixmap: Optional[QtGui.QPixmap]) -> None:
+        self._src_pixmap = pixmap
+        self._rescale()
+
+    def _rescale(self) -> None:
+        if self._src_pixmap is None or self._src_pixmap.isNull():
+            super().setPixmap(QtGui.QPixmap())
+            return
+        avail = self.size() - QtCore.QSize(4, 4)
+        if avail.width() <= 0 or avail.height() <= 0:
+            return
+        scaled = self._src_pixmap.scaled(
+            avail, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        super().setPixmap(scaled)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._rescale()
+
+
 class HistogramCanvas(FigureCanvas):
     """Interactive matplotlib canvas for histogram display.
 
@@ -6477,8 +6513,8 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
         self._thumbs: Dict[str, QtWidgets.QLabel] = {}
         pos = {"top": (0, 1), "left": (1, 0), "bse": (1, 1), "right": (1, 2), "bottom": (2, 1)}
         for role, (r, c) in pos.items():
-            lbl = QtWidgets.QLabel("—")
-            lbl.setAlignment(Qt.AlignCenter)
+            lbl = _ScalableThumbLabel()
+            lbl.setText("—")
             lbl.setMinimumSize(110, 90)
             lbl.setStyleSheet("background:#1F2937; border-radius:4px;")
             grid.addWidget(lbl, r, c)
@@ -6598,10 +6634,10 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
             img = role_images.get(role)
             if img is None:
                 lbl.setText("—")
-                lbl.setPixmap(QtGui.QPixmap())
+                lbl.set_source_pixmap(None)
             else:
                 lbl.setText("")
-                lbl.setPixmap(self._thumb(img))
+                lbl.set_source_pixmap(self._thumb(img, 512))
 
     def clear_diff_preview(self) -> None:
         self.img_preview_diff.setImage(None)
@@ -7973,13 +8009,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             cell_layout = QtWidgets.QVBoxLayout(cell)
             cell_layout.setContentsMargins(2, 2, 2, 2)
             cell_layout.setSpacing(2)
-            img_lbl = QtWidgets.QLabel()
-            img_lbl.setAlignment(Qt.AlignCenter)
+            img_lbl = _ScalableThumbLabel()
             img_lbl.setStyleSheet("background: transparent; border: none;")
             img_lbl.setMinimumSize(80, 80)
-            img_lbl.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-            )
             role_lbl = QtWidgets.QLabel(_ROLE_DISPLAY_GRID[role])
             role_lbl.setAlignment(Qt.AlignCenter)
             role_lbl.setStyleSheet(
@@ -7997,8 +8029,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         result_layout.setContentsMargins(0, 0, 0, 0)
         result_layout.setSpacing(4)
         result_layout.addWidget(QtWidgets.QLabel("Overall Synthesis Preview"))
-        self._syn_overall_preview = QtWidgets.QLabel("Live preview not ready")
-        self._syn_overall_preview.setAlignment(Qt.AlignCenter)
+        self._syn_overall_preview = _ScalableThumbLabel()
+        self._syn_overall_preview.setText("Live preview not ready")
         self._syn_overall_preview.setMinimumHeight(240)
         self._syn_overall_preview.setStyleSheet(
             "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
@@ -8903,19 +8935,19 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             sel = cmb.currentText()
             img = self._images.get(sel) if sel and sel != "— None —" else None
             if img is not None:
-                thumb = self._make_thumb(img, 120)
-                img_lbl.setPixmap(thumb)
+                img_lbl.set_source_pixmap(self._make_thumb(img, 512))
+                img_lbl.setText("")
             else:
-                img_lbl.setPixmap(QtGui.QPixmap())
+                img_lbl.set_source_pixmap(None)
                 img_lbl.setText("—")
         self._update_syn_overall_preview(None)
 
     def _update_syn_overall_preview(self, img: Optional[np.ndarray]) -> None:
         if img is None:
-            self._syn_overall_preview.setPixmap(QtGui.QPixmap())
+            self._syn_overall_preview.set_source_pixmap(None)
             self._syn_overall_preview.setText("Live preview not ready")
             return
-        self._syn_overall_preview.setPixmap(self._make_thumb(img, 220))
+        self._syn_overall_preview.set_source_pixmap(self._make_thumb(img, 512))
         self._syn_overall_preview.setText("")
 
     @staticmethod
