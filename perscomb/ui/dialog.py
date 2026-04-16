@@ -8027,15 +8027,57 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._syn_result_view = QtWidgets.QWidget()
         result_layout = QtWidgets.QVBoxLayout(self._syn_result_view)
         result_layout.setContentsMargins(0, 0, 0, 0)
-        result_layout.setSpacing(4)
-        result_layout.addWidget(QtWidgets.QLabel("Overall Synthesis Preview"))
+        result_layout.setSpacing(0)
+
+        # ── Tab widget: "Result" always shown; shading sub-map tabs appear after
+        #    a Directional Shading compute finishes. ───────────────────────────
+        self._syn_map_tabs = QtWidgets.QTabWidget()
+        self._syn_map_tabs.setDocumentMode(True)
+        self._syn_map_tabs.setStyleSheet(
+            "QTabWidget::pane { border: none; margin: 0; }"
+            "QTabBar::tab { padding: 4px 10px; font-size: 11px; }"
+        )
+
+        # Tab 0 — main synthesised result (always visible)
+        _result_tab = QtWidgets.QWidget()
+        _rt_layout = QtWidgets.QVBoxLayout(_result_tab)
+        _rt_layout.setContentsMargins(0, 4, 0, 0)
         self._syn_overall_preview = _ScalableThumbLabel()
         self._syn_overall_preview.setText("Live preview not ready")
-        self._syn_overall_preview.setMinimumHeight(240)
+        self._syn_overall_preview.setMinimumHeight(220)
         self._syn_overall_preview.setStyleSheet(
             "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
         )
-        result_layout.addWidget(self._syn_overall_preview, 1)
+        _rt_layout.addWidget(self._syn_overall_preview, 1)
+        self._syn_map_tabs.addTab(_result_tab, "Result")
+
+        # Tabs 1-4 — shading sub-maps (hidden until Directional Shading compute)
+        _SHADING_TABS: List[Tuple[str, str, str]] = [
+            ("topo",      "Topo",      "Gradient-magnitude topography"),
+            ("bse_clean", "BSE-Clean", "BSE with topography removed"),
+            ("composite", "Composite", "BSE-Clean + 0.4 × Topo"),
+            ("relief",    "Relief",    "Directional light-shading"),
+        ]
+        self._syn_shading_map_labels: Dict[str, _ScalableThumbLabel] = {}
+        for _key, _tab_title, _hint in _SHADING_TABS:
+            _stab = QtWidgets.QWidget()
+            _sl = QtWidgets.QVBoxLayout(_stab)
+            _sl.setContentsMargins(0, 4, 0, 0)
+            _slbl = _ScalableThumbLabel()
+            _slbl.setText(_hint)
+            _slbl.setMinimumHeight(220)
+            _slbl.setStyleSheet(
+                "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
+            )
+            _sl.addWidget(_slbl, 1)
+            self._syn_shading_map_labels[_key] = _slbl
+            self._syn_map_tabs.addTab(_stab, _tab_title)
+
+        # Hide shading tabs by default
+        for _i in range(1, self._syn_map_tabs.count()):
+            self._syn_map_tabs.setTabVisible(_i, False)
+
+        result_layout.addWidget(self._syn_map_tabs, 1)
         self._syn_preview_stack.addWidget(self._syn_sources_view)
         self._syn_preview_stack.addWidget(self._syn_result_view)
         syn_grid_outer.addWidget(self._syn_preview_stack, 1)
@@ -8940,7 +8982,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             else:
                 img_lbl.set_source_pixmap(None)
                 img_lbl.setText("—")
-        self._update_syn_overall_preview(None)
+        # Only clear the live-preview result when no full compute has been run yet;
+        # after compute the result stays valid until the user changes settings.
+        if not self._has_computed:
+            self._update_syn_overall_preview(None)
 
     def _update_syn_overall_preview(self, img: Optional[np.ndarray]) -> None:
         if img is None:
@@ -10435,6 +10480,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_panel.reset()
         self.diff_roi_panel.reset()
         self._roi_full_results = {}
+        # Reset synthesis preview: hide shading tabs, return to sources grid
+        for _i in range(1, self._syn_map_tabs.count()):
+            self._syn_map_tabs.setTabVisible(_i, False)
+        self._syn_map_tabs.setCurrentIndex(0)
+        for _lbl in self._syn_shading_map_labels.values():
+            _lbl.set_source_pixmap(None)
+        self._update_syn_overall_preview(None)
+        self._set_syn_preview_page(0)
         self._roi_remapped_sets = {}
         self._roi_ref_base_label = None
 
@@ -10832,6 +10885,22 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_syn_overall_preview(result.result_image)
         self._update_navigation()
         self.btn_export.setEnabled(True)
+
+        # ── Populate shading sub-map tabs ────────────────────────────────────
+        _has_shading = result.shading_maps is not None
+        for _i in range(1, self._syn_map_tabs.count()):
+            self._syn_map_tabs.setTabVisible(_i, _has_shading)
+        if _has_shading:
+            for _key, _lbl in self._syn_shading_map_labels.items():
+                _sub = result.shading_maps.get(_key)
+                if _sub is not None:
+                    _lbl.set_source_pixmap(self._make_thumb(_sub, 512))
+                    _lbl.setText("")
+                else:
+                    _lbl.set_source_pixmap(None)
+                    _lbl.setText("— not available —")
+        self._syn_map_tabs.setCurrentIndex(0)
+        self._set_syn_preview_page(1)
 
         # Post-compute layout (same as standard mode)
         self.left_panel_scroll.setVisible(False)

@@ -1911,6 +1911,17 @@ def compute_multi_synthesis(
     bse_img = present["bse"]
     h, w = bse_img.shape[:2]
 
+    # ── 1b. Validate all images share BSE dimensions ─────────────────────────
+    mismatched = [
+        role for role, img in present.items()
+        if img.shape[:2] != (h, w)
+    ]
+    if mismatched:
+        raise ValueError(
+            f"Role image(s) {mismatched} do not match the BSE size "
+            f"({w}×{h} px). All inputs must have the same resolution."
+        )
+
     # ── 2. Anchor normalization to BSE statistics ─────────────────────────────
     bse_f = bse_img.astype(np.float32)
     if normalize_method == 'glv_mask' and glv_range is not None:
