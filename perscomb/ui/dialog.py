@@ -6586,8 +6586,8 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
         _corner_pos = {
             "top":    (0, 0, 135.0),
             "right":  (0, 2, 225.0),
-            "left":   (2, 0, 315.0),
-            "bottom": (2, 2,  45.0),
+            "left":   (2, 0,  45.0),
+            "bottom": (2, 2, 315.0),
         }
         for role, (r, c, angle) in _corner_pos.items():
             cell = QtWidgets.QWidget()
@@ -7470,8 +7470,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             ("top",    0, 0, 135.0),
             ("right",  0, 2, 225.0),
             ("bse",    1, 1,  None),
-            ("left",   2, 0, 315.0),
-            ("bottom", 2, 2,  45.0),
+            ("left",   2, 0,  45.0),
+            ("bottom", 2, 2, 315.0),
         ]
         _pos_diagram_wgt = QtWidgets.QWidget()
         _pos_grid = QtWidgets.QGridLayout(_pos_diagram_wgt)
@@ -7492,8 +7492,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             ("bse",    "BSE",     None),
             ("top",    "SE Top",  135.0),
             ("right",  "SE Right",225.0),
-            ("left",   "SE Left", 315.0),
-            ("bottom", "SE Bot",   45.0),
+            ("left",   "SE Left",  45.0),
+            ("bottom", "SE Bot",  315.0),
         ]
         for role, lbl_text, angle in _ROLE_ROWS:
             row_lay = QtWidgets.QHBoxLayout()
@@ -8793,7 +8793,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_syn_shading_output.currentIndexChanged.connect(
             lambda _: self._on_syn_light_visibility()
         )
-        self.btn_syn_auto_detect.clicked.connect(self._on_compute_synthesis)
+        self.btn_syn_auto_detect.clicked.connect(lambda: self._on_live_param_changed(False))
         for role, sld in self._syn_weight_sliders.items():
             sld.valueChanged.connect(lambda _: self._on_live_param_changed(False))
         self.cmb_syn_shading_output.currentIndexChanged.connect(
