@@ -6586,8 +6586,8 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
         _corner_pos = {
             "top":    (0, 0, 135.0),
             "right":  (0, 2, 225.0),
-            "left":   (2, 0,  45.0),
-            "bottom": (2, 2, 315.0),
+            "left":   (2, 0, 315.0),
+            "bottom": (2, 2,  45.0),
         }
         for role, (r, c, angle) in _corner_pos.items():
             cell = QtWidgets.QWidget()
@@ -7459,69 +7459,69 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         syn_sel_layout.setSpacing(4)
         self.wgt_synthesis_select.setVisible(False)
 
-        # ── Detector position diagram: cross layout (BSE center + 4 directional SE)
-        # Each cell: rotated bulb icon  +  role label  +  combo box
-        # Angles: bulb "tip" (light) points toward the BSE centre.
-        #   SE Top   → bulb rotated 180° (base at top, tip points down)
-        #   SE Left  → bulb rotated  90° (tip points right)
-        #   BSE      → concentric-ring icon (no rotation)
-        #   SE Right → bulb rotated 270° (tip points left)
-        #   SE Bottom→ bulb rotated   0° (tip points up)
-        _ROLE_CONFIG = [
-            ("top",    0, 1, 180.0, "SE Top"),
-            ("left",   1, 0,  90.0, "SE Left"),
-            ("bse",    1, 1,  None, "BSE"),
-            ("right",  1, 2, 270.0, "SE Right"),
-            ("bottom", 2, 1,   0.0, "SE Bottom"),
+        # ── Position diagram: 3×3 corner grid (icons only, no combos inside)
+        # Detectors at 45°/135°/225°/315° diagonal positions around BSE centre.
+        # Bulb angle = direction the light shines (tip points toward BSE centre).
+        #   SE Top  → NW corner, bulb at 135° (shines toward SE)
+        #   SE Right→ NE corner, bulb at 225° (shines toward SW)
+        #   SE Left → SW corner, bulb at 315° (shines toward NE)
+        #   SE Bot  → SE corner, bulb at  45° (shines toward NW)
+        _ICON_POS = [
+            ("top",    0, 0, 135.0),
+            ("right",  0, 2, 225.0),
+            ("bse",    1, 1,  None),
+            ("left",   2, 0, 315.0),
+            ("bottom", 2, 2,  45.0),
         ]
-        _det_grid_wgt = QtWidgets.QWidget()
-        _det_grid = QtWidgets.QGridLayout(_det_grid_wgt)
-        _det_grid.setSpacing(4)
-        _det_grid.setContentsMargins(0, 0, 0, 0)
+        _pos_diagram_wgt = QtWidgets.QWidget()
+        _pos_grid = QtWidgets.QGridLayout(_pos_diagram_wgt)
+        _pos_grid.setSpacing(2)
+        _pos_grid.setContentsMargins(0, 0, 0, 4)
+        for _role, _row, _col, _angle in _ICON_POS:
+            _ic = QtWidgets.QLabel()
+            _ic.setAlignment(Qt.AlignCenter)
+            _ic.setFixedSize(40, 40)
+            _ic.setStyleSheet("background: transparent; border: none;")
+            _ic.setPixmap(_make_bse_pixmap(40) if _angle is None else _make_bulb_pixmap(40, _angle))
+            _pos_grid.addWidget(_ic, _row, _col)
+        syn_sel_layout.addWidget(_pos_diagram_wgt, 0, Qt.AlignCenter)
+
+        # ── Combo rows: [mini-icon] [role label] [combo box — full remaining width]
         self._syn_combos: Dict[str, QtWidgets.QComboBox] = {}
-
-        for role, row, col, angle, lbl_text in _ROLE_CONFIG:
-            cell_wgt = QtWidgets.QWidget()
-            cell_lay = QtWidgets.QVBoxLayout(cell_wgt)
-            cell_lay.setContentsMargins(2, 2, 2, 2)
-            cell_lay.setSpacing(2)
-
-            icon_lbl = QtWidgets.QLabel()
-            icon_lbl.setAlignment(Qt.AlignCenter)
-            icon_lbl.setFixedSize(44, 44)
-            icon_lbl.setStyleSheet("background: transparent; border: none;")
-            if angle is None:
-                icon_lbl.setPixmap(_make_bse_pixmap(44))
-            else:
-                icon_lbl.setPixmap(_make_bulb_pixmap(44, angle))
-            cell_lay.addWidget(icon_lbl, 0, Qt.AlignCenter)
-
+        _ROLE_ROWS = [
+            ("bse",    "BSE",     None),
+            ("top",    "SE Top",  135.0),
+            ("right",  "SE Right",225.0),
+            ("left",   "SE Left", 315.0),
+            ("bottom", "SE Bot",   45.0),
+        ]
+        for role, lbl_text, angle in _ROLE_ROWS:
+            row_lay = QtWidgets.QHBoxLayout()
+            row_lay.setContentsMargins(0, 0, 0, 0)
+            row_lay.setSpacing(4)
+            mini_ic = QtWidgets.QLabel()
+            mini_ic.setFixedSize(20, 20)
+            mini_ic.setStyleSheet("background: transparent; border: none;")
+            mini_ic.setPixmap(_make_bse_pixmap(20) if angle is None else _make_bulb_pixmap(20, angle))
+            row_lay.addWidget(mini_ic)
             lbl_role = QtWidgets.QLabel(lbl_text)
-            lbl_role.setAlignment(Qt.AlignCenter)
+            lbl_role.setFixedWidth(50)
             lbl_role.setStyleSheet(
                 f"font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};"
                 " background: transparent; border: none;"
             )
-            cell_lay.addWidget(lbl_role)
-
+            row_lay.addWidget(lbl_role)
             cmb_r = QtWidgets.QComboBox()
             cmb_r.addItem("— None —")
             cmb_r.setToolTip(f"Assign an image to the {lbl_text} role")
-            cell_lay.addWidget(cmb_r)
+            row_lay.addWidget(cmb_r, 1)
             self._syn_combos[role] = cmb_r
+            syn_sel_layout.addLayout(row_lay)
 
-            _det_grid.addWidget(cell_wgt, row, col)
-
-        syn_sel_layout.addWidget(_det_grid_wgt)
-
-        # Auto-detect button
-        self.btn_syn_auto_detect = QtWidgets.QPushButton("Auto-detect roles")
-        self.btn_syn_auto_detect.setProperty("role", "secondary")
-        self.btn_syn_auto_detect.setFixedHeight(26)
-        self.btn_syn_auto_detect.setToolTip(
-            "Attempt to assign images automatically based on filename keywords\n"
-            "(BSE/Illum, Top/Up, Bottom/Down, Left, Right)."
-        )
+        # Generate button — directly triggers synthesis compute
+        self.btn_syn_auto_detect = QtWidgets.QPushButton("⚡  Generate")
+        self.btn_syn_auto_detect.setFixedHeight(28)
+        self.btn_syn_auto_detect.setToolTip("Run Multi-Image Synthesis with current role assignments.")
         syn_sel_layout.addWidget(self.btn_syn_auto_detect)
 
         input_layout.addWidget(self.wgt_synthesis_select)
@@ -8793,7 +8793,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_syn_shading_output.currentIndexChanged.connect(
             lambda _: self._on_syn_light_visibility()
         )
-        self.btn_syn_auto_detect.clicked.connect(self._on_syn_auto_detect)
+        self.btn_syn_auto_detect.clicked.connect(self._on_compute_synthesis)
         for role, sld in self._syn_weight_sliders.items():
             sld.valueChanged.connect(lambda _: self._on_live_param_changed(False))
         self.cmb_syn_shading_output.currentIndexChanged.connect(
@@ -9598,7 +9598,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if isinstance(result, SynthesisResult):
             # Synthesis: "Base" shows BSE, "Compare" shows result image
             if mode == 'base':
-                bse = result.aligned_roles.get("bse") or result.role_images_used.get("bse")
+                _bse_al = result.aligned_roles.get("bse")
+                bse = _bse_al if _bse_al is not None else result.role_images_used.get("bse")
                 if bse is not None:
                     self.img_base_mag.setImage(bse)
             elif mode == 'compare':
@@ -11262,7 +11263,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         if isinstance(result, SynthesisResult):
             # For synthesis: show BSE image in magnifier, result in split-view
-            bse = result.aligned_roles.get("bse") or result.role_images_used.get("bse")
+            _bse_aligned = result.aligned_roles.get("bse")
+            bse = _bse_aligned if _bse_aligned is not None else result.role_images_used.get("bse")
             base_img = bse
             compare_img = result.result_image
         else:
@@ -11566,23 +11568,38 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Ensure the embedded widget is always visible (accept() may have hidden it)
         self._roi_manager.setVisible(True)
 
-        # Provide current base image shape for pixel→norm conversion
-        base_label = self.cmb_base.currentText()
-        base_img = self._images.get(base_label)
-        if base_img is not None:
-            self._roi_manager.set_image_shape(base_img.shape[:2])
-            self._apply_roi_visibility()
+        _is_synthesis = self.cmb_input_mode.currentIndex() == 1
 
-        # In auto-pair mode before any compute, img_base_mag may show stale or
-        # empty content because _on_base_changed() is not called when auto-pair
-        # is toggled on.  Force-display the cmb_base image so the user draws ROI
-        # on a known, labeled image, ensuring _roi_ref_base_label is correct.
-        if self.chk_auto_pair.isChecked() and not self._results and base_img is not None:
-            self.img_base_mag.setImage(base_img)
+        if _is_synthesis:
+            # In synthesis mode retarget ROI drawing to the synthesis preview widget.
+            self._roi_manager.set_base_widget(self.img_syn_preview)
+            # Derive image shape from BSE or synthesized result
+            _bse_img = self._syn_combos["bse"].currentText()
+            _ref_img = self._images.get(_bse_img) if _bse_img and _bse_img != "— None —" else None
+            if _ref_img is None and self._results:
+                _r = self._results[self._current_result_idx]
+                if isinstance(_r, SynthesisResult):
+                    _ref_img = _r.result_image
+            if _ref_img is not None:
+                self._roi_manager.set_image_shape(_ref_img.shape[:2])
+                self.img_syn_preview.set_multi_roi_set(self._multi_roi_set)
+        else:
+            # Standard mode: retarget back to img_base_mag (handles mode switches)
+            self._roi_manager.set_base_widget(self.img_base_mag)
+            base_label = self.cmb_base.currentText()
+            base_img = self._images.get(base_label)
+            if base_img is not None:
+                self._roi_manager.set_image_shape(base_img.shape[:2])
+                self._apply_roi_visibility()
+
+            # In auto-pair mode before any compute, img_base_mag may show stale or
+            # empty content because _on_base_changed() is not called when auto-pair
+            # is toggled on.  Force-display the cmb_base image so the user draws ROI
+            # on a known, labeled image, ensuring _roi_ref_base_label is correct.
+            if self.chk_auto_pair.isChecked() and not self._results and base_img is not None:
+                self.img_base_mag.setImage(base_img)
 
         # Record which base image the ROI is being drawn on.
-        # In auto-pair mode, use the currently displayed result's base_label
-        # (that image is what img_base_mag shows).  In standard mode, use cmb_base.
         self._capture_roi_ref_base()
 
         self.roi_side_panel.setVisible(True)
