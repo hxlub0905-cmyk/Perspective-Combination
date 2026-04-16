@@ -8248,18 +8248,18 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         self.btn_syn_auto_detect.clicked.connect(self._on_syn_auto_detect)
         for role, sld in self._syn_weight_sliders.items():
-            sld.valueChanged.connect(lambda _: self._emit_state_changed(False))
+            sld.valueChanged.connect(lambda _: self._on_live_param_changed(False))
         self.cmb_syn_shading_output.currentIndexChanged.connect(
-            lambda _: self._emit_state_changed(False)
+            lambda _: self._on_live_param_changed(False)
         )
         self.spn_syn_light_angle.valueChanged.connect(
-            lambda _: self._emit_state_changed(False)
+            lambda _: self._on_live_param_changed(False)
         )
         self.chk_syn_invert_result.stateChanged.connect(
-            lambda _: self._emit_state_changed(False)
+            lambda _: self._on_live_param_changed(False)
         )
         self.chk_syn_align.stateChanged.connect(
-            lambda _: self._emit_state_changed(True)  # alignment change → Tier-1 debounce
+            lambda _: self._on_live_param_changed(True)  # alignment change → Tier-1 debounce
         )
         for role, cmb in self._syn_combos.items():
             cmb.currentIndexChanged.connect(self._on_syn_role_changed)
@@ -8444,7 +8444,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         is_shading = (index == 1)
         self.grp_syn_weights.setVisible(not is_shading)
         self.grp_syn_shading.setVisible(is_shading)
-        self._emit_state_changed(False)
+        self._on_live_param_changed(False)
 
     def _on_syn_light_visibility(self) -> None:
         """Show light-angle spinner only for Shading Relief output."""
@@ -8452,9 +8452,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.grp_syn_light.setVisible(is_relief)
 
     def _on_syn_role_changed(self) -> None:
-        """Update grid thumbnails and emit state change when a role assignment changes."""
+        """Update grid thumbnails and trigger live preview when a role assignment changes."""
         self._update_syn_grid_thumbnails()
-        self._emit_state_changed(False)
+        self._on_live_param_changed(False)
 
     def _on_syn_auto_detect(self) -> None:
         """Auto-assign roles based on filename keywords."""
