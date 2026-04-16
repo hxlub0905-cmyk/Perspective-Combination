@@ -7324,6 +7324,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         card_pairing, pairing_layout = _make_sidebar_card("PAIRING")
         pairing_layout.addWidget(self.chk_auto_pair)
         pairing_layout.addWidget(self.btn_swap_base)
+        self.wgt_pairing_card = card_pairing
         left_layout.addWidget(card_pairing)
 
         # Quadrant Fusion placeholders (feature removed from UI)
@@ -10904,13 +10905,26 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _SKIP_STATUS  = "font-size: 13px; color: #9CA3AF; background: transparent; border: none;"
         _PEND_STATUS  = "font-size: 13px; color: #D1D5DB; background: transparent; border: none;"
 
-        # ── Step 1: base selected + at least one compare checked ────────────
-        base_ok     = bool(self.cmb_base.currentText())
-        compare_ok  = any(
-            chk.isChecked() and chk.isEnabled()
-            for chk in self._compare_checkboxes
-        ) if hasattr(self, '_compare_checkboxes') else False
-        step1_done  = base_ok and compare_ok
+        is_synthesis = (self.cmb_input_mode.currentIndex() == 1)
+        if is_synthesis:
+            role_labels = {
+                role: cmb.currentText()
+                for role, cmb in self._syn_combos.items()
+            } if hasattr(self, "_syn_combos") else {}
+            bse_ok = bool(role_labels.get("bse")) and role_labels.get("bse") != "— None —"
+            non_bse_ok = any(
+                (role != "bse") and bool(label) and label != "— None —"
+                for role, label in role_labels.items()
+            )
+            step1_done = bse_ok and non_bse_ok
+        else:
+            # ── Step 1 (Standard): base selected + at least one compare checked ─
+            base_ok = bool(self.cmb_base.currentText())
+            compare_ok = any(
+                chk.isChecked() and chk.isEnabled()
+                for chk in self._compare_checkboxes
+            ) if hasattr(self, '_compare_checkboxes') else False
+            step1_done = base_ok and compare_ok
         self._step1_circle.setStyleSheet(_DONE_CIRCLE if step1_done else _PEND_CIRCLE)
         self._step1_status.setText("✓" if step1_done else "")
         self._step1_status.setStyleSheet(_DONE_STATUS if step1_done else _PEND_STATUS)
