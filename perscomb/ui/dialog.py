@@ -7897,9 +7897,33 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_syn_grid.setStyleSheet(f"background: {UI_BG_VIEWER};")
         syn_grid_outer = QtWidgets.QVBoxLayout(self.wgt_syn_grid)
         syn_grid_outer.setContentsMargins(4, 4, 4, 4)
-        syn_grid_outer.setSpacing(2)
+        syn_grid_outer.setSpacing(6)
+
+        syn_mode_row = QtWidgets.QHBoxLayout()
+        syn_mode_row.setContentsMargins(0, 0, 0, 0)
+        syn_mode_row.setSpacing(0)
+        self.btn_syn_view_sources = QtWidgets.QPushButton("5-Grid Sources")
+        self.btn_syn_view_sources.setCheckable(True)
+        self.btn_syn_view_sources.setChecked(True)
+        self.btn_syn_view_sources.setProperty("viewerMode", True)
+        self.btn_syn_view_sources.setObjectName("ViewerModeFirst")
+        self.btn_syn_view_result = QtWidgets.QPushButton("Result Preview")
+        self.btn_syn_view_result.setCheckable(True)
+        self.btn_syn_view_result.setProperty("viewerMode", True)
+        self.btn_syn_view_result.setObjectName("ViewerModeLast")
+        for btn in (self.btn_syn_view_sources, self.btn_syn_view_result):
+            btn.setFixedHeight(30)
+            syn_mode_row.addWidget(btn)
+        syn_mode_row.addStretch(1)
+        syn_grid_outer.addLayout(syn_mode_row)
+
+        self._syn_preview_stack = QtWidgets.QStackedWidget()
 
         # 3×3 grid with thumbnails in physical positions
+        self._syn_sources_view = QtWidgets.QWidget()
+        sources_layout = QtWidgets.QVBoxLayout(self._syn_sources_view)
+        sources_layout.setContentsMargins(0, 0, 0, 0)
+        sources_layout.setSpacing(2)
         self._syn_grid_layout = QtWidgets.QGridLayout()
         self._syn_grid_layout.setSpacing(3)
         self._syn_thumb_labels: Dict[str, QtWidgets.QLabel] = {}
@@ -7936,15 +7960,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._syn_grid_layout.addWidget(cell, row, col)
             self._syn_thumb_labels[role] = img_lbl
 
-        syn_grid_outer.addLayout(self._syn_grid_layout, 1)
-        syn_grid_outer.addWidget(QtWidgets.QLabel("Overall Synthesis Preview"))
+        sources_layout.addLayout(self._syn_grid_layout, 1)
+
+        self._syn_result_view = QtWidgets.QWidget()
+        result_layout = QtWidgets.QVBoxLayout(self._syn_result_view)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(4)
+        result_layout.addWidget(QtWidgets.QLabel("Overall Synthesis Preview"))
         self._syn_overall_preview = QtWidgets.QLabel("Live preview not ready")
         self._syn_overall_preview.setAlignment(Qt.AlignCenter)
-        self._syn_overall_preview.setMinimumHeight(160)
+        self._syn_overall_preview.setMinimumHeight(240)
         self._syn_overall_preview.setStyleSheet(
             "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
         )
-        syn_grid_outer.addWidget(self._syn_overall_preview, 1)
+        result_layout.addWidget(self._syn_overall_preview, 1)
+        self._syn_preview_stack.addWidget(self._syn_sources_view)
+        self._syn_preview_stack.addWidget(self._syn_result_view)
+        syn_grid_outer.addWidget(self._syn_preview_stack, 1)
         self.stk_blend.addWidget(self.wgt_syn_grid)  # index 2 synthesis grid
 
         self.stk_blend.setCurrentIndex(0)
@@ -8565,6 +8597,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.spn_syn_light_angle.valueChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
+        self.btn_syn_view_sources.clicked.connect(lambda: self._set_syn_preview_page(0))
+        self.btn_syn_view_result.clicked.connect(lambda: self._set_syn_preview_page(1))
         self.chk_syn_invert_result.stateChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
@@ -8716,6 +8750,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if is_synthesis:
             self.stk_blend.setCurrentIndex(2)
             self.setWindowTitle("Fusi³ — Multi-Image Synthesis")
+            self._set_syn_preview_page(0)
             self._update_syn_grid_thumbnails()
             if self._live_preview_window is not None and self._live_preview_window.isVisible():
                 self._live_preview_window.close()
@@ -8775,6 +8810,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         """Update grid thumbnails and trigger live preview when a role assignment changes."""
         self._update_syn_grid_thumbnails()
         self._on_live_param_changed(False)
+
+    def _set_syn_preview_page(self, page_idx: int) -> None:
+        page_idx = 0 if page_idx == 0 else 1
+        self._syn_preview_stack.setCurrentIndex(page_idx)
+        self.btn_syn_view_sources.setChecked(page_idx == 0)
+        self.btn_syn_view_result.setChecked(page_idx == 1)
 
     def _on_syn_auto_detect(self) -> None:
         """Auto-assign roles based on filename keywords."""
