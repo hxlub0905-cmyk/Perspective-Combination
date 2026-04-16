@@ -6333,6 +6333,305 @@ class LivePreviewWindow(QtWidgets.QDialog):
         )
 
 
+class SynthesisLivePreviewWindow(QtWidgets.QDialog):
+    """Independent live preview workspace dedicated to Multi-Image Synthesis."""
+
+    preview_state_changed = Signal(bool)
+    apply_to_main_requested = Signal(bool)
+    reset_from_main_requested = Signal()
+    window_closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Live Preview Workspace — Multi-Image Synthesis")
+        self.setModal(False)
+        self.resize(1460, 900)
+        self.setMinimumSize(1220, 720)
+
+        self._syncing = False
+        self._role_order = ["bse", "top", "bottom", "left", "right"]
+        self._role_labels = {
+            "bse": "BSE Center",
+            "top": "SE Top",
+            "bottom": "SE Bottom",
+            "left": "SE Left",
+            "right": "SE Right",
+        }
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        hdr = QtWidgets.QFrame()
+        hdr.setObjectName("PreviewHeader")
+        hdr_layout = QtWidgets.QHBoxLayout(hdr)
+        hdr_layout.setContentsMargins(14, 10, 14, 10)
+        hdr_layout.setSpacing(8)
+        title = QtWidgets.QLabel("⚡ Live Preview — Multi-Image Synthesis")
+        title.setObjectName("PreviewTitle")
+        hdr_layout.addWidget(title)
+        hdr_layout.addStretch(1)
+        self.btn_reset_from_main = QtWidgets.QPushButton("Reload from Main")
+        self.btn_apply = QtWidgets.QPushButton("Apply to Main")
+        self.btn_apply_close = QtWidgets.QPushButton("Apply & Close")
+        for b in (self.btn_reset_from_main, self.btn_apply, self.btn_apply_close):
+            b.setMinimumHeight(32)
+            hdr_layout.addWidget(b)
+        root.addWidget(hdr)
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(10)
+
+        left = QtWidgets.QFrame()
+        left.setObjectName("PreviewCard")
+        left.setFixedWidth(330)
+        left_layout = QtWidgets.QVBoxLayout(left)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(8)
+
+        left_layout.addWidget(QtWidgets.QLabel("Role Assignment"))
+        self._role_combos: Dict[str, QtWidgets.QComboBox] = {}
+        for role in self._role_order:
+            row = QtWidgets.QHBoxLayout()
+            row.addWidget(QtWidgets.QLabel(self._role_labels[role]))
+            cmb = QtWidgets.QComboBox()
+            cmb.addItem("— None —")
+            row.addWidget(cmb, 1)
+            left_layout.addLayout(row)
+            self._role_combos[role] = cmb
+
+        left_layout.addSpacing(4)
+        left_layout.addWidget(QtWidgets.QLabel("Algorithm"))
+        self.cmb_syn_algorithm = QtWidgets.QComboBox()
+        self.cmb_syn_algorithm.addItems(["Weighted Blend", "Shading Relief"])
+        left_layout.addWidget(self.cmb_syn_algorithm)
+
+        self.grp_weights = QtWidgets.QGroupBox("Weights")
+        weights_layout = QtWidgets.QGridLayout(self.grp_weights)
+        self._weight_sliders: Dict[str, QtWidgets.QSlider] = {}
+        for i, role in enumerate(self._role_order):
+            weights_layout.addWidget(QtWidgets.QLabel(role.upper()), i, 0)
+            s = QtWidgets.QSlider(Qt.Horizontal)
+            s.setRange(0, 100)
+            s.setValue(20 if role == "bse" else 15)
+            weights_layout.addWidget(s, i, 1)
+            self._weight_sliders[role] = s
+        left_layout.addWidget(self.grp_weights)
+
+        self.grp_shading = QtWidgets.QGroupBox("Shading")
+        sh_layout = QtWidgets.QGridLayout(self.grp_shading)
+        sh_layout.addWidget(QtWidgets.QLabel("Output"), 0, 0)
+        self.cmb_syn_shading_output = QtWidgets.QComboBox()
+        self.cmb_syn_shading_output.addItems(["Topography", "BSE Clean", "Composite", "Relief"])
+        sh_layout.addWidget(self.cmb_syn_shading_output, 0, 1)
+        sh_layout.addWidget(QtWidgets.QLabel("Light Angle"), 1, 0)
+        self.spn_syn_light_angle = QtWidgets.QDoubleSpinBox()
+        self.spn_syn_light_angle.setRange(0.0, 360.0)
+        self.spn_syn_light_angle.setValue(135.0)
+        self.spn_syn_light_angle.setSingleStep(5.0)
+        sh_layout.addWidget(self.spn_syn_light_angle, 1, 1)
+        self.grp_shading.setVisible(False)
+        left_layout.addWidget(self.grp_shading)
+
+        left_layout.addWidget(QtWidgets.QLabel("Normalize"))
+        self.cmb_normalize_mode = QtWidgets.QComboBox()
+        self.cmb_normalize_mode.addItems([
+            "Percentile (P2–P98)",
+            "GLV-Mask",
+            "Skip (raw ÷ 255)",
+            "ROI-Match (EPI Nulling)",
+        ])
+        left_layout.addWidget(self.cmb_normalize_mode)
+        glv_row = QtWidgets.QHBoxLayout()
+        self.spn_glv_low = QtWidgets.QSpinBox()
+        self.spn_glv_low.setRange(0, 254)
+        self.spn_glv_low.setValue(100)
+        self.spn_glv_high = QtWidgets.QSpinBox()
+        self.spn_glv_high.setRange(1, 255)
+        self.spn_glv_high.setValue(160)
+        glv_row.addWidget(QtWidgets.QLabel("GLV Min"))
+        glv_row.addWidget(self.spn_glv_low)
+        glv_row.addWidget(QtWidgets.QLabel("GLV Max"))
+        glv_row.addWidget(self.spn_glv_high)
+        left_layout.addLayout(glv_row)
+
+        self.chk_syn_invert_result = QtWidgets.QCheckBox("Invert Result")
+        self.chk_syn_align = QtWidgets.QCheckBox("Align SE to BSE before synthesis")
+        left_layout.addWidget(self.chk_syn_invert_result)
+        left_layout.addWidget(self.chk_syn_align)
+        left_layout.addWidget(QtWidgets.QLabel("Alignment Method"))
+        self.cmb_align_method = QtWidgets.QComboBox()
+        self.cmb_align_method.addItems(["Phase (robust)", "NCC (brute force)", "ECC (accurate)", "Template (crop)"])
+        left_layout.addWidget(self.cmb_align_method)
+        left_layout.addStretch(1)
+        body.addWidget(left, 0)
+
+        viewer_card = QtWidgets.QFrame()
+        viewer_card.setObjectName("PreviewCard")
+        viewer_layout = QtWidgets.QVBoxLayout(viewer_card)
+        viewer_layout.setContentsMargins(12, 12, 12, 12)
+        viewer_layout.setSpacing(8)
+        viewer_layout.addWidget(QtWidgets.QLabel("Synthesis Sources & Result"))
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(4)
+        self._thumbs: Dict[str, QtWidgets.QLabel] = {}
+        pos = {"top": (0, 1), "left": (1, 0), "bse": (1, 1), "right": (1, 2), "bottom": (2, 1)}
+        for role, (r, c) in pos.items():
+            lbl = QtWidgets.QLabel("—")
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setMinimumSize(110, 90)
+            lbl.setStyleSheet("background:#1F2937; border-radius:4px;")
+            grid.addWidget(lbl, r, c)
+            self._thumbs[role] = lbl
+        viewer_layout.addLayout(grid, 0)
+        self.img_preview_diff = SyncZoomImageWidget("Synthesis Preview")
+        viewer_layout.addWidget(self.img_preview_diff, 1)
+        self.lbl_status = QtWidgets.QLabel("Adjust settings to preview.")
+        viewer_layout.addWidget(self.lbl_status)
+        body.addWidget(viewer_card, 1)
+        root.addLayout(body, 1)
+
+        self._connect_signals()
+
+    def _connect_signals(self) -> None:
+        self.btn_reset_from_main.clicked.connect(self.reset_from_main_requested.emit)
+        self.btn_apply.clicked.connect(lambda: self.apply_to_main_requested.emit(False))
+        self.btn_apply_close.clicked.connect(lambda: self.apply_to_main_requested.emit(True))
+        self.cmb_syn_algorithm.currentIndexChanged.connect(self._on_algorithm_changed)
+        for cmb in self._role_combos.values():
+            cmb.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        for s in self._weight_sliders.values():
+            s.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_syn_shading_output.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spn_syn_light_angle.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_normalize_mode.currentIndexChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spn_glv_low.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.spn_glv_high.valueChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.chk_syn_invert_result.stateChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.chk_syn_align.stateChanged.connect(lambda *_: self._emit_state_changed(False))
+        self.cmb_align_method.currentIndexChanged.connect(lambda *_: self._emit_state_changed(True))
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self.window_closed.emit()
+        super().closeEvent(event)
+
+    def _on_algorithm_changed(self, *_args) -> None:
+        is_shading = self.cmb_syn_algorithm.currentIndex() == 1
+        self.grp_weights.setVisible(not is_shading)
+        self.grp_shading.setVisible(is_shading)
+        self._emit_state_changed(False)
+
+    def _emit_state_changed(self, is_align_change: bool) -> None:
+        if self._syncing:
+            return
+        self.preview_state_changed.emit(is_align_change)
+
+    def _thumb(self, img: Optional[np.ndarray], size: int = 120) -> QtGui.QPixmap:
+        if img is None:
+            return QtGui.QPixmap()
+        h, w = img.shape[:2]
+        side = min(h, w)
+        y0 = max(0, (h - side) // 2)
+        x0 = max(0, (w - side) // 2)
+        crop = img[y0:y0 + side, x0:x0 + side]
+        thumb = cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(thumb, cv2.COLOR_GRAY2RGB)
+        qi = QtGui.QImage(rgb.data, size, size, size * 3, QtGui.QImage.Format_RGB888)
+        return QtGui.QPixmap.fromImage(qi)
+
+    def set_image_labels(self, labels: List[str]) -> None:
+        labels = [lbl for lbl in labels if lbl]
+        self._syncing = True
+        for cmb in self._role_combos.values():
+            old = cmb.currentText()
+            cmb.clear()
+            cmb.addItem("— None —")
+            cmb.addItems(labels)
+            if old in labels:
+                cmb.setCurrentText(old)
+        self._syncing = False
+
+    def set_state(self, state: dict, *, include_pair: bool = True) -> None:
+        self._syncing = True
+        role_labels = state.get("syn_role_labels", {})
+        for role, cmb in self._role_combos.items():
+            sel = role_labels.get(role, "— None —")
+            cmb.setCurrentText(sel if sel else "— None —")
+        self.cmb_syn_algorithm.setCurrentIndex(state.get("syn_algorithm_index", 0))
+        for role, s in self._weight_sliders.items():
+            v = state.get("syn_weight_values", {}).get(role, s.value())
+            s.setValue(int(v))
+        self.cmb_syn_shading_output.setCurrentIndex(state.get("syn_shading_output_index", 0))
+        self.spn_syn_light_angle.setValue(float(state.get("syn_light_angle", 135.0)))
+        self.cmb_normalize_mode.setCurrentIndex(state.get("normalize_mode_index", 0))
+        self.spn_glv_low.setValue(int(state.get("glv_low", 100)))
+        self.spn_glv_high.setValue(int(state.get("glv_high", 160)))
+        self.chk_syn_invert_result.setChecked(bool(state.get("syn_invert_result", False)))
+        self.chk_syn_align.setChecked(bool(state.get("syn_align_to_bse", False)))
+        self.cmb_align_method.setCurrentIndex(state.get("align_method_index", 0))
+        self._syncing = False
+        self._on_algorithm_changed()
+
+    def current_state(self) -> dict:
+        return {
+            "mode": "synthesis",
+            "syn_role_labels": {role: cmb.currentText() for role, cmb in self._role_combos.items()},
+            "syn_algorithm_index": self.cmb_syn_algorithm.currentIndex(),
+            "syn_weight_values": {role: s.value() for role, s in self._weight_sliders.items()},
+            "syn_shading_output_index": self.cmb_syn_shading_output.currentIndex(),
+            "syn_light_angle": self.spn_syn_light_angle.value(),
+            "normalize_mode_index": self.cmb_normalize_mode.currentIndex(),
+            "glv_low": self.spn_glv_low.value(),
+            "glv_high": self.spn_glv_high.value(),
+            "syn_invert_result": self.chk_syn_invert_result.isChecked(),
+            "syn_align_to_bse": self.chk_syn_align.isChecked(),
+            "align_method_index": self.cmb_align_method.currentIndex(),
+        }
+
+    def set_source_images(self, base_image: Optional[np.ndarray], compare_image: Optional[np.ndarray]) -> None:
+        # compatibility no-op for controller that handles pair workspace
+        _ = base_image
+        _ = compare_image
+
+    def set_role_images(self, role_images: Dict[str, Optional[np.ndarray]]) -> None:
+        for role, lbl in self._thumbs.items():
+            img = role_images.get(role)
+            if img is None:
+                lbl.setText("—")
+                lbl.setPixmap(QtGui.QPixmap())
+            else:
+                lbl.setText("")
+                lbl.setPixmap(self._thumb(img))
+
+    def clear_diff_preview(self) -> None:
+        self.img_preview_diff.setImage(None)
+
+    def clear_preview(self) -> None:
+        self.clear_diff_preview()
+        self.lbl_status.setText("Adjust settings to preview.")
+
+    def set_rendering_state(self, text: str, tone: str = "neutral") -> None:
+        _ = tone
+        self.lbl_status.setText(text)
+
+    def update_preview(
+        self,
+        *,
+        base_image: Optional[np.ndarray],
+        aligned_compare: Optional[np.ndarray],
+        result,
+        latency_ms: Optional[float],
+        cache_hit: bool,
+    ) -> None:
+        _ = base_image
+        _ = aligned_compare
+        self.img_preview_diff.setImage(result.result_image)
+        role_images = getattr(result, "role_images_used", None) or {}
+        self.set_role_images(role_images)
+        latency_text = f"{latency_ms:.0f} ms" if latency_ms is not None else "—"
+        self.lbl_status.setText(f"Preview ready • {latency_text} • cache {'hit' if cache_hit else 'miss'}")
+
+
 class PerspectiveCombinationDialog(QtWidgets.QDialog):
     """Dialog for multi-image perspective combination and defect detection."""
 
@@ -6400,6 +6699,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._alignment_cache: AlignmentCache = AlignmentCache()
         self._live_manager: Optional[LivePreviewManager] = None
         self._live_preview_window: Optional[LivePreviewWindow] = None
+        self._live_preview_window_synthesis: Optional[SynthesisLivePreviewWindow] = None
         self._live_preview_started_at: Optional[float] = None
         self._live_preview_cache_hit: bool = False
         self._preview_roi_manager: Optional[MultiROIManagerWidget] = None
@@ -6472,6 +6772,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._live_manager.cancel()
         if self._live_preview_window is not None:
             self._live_preview_window.close()
+        if self._live_preview_window_synthesis is not None:
+            self._live_preview_window_synthesis.close()
         if self._preview_roi_manager is not None:
             self._preview_roi_manager.close()
         if self._compute_thread is not None:
@@ -6796,28 +7098,29 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.setContentsMargins(12, 12, 12, 12)
         left_layout.setSpacing(16)
 
-        def _make_sidebar_card(title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QVBoxLayout]:
+        def _make_sidebar_card(title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel, QtWidgets.QVBoxLayout]:
             card = QtWidgets.QFrame()
             card.setProperty("card", True)
             card_layout = QtWidgets.QVBoxLayout(card)
             card_layout.setContentsMargins(10, 10, 10, 10)
             card_layout.setSpacing(6)
 
-            lbl_title = QtWidgets.QLabel(title)
-            lbl_title.setObjectName("SectionTitle")
-            card_layout.addWidget(lbl_title)
+            title_lbl = QtWidgets.QLabel(title)
+            title_lbl.setObjectName("SectionTitle")
+            card_layout.addWidget(title_lbl)
 
             sep = QtWidgets.QLabel()
             sep.setObjectName("SectionSeparator")
             card_layout.addWidget(sep)
             card_layout.addSpacing(2)
-            return card, card_layout
+            return card, title_lbl, card_layout
 
         def _make_step_header(num_text: str, title: str, optional: bool = False):
             """Create a numbered step header row.
 
-            Returns (frame, circle_label, status_label) where:
+            Returns (frame, circle_label, title_label, status_label) where:
               - circle_label  : QLabel showing the step number; tint to orange on complete
+              - title_label   : QLabel showing the step title text
               - status_label  : QLabel showing '' / '✓' / '—'
             """
             frame = QtWidgets.QFrame()
@@ -6836,12 +7139,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             )
             h_lay.addWidget(circle)
 
-            lbl = QtWidgets.QLabel(title)
-            lbl.setStyleSheet(
+            title_lbl = QtWidgets.QLabel(title)
+            title_lbl.setStyleSheet(
                 f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: 13px;"
                 f" color: {UI_TEXT_PRIMARY_STRONG}; background: transparent; border: none;"
             )
-            h_lay.addWidget(lbl)
+            h_lay.addWidget(title_lbl)
 
             if optional:
                 tag = QtWidgets.QLabel("optional")
@@ -6857,14 +7160,14 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             status.setStyleSheet("font-size: 13px; color: #6B7280; background: transparent; border: none;")
             h_lay.addWidget(status)
 
-            return frame, circle, status
+            return frame, circle, title_lbl, status
 
         # ─── Step 1: Images ─────────────────────────────────────────────────────
-        step1_hdr, self._step1_circle, self._step1_status = _make_step_header("①", "Images")
+        step1_hdr, self._step1_circle, self._step1_title, self._step1_status = _make_step_header("①", "Images")
         left_layout.addWidget(step1_hdr)
 
         # --- INPUT section ---
-        card_input, input_layout = _make_sidebar_card("INPUT")
+        card_input, _card_input_title, input_layout = _make_sidebar_card("INPUT")
         left_layout.addWidget(card_input)
 
         self.lbl_input_empty_hint = QtWidgets.QLabel("No images loaded.\nLoad a folder to begin.")
@@ -6876,7 +7179,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         lbl_mode.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_PRIMARY_STRONG};")
         input_layout.addWidget(lbl_mode)
 
-        # Input mode selector
+        # Input mode selector (kept as source-of-truth; hidden in favor of mode chips)
         self.cmb_input_mode = QtWidgets.QComboBox()
         self.cmb_input_mode.addItems([
             "Standard (Base/Compare)",
@@ -6886,7 +7189,29 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "Standard: Classic Base vs Compare subtract/blend workflow.\n"
             "Multi-Image Synthesis: Combine BSE + up to 4 directional SE images."
         )
-        input_layout.addWidget(self.cmb_input_mode)
+        self.cmb_input_mode.setVisible(False)
+
+        mode_chip_row = QtWidgets.QHBoxLayout()
+        mode_chip_row.setContentsMargins(0, 0, 0, 0)
+        mode_chip_row.setSpacing(0)
+        self.btn_mode_standard_chip = QtWidgets.QPushButton("Standard")
+        self.btn_mode_standard_chip.setCheckable(True)
+        self.btn_mode_standard_chip.setChecked(True)
+        self.btn_mode_standard_chip.setProperty("viewerMode", True)
+        self.btn_mode_standard_chip.setObjectName("ViewerModeFirst")
+        self.btn_mode_synthesis_chip = QtWidgets.QPushButton("Multi-Synthesis")
+        self.btn_mode_synthesis_chip.setCheckable(True)
+        self.btn_mode_synthesis_chip.setProperty("viewerMode", True)
+        self.btn_mode_synthesis_chip.setObjectName("ViewerModeLast")
+        for _btn in (self.btn_mode_standard_chip, self.btn_mode_synthesis_chip):
+            _btn.setFixedHeight(30)
+            mode_chip_row.addWidget(_btn)
+        mode_chip_row.addStretch(1)
+        input_layout.addLayout(mode_chip_row)
+        self.lbl_mode_hint = QtWidgets.QLabel("Standard workflow: Base + Compare pairing.")
+        self.lbl_mode_hint.setProperty("secondary", True)
+        self.lbl_mode_hint.setWordWrap(True)
+        input_layout.addWidget(self.lbl_mode_hint)
 
         # ── Standard mode widgets (Base/Compare) ─────────────────────────────
         self.wgt_standard_select = QtWidgets.QWidget()
@@ -7019,9 +7344,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         input_layout.addWidget(self.wgt_synthesis_select)
 
         # --- PAIRING section ---
-        card_pairing, pairing_layout = _make_sidebar_card("PAIRING")
+        card_pairing, _card_pairing_title, pairing_layout = _make_sidebar_card("PAIRING")
         pairing_layout.addWidget(self.chk_auto_pair)
         pairing_layout.addWidget(self.btn_swap_base)
+        self.wgt_pairing_card = card_pairing
         left_layout.addWidget(card_pairing)
 
         # Quadrant Fusion placeholders (feature removed from UI)
@@ -7045,12 +7371,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._qf_last_result: Optional[QuadrantFusionResult] = None
 
         # ─── Step 2: Configure ──────────────────────────────────────────────────
-        step2_hdr, self._step2_circle, self._step2_status = _make_step_header("②", "Configure")
+        step2_hdr, self._step2_circle, self._step2_title, self._step2_status = _make_step_header("②", "Configure")
         left_layout.addWidget(step2_hdr)
 
         # --- OPERATION section ---
-        card_operation, operation_card_layout = _make_sidebar_card("OPERATION")
+        card_operation, self.lbl_operation_card_title, operation_card_layout = _make_sidebar_card("OPERATION")
         left_layout.addWidget(card_operation)
+        self.lbl_operation_card_hint = QtWidgets.QLabel("Pair operations: Subtract / Blend")
+        self.lbl_operation_card_hint.setProperty("secondary", True)
+        operation_card_layout.addWidget(self.lbl_operation_card_hint)
 
         # Operation Settings (Standard mode only)
         self.grp_op = QtWidgets.QWidget()
@@ -7384,8 +7713,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         operation_card_layout.addWidget(self.grp_syn_op)
 
         # --- ALIGNMENT section ---
-        card_alignment, alignment_card_layout = _make_sidebar_card("ALIGNMENT")
+        card_alignment, self.lbl_alignment_card_title, alignment_card_layout = _make_sidebar_card("ALIGNMENT")
         left_layout.addWidget(card_alignment)
+        self.lbl_alignment_card_hint = QtWidgets.QLabel("Pair alignment controls")
+        self.lbl_alignment_card_hint.setProperty("secondary", True)
+        alignment_card_layout.addWidget(self.lbl_alignment_card_hint)
 
         self.grp_align = QtWidgets.QWidget()
         align_layout = QtWidgets.QVBoxLayout(self.grp_align)
@@ -7439,7 +7771,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         left_layout.addStretch()
 
         # ─── Step 3: ROI + Compute ───────────────────────────────────────────
-        step3_hdr, self._step3_circle, self._step3_status = _make_step_header(
+        step3_hdr, self._step3_circle, self._step3_title, self._step3_status = _make_step_header(
             "③", "ROI  +  Compute", optional=True
         )
         left_layout.addWidget(step3_hdr)
@@ -7595,9 +7927,33 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_syn_grid.setStyleSheet(f"background: {UI_BG_VIEWER};")
         syn_grid_outer = QtWidgets.QVBoxLayout(self.wgt_syn_grid)
         syn_grid_outer.setContentsMargins(4, 4, 4, 4)
-        syn_grid_outer.setSpacing(2)
+        syn_grid_outer.setSpacing(6)
+
+        syn_mode_row = QtWidgets.QHBoxLayout()
+        syn_mode_row.setContentsMargins(0, 0, 0, 0)
+        syn_mode_row.setSpacing(0)
+        self.btn_syn_view_sources = QtWidgets.QPushButton("5-Grid Sources")
+        self.btn_syn_view_sources.setCheckable(True)
+        self.btn_syn_view_sources.setChecked(True)
+        self.btn_syn_view_sources.setProperty("viewerMode", True)
+        self.btn_syn_view_sources.setObjectName("ViewerModeFirst")
+        self.btn_syn_view_result = QtWidgets.QPushButton("Result Preview")
+        self.btn_syn_view_result.setCheckable(True)
+        self.btn_syn_view_result.setProperty("viewerMode", True)
+        self.btn_syn_view_result.setObjectName("ViewerModeLast")
+        for btn in (self.btn_syn_view_sources, self.btn_syn_view_result):
+            btn.setFixedHeight(30)
+            syn_mode_row.addWidget(btn)
+        syn_mode_row.addStretch(1)
+        syn_grid_outer.addLayout(syn_mode_row)
+
+        self._syn_preview_stack = QtWidgets.QStackedWidget()
 
         # 3×3 grid with thumbnails in physical positions
+        self._syn_sources_view = QtWidgets.QWidget()
+        sources_layout = QtWidgets.QVBoxLayout(self._syn_sources_view)
+        sources_layout.setContentsMargins(0, 0, 0, 0)
+        sources_layout.setSpacing(2)
         self._syn_grid_layout = QtWidgets.QGridLayout()
         self._syn_grid_layout.setSpacing(3)
         self._syn_thumb_labels: Dict[str, QtWidgets.QLabel] = {}
@@ -7634,7 +7990,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._syn_grid_layout.addWidget(cell, row, col)
             self._syn_thumb_labels[role] = img_lbl
 
-        syn_grid_outer.addLayout(self._syn_grid_layout, 1)
+        sources_layout.addLayout(self._syn_grid_layout, 1)
+
+        self._syn_result_view = QtWidgets.QWidget()
+        result_layout = QtWidgets.QVBoxLayout(self._syn_result_view)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(4)
+        result_layout.addWidget(QtWidgets.QLabel("Overall Synthesis Preview"))
+        self._syn_overall_preview = QtWidgets.QLabel("Live preview not ready")
+        self._syn_overall_preview.setAlignment(Qt.AlignCenter)
+        self._syn_overall_preview.setMinimumHeight(240)
+        self._syn_overall_preview.setStyleSheet(
+            "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
+        )
+        result_layout.addWidget(self._syn_overall_preview, 1)
+        self._syn_preview_stack.addWidget(self._syn_sources_view)
+        self._syn_preview_stack.addWidget(self._syn_result_view)
+        syn_grid_outer.addWidget(self._syn_preview_stack, 1)
         self.stk_blend.addWidget(self.wgt_syn_grid)  # index 2 synthesis grid
 
         self.stk_blend.setCurrentIndex(0)
@@ -8240,6 +8612,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
+        self.btn_mode_standard_chip.clicked.connect(lambda: self.cmb_input_mode.setCurrentIndex(0))
+        self.btn_mode_synthesis_chip.clicked.connect(lambda: self.cmb_input_mode.setCurrentIndex(1))
 
         # Synthesis: algorithm switch, auto-detect, weight sliders (live preview)
         self.cmb_syn_algorithm.currentIndexChanged.connect(self._on_syn_algorithm_changed)
@@ -8255,6 +8629,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.spn_syn_light_angle.valueChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
+        self.btn_syn_view_sources.clicked.connect(lambda: self._set_syn_preview_page(0))
+        self.btn_syn_view_result.clicked.connect(lambda: self._set_syn_preview_page(1))
         self.chk_syn_invert_result.stateChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
@@ -8387,6 +8763,33 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_standard_select.setVisible(is_standard)
         self.wgt_synthesis_select.setVisible(is_synthesis)
         self.wgt_quadrant_select.setVisible(False)  # legacy, always hidden
+        self.btn_mode_standard_chip.setChecked(is_standard)
+        self.btn_mode_synthesis_chip.setChecked(is_synthesis)
+        self.lbl_mode_hint.setText(
+            "Standard workflow: Base + Compare pairing."
+            if is_standard
+            else "Synthesis workflow: assign BSE + directional SE roles."
+        )
+        if hasattr(self, "_step1_title"):
+            self._step1_title.setText("Images" if is_standard else "Roles")
+        if hasattr(self, "_step2_title"):
+            self._step2_title.setText("Configure (Pair)" if is_standard else "Configure (Synthesis)")
+        if hasattr(self, "lbl_operation_card_title"):
+            self.lbl_operation_card_title.setText("OPERATION" if is_standard else "SYNTHESIS SETTINGS")
+        if hasattr(self, "lbl_operation_card_hint"):
+            self.lbl_operation_card_hint.setText(
+                "Pair operations: Subtract / Blend"
+                if is_standard
+                else "Synthesis controls: Roles / Algorithm / Weights / Shading"
+            )
+        if hasattr(self, "lbl_alignment_card_title"):
+            self.lbl_alignment_card_title.setText("ALIGNMENT" if is_standard else "REGISTRATION")
+        if hasattr(self, "lbl_alignment_card_hint"):
+            self.lbl_alignment_card_hint.setText(
+                "Pair alignment controls"
+                if is_standard
+                else "Optional: align directional SE images into BSE space"
+            )
 
         # Left panel: operation / alignment groups
         self.grp_op.setVisible(is_standard)
@@ -8406,12 +8809,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if is_synthesis:
             self.stk_blend.setCurrentIndex(2)
             self.setWindowTitle("Fusi³ — Multi-Image Synthesis")
+            self._set_syn_preview_page(0)
             self._update_syn_grid_thumbnails()
+            if self._live_preview_window is not None and self._live_preview_window.isVisible():
+                self._live_preview_window.close()
+            self.btn_live_preview.setToolTip(
+                "Open a dedicated Multi-Image Synthesis live-preview workspace."
+            )
         else:
             # Restore standard view (page 0 magnifier or page 1 split)
             self.stk_blend.setCurrentIndex(0)
             self.setWindowTitle("Fusi³ — SEM Perspective Combination Tool")
             self._refresh_standard_mode_views()
+            if self._live_preview_window_synthesis is not None and self._live_preview_window_synthesis.isVisible():
+                self._live_preview_window_synthesis.close()
+            self.btn_live_preview.setToolTip(
+                "Open a dedicated workspace for pair tuning and live diff preview."
+            )
 
     def _refresh_standard_mode_views(self):
         """Refresh existing embedded Standard-mode viewers after mode switching."""
@@ -8456,6 +8870,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_syn_grid_thumbnails()
         self._on_live_param_changed(False)
 
+    def _set_syn_preview_page(self, page_idx: int) -> None:
+        page_idx = 0 if page_idx == 0 else 1
+        self._syn_preview_stack.setCurrentIndex(page_idx)
+        self.btn_syn_view_sources.setChecked(page_idx == 0)
+        self.btn_syn_view_result.setChecked(page_idx == 1)
+
     def _on_syn_auto_detect(self) -> None:
         """Auto-assign roles based on filename keywords."""
         file_labels = list(self._images.keys())
@@ -8488,18 +8908,28 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             else:
                 img_lbl.setPixmap(QtGui.QPixmap())
                 img_lbl.setText("—")
+        self._update_syn_overall_preview(None)
+
+    def _update_syn_overall_preview(self, img: Optional[np.ndarray]) -> None:
+        if img is None:
+            self._syn_overall_preview.setPixmap(QtGui.QPixmap())
+            self._syn_overall_preview.setText("Live preview not ready")
+            return
+        self._syn_overall_preview.setPixmap(self._make_thumb(img, 220))
+        self._syn_overall_preview.setText("")
 
     @staticmethod
     def _make_thumb(img: np.ndarray, size: int) -> QtGui.QPixmap:
-        """Convert a grayscale uint8 ndarray to a square QPixmap thumbnail."""
+        """Convert grayscale uint8 ndarray to a square cover-style thumbnail."""
         h, w = img.shape[:2]
-        # Fit into size×size keeping aspect ratio
-        scale = size / max(h, w)
-        nh, nw = max(1, int(h * scale)), max(1, int(w * scale))
+        side = min(h, w)
+        y0 = max(0, (h - side) // 2)
+        x0 = max(0, (w - side) // 2)
+        crop = img[y0:y0 + side, x0:x0 + side]
         import cv2 as _cv2
-        thumb = _cv2.resize(img, (nw, nh), interpolation=_cv2.INTER_AREA)
+        thumb = _cv2.resize(crop, (size, size), interpolation=_cv2.INTER_AREA)
         rgb = _cv2.cvtColor(thumb, _cv2.COLOR_GRAY2RGB)
-        qi = QtGui.QImage(rgb.data, nw, nh, nw * 3, QtGui.QImage.Format_RGB888)
+        qi = QtGui.QImage(rgb.data, size, size, size * 3, QtGui.QImage.Format_RGB888)
         return QtGui.QPixmap.fromImage(qi)
 
     def _collect_synthesis_preview_params(self) -> Optional[dict]:
@@ -8549,6 +8979,51 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "glv_range": glv_range,
             "invert_result": self.chk_syn_invert_result.isChecked(),
             "align_to_bse": self.chk_syn_align.isChecked(),
+            "align_method": align_method,
+            "snr_window_size": self.spn_snr_window.value(),
+        }
+
+    def _collect_synthesis_preview_params_from_state(self, state: dict) -> Optional[dict]:
+        role_labels = state.get("syn_role_labels", {})
+        role_images: Dict[str, Optional[np.ndarray]] = {}
+        for role in SYNTHESIS_ROLES:
+            sel = role_labels.get(role, "")
+            role_images[role] = self._images.get(sel) if sel and sel != "— None —" else None
+        if role_images.get("bse") is None:
+            return None
+        present = [r for r, img in role_images.items() if img is not None]
+        if len(present) < 2:
+            return None
+        algo_idx = int(state.get("syn_algorithm_index", 0))
+        algorithm = "weighted" if algo_idx == 0 else "shading"
+        weight_values = state.get("syn_weight_values", {})
+        weights = {role: float(weight_values.get(role, 0.0)) / 100.0 for role in SYNTHESIS_ROLES}
+        shading_map = ["topo", "bse_clean", "composite", "relief"]
+        shading_output = shading_map[min(int(state.get("syn_shading_output_index", 0)), len(shading_map) - 1)]
+        norm_mode = int(state.get("normalize_mode_index", self.cmb_normalize_mode.currentIndex()))
+        method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
+        normalize_method = method_map.get(norm_mode, "percentile")
+        glv_range = None
+        if norm_mode == 1:
+            glv_low = int(state.get("glv_low", self.spn_glv_low.value()))
+            glv_high = int(state.get("glv_high", self.spn_glv_high.value()))
+            if glv_low < glv_high:
+                glv_range = (glv_low, glv_high)
+        align_method = {0: "phase", 1: "ncc", 2: "ecc", 3: "template"}.get(
+            int(state.get("align_method_index", self.cmb_align_method.currentIndex())),
+            "phase",
+        )
+        return {
+            "mode": "synthesis",
+            "role_images": role_images,
+            "algorithm": algorithm,
+            "weights": weights,
+            "shading_output": shading_output,
+            "light_angle_deg": float(state.get("syn_light_angle", self.spn_syn_light_angle.value())),
+            "normalize_method": normalize_method,
+            "glv_range": glv_range,
+            "invert_result": bool(state.get("syn_invert_result", self.chk_syn_invert_result.isChecked())),
+            "align_to_bse": bool(state.get("syn_align_to_bse", self.chk_syn_align.isChecked())),
             "align_method": align_method,
             "snr_window_size": self.spn_snr_window.value(),
         }
@@ -8698,10 +9173,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         if self._live_preview_window is not None:
             self._live_preview_window.set_image_labels(self._get_image_labels())
+        if self._live_preview_window_synthesis is not None:
+            self._live_preview_window_synthesis.set_image_labels(self._get_image_labels())
+        if self._live_preview_window is not None or self._live_preview_window_synthesis is not None:
             if has_images:
                 self._sync_live_preview_window_from_main()
             else:
-                self._live_preview_window.clear_preview()
+                if self._live_preview_window is not None:
+                    self._live_preview_window.clear_preview()
+                if self._live_preview_window_synthesis is not None:
+                    self._live_preview_window_synthesis.clear_preview()
 
     def _update_sidebar_empty_state(self, has_images: bool):
         """Update sidebar placeholders and enablement when image set is empty/non-empty."""
@@ -8783,6 +9264,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_step_states()
 
     def _collect_main_config_state(self) -> dict:
+        syn_role_labels = {role: cmb.currentText() for role, cmb in self._syn_combos.items()}
+        syn_weight_values = {role: slider.value() for role, slider in self._syn_weight_sliders.items()}
         return {
             "base_label": self.cmb_base.currentText(),
             "compare_label": self._get_primary_compare_label(),
@@ -8798,6 +9281,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "glv_high": self.spn_glv_high.value(),
             "roi_abs_diff": self.chk_roi_abs_diff.isChecked(),
             "align_method_index": self.cmb_align_method.currentIndex(),
+            "syn_role_labels": syn_role_labels,
+            "syn_algorithm_index": self.cmb_syn_algorithm.currentIndex(),
+            "syn_weight_values": syn_weight_values,
+            "syn_shading_output_index": self.cmb_syn_shading_output.currentIndex(),
+            "syn_light_angle": self.spn_syn_light_angle.value(),
+            "syn_invert_result": self.chk_syn_invert_result.isChecked(),
+            "syn_align_to_bse": self.chk_syn_align.isChecked(),
         }
 
     def _apply_config_state_to_main(self, state: dict) -> None:
@@ -8834,9 +9324,19 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_step_states()
 
     def _sync_live_preview_window_from_main(self) -> None:
+        state = self._collect_main_config_state()
+        if self.cmb_input_mode.currentIndex() == 1:
+            if self._live_preview_window_synthesis is None:
+                return
+            self._live_preview_window_synthesis.set_image_labels(self._get_image_labels())
+            self._live_preview_window_synthesis.set_state(state, include_pair=False)
+            role_images = {}
+            for role, label in state.get("syn_role_labels", {}).items():
+                role_images[role] = self._images.get(label) if label and label != "— None —" else None
+            self._live_preview_window_synthesis.set_role_images(role_images)
+            return
         if self._live_preview_window is None:
             return
-        state = self._collect_main_config_state()
         self._live_preview_window.set_image_labels(self._get_image_labels())
         self._live_preview_window.set_state(state, include_pair=True)
         self._update_live_preview_source_images(state.get("base_label"), state.get("compare_label"))
@@ -8861,6 +9361,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._apply_roi_visibility()
 
     def _update_preview_roi_hint(self) -> None:
+        if self.cmb_input_mode.currentIndex() == 1:
+            return
         if self._live_preview_window is None:
             return
         n = len(self._multi_roi_set)
@@ -8872,6 +9374,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             )
 
     def _ensure_preview_roi_manager(self) -> Optional[MultiROIManagerWidget]:
+        if self.cmb_input_mode.currentIndex() == 1:
+            return None
         if self._live_preview_window is None:
             return None
         if self._preview_roi_manager is None:
@@ -9084,7 +9588,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._live_manager.preview_error.connect(self._on_live_preview_error)
         self._live_manager.preview_started.connect(self._on_live_preview_started)
 
-    def _ensure_live_preview_window(self) -> LivePreviewWindow:
+    def _ensure_live_preview_window(self):
+        is_synthesis = self.cmb_input_mode.currentIndex() == 1
+        if is_synthesis:
+            if self._live_preview_window_synthesis is None:
+                self._live_preview_window_synthesis = SynthesisLivePreviewWindow(self)
+                self._live_preview_window_synthesis.preview_state_changed.connect(self._on_live_param_changed)
+                self._live_preview_window_synthesis.apply_to_main_requested.connect(self._on_live_preview_apply_requested)
+                self._live_preview_window_synthesis.reset_from_main_requested.connect(self._on_live_preview_reset_requested)
+                self._live_preview_window_synthesis.window_closed.connect(self._on_live_preview_window_closed)
+            return self._live_preview_window_synthesis
         if self._live_preview_window is None:
             self._live_preview_window = LivePreviewWindow(self)
             self._live_preview_window.preview_state_changed.connect(self._on_live_param_changed)
@@ -9290,13 +9803,16 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 self._live_manager.cancel()
             if self._live_preview_window is not None and self._live_preview_window.isVisible():
                 self._live_preview_window.close()
+            if self._live_preview_window_synthesis is not None and self._live_preview_window_synthesis.isVisible():
+                self._live_preview_window_synthesis.close()
             self.lbl_live_status.setText("")
 
     def _on_live_param_changed(self, is_align_change: bool = False) -> None:
         """Schedule preview rendering from the preview workspace state."""
         if not self._live_preview_enabled:
             return
-        if self._live_preview_window is None or not self._live_preview_window.isVisible():
+        win = self._live_preview_window_synthesis if self.cmb_input_mode.currentIndex() == 1 else self._live_preview_window
+        if win is None or not win.isVisible():
             return
         if self._compute_thread is not None:
             return
@@ -9304,26 +9820,36 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if is_align_change:
             self._alignment_cache.clear()
 
-        state = self._live_preview_window.current_state()
-        self._update_live_preview_source_images(
-            state.get("base_label"),
-            state.get("compare_label"),
-        )
-        self._live_preview_window.clear_diff_preview()
-        params = self._collect_preview_params(
-            base_label=state.get("base_label"),
-            compare_label=state.get("compare_label"),
-            settings=state,
-        )
+        state = win.current_state()
+        if self.cmb_input_mode.currentIndex() == 1:
+            role_images = {}
+            for role, label in state.get("syn_role_labels", {}).items():
+                role_images[role] = self._images.get(label) if label and label != "— None —" else None
+            win.set_role_images(role_images)
+            win.clear_diff_preview()
+            params = self._collect_synthesis_preview_params_from_state(state)
+            self._live_preview_cache_hit = False
+        else:
+            self._update_live_preview_source_images(
+                state.get("base_label"),
+                state.get("compare_label"),
+            )
+            win.clear_diff_preview()
+            params = self._collect_preview_params(
+                base_label=state.get("base_label"),
+                compare_label=state.get("compare_label"),
+                settings=state,
+            )
         if params is None:
             return
-        cache_key = self._alignment_cache.make_key(
-            params["base_label"],
-            params["compare_label"],
-            params["align_method"],
-            params["search_radius"],
-        )
-        self._live_preview_cache_hit = self._alignment_cache.get(cache_key) is not None
+        if params.get("mode") != "synthesis":
+            cache_key = self._alignment_cache.make_key(
+                params["base_label"],
+                params["compare_label"],
+                params["align_method"],
+                params["search_radius"],
+            )
+            self._live_preview_cache_hit = self._alignment_cache.get(cache_key) is not None
         self._live_preview_started_at = time.perf_counter()
         self._live_manager.schedule(params, is_align_change)
 
@@ -9399,26 +9925,34 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_preview_started(self) -> None:
         self.lbl_live_status.setText("Preview computing…")
-        if self._live_preview_window is not None:
-            self._live_preview_window.set_rendering_state("Rendering preview…", "computing")
+        win = self._live_preview_window_synthesis if self.cmb_input_mode.currentIndex() == 1 else self._live_preview_window
+        if win is not None:
+            win.set_rendering_state("Rendering preview…", "computing")
 
     def _on_live_preview_error(self, msg: str) -> None:
         self.lbl_live_status.setText("\u26a0 Preview error")
-        if self._live_preview_window is not None:
-            self._live_preview_window.set_rendering_state(f"Preview error: {msg}", "error")
+        win = self._live_preview_window_synthesis if self.cmb_input_mode.currentIndex() == 1 else self._live_preview_window
+        if win is not None:
+            win.set_rendering_state(f"Preview error: {msg}", "error")
         import logging
         logging.getLogger(__name__).warning("Live preview error: %s", msg)
 
-    def _on_live_preview_ready(self, result: SinglePairResult) -> None:
+    def _on_live_preview_ready(self, result) -> None:
         """Render preview output inside the independent preview workspace."""
-        if self._live_preview_window is None:
+        win = self._live_preview_window_synthesis if isinstance(result, SynthesisResult) else self._live_preview_window
+        if win is None:
             return
         latency_ms = None
         if self._live_preview_started_at is not None:
             latency_ms = (time.perf_counter() - self._live_preview_started_at) * 1000.0
-        base_img = self._images.get(result.base_label)
-        compare_img = result.aligned_compare if result.aligned_compare is not None else self._images.get(result.compare_label)
-        self._live_preview_window.update_preview(
+        if isinstance(result, SynthesisResult):
+            base_img = result.role_images_used.get("bse")
+            compare_img = result.result_image
+            self._update_syn_overall_preview(result.result_image)
+        else:
+            base_img = self._images.get(result.base_label)
+            compare_img = result.aligned_compare if result.aligned_compare is not None else self._images.get(result.compare_label)
+        win.update_preview(
             base_image=base_img,
             aligned_compare=compare_img,
             result=result,
@@ -9428,28 +9962,55 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.lbl_live_status.setText("Preview ready")
 
     def _on_live_preview_apply_requested(self, close_after: bool) -> None:
-        if self._live_preview_window is None:
+        is_synthesis = self.cmb_input_mode.currentIndex() == 1
+        win = self._live_preview_window_synthesis if is_synthesis else self._live_preview_window
+        if win is None:
             return
-        state = self._live_preview_window.current_state()
-        base_label = state.get("base_label")
-        compare_label = state.get("compare_label")
-        if base_label and base_label in self._images:
-            self.cmb_base.setCurrentText(base_label)
-            self._on_base_changed()
-        self._set_main_compare_selection(compare_label)
-        self._apply_config_state_to_main(state)
+        state = win.current_state()
+        if is_synthesis:
+            role_labels = state.get("syn_role_labels", {})
+            for role, cmb in self._syn_combos.items():
+                sel = role_labels.get(role, "— None —")
+                cmb.setCurrentText(sel if sel else "— None —")
+            self.cmb_syn_algorithm.setCurrentIndex(state.get("syn_algorithm_index", self.cmb_syn_algorithm.currentIndex()))
+            weight_values = state.get("syn_weight_values", {})
+            for role, slider in self._syn_weight_sliders.items():
+                slider.setValue(int(weight_values.get(role, slider.value())))
+            self.cmb_syn_shading_output.setCurrentIndex(state.get("syn_shading_output_index", self.cmb_syn_shading_output.currentIndex()))
+            self.spn_syn_light_angle.setValue(float(state.get("syn_light_angle", self.spn_syn_light_angle.value())))
+            self.chk_syn_invert_result.setChecked(bool(state.get("syn_invert_result", self.chk_syn_invert_result.isChecked())))
+            self.chk_syn_align.setChecked(bool(state.get("syn_align_to_bse", self.chk_syn_align.isChecked())))
+            self.cmb_align_method.setCurrentIndex(state.get("align_method_index", self.cmb_align_method.currentIndex()))
+            self.cmb_normalize_mode.setCurrentIndex(state.get("normalize_mode_index", self.cmb_normalize_mode.currentIndex()))
+            self.spn_glv_low.setValue(int(state.get("glv_low", self.spn_glv_low.value())))
+            self.spn_glv_high.setValue(int(state.get("glv_high", self.spn_glv_high.value())))
+            self._update_syn_grid_thumbnails()
+        else:
+            base_label = state.get("base_label")
+            compare_label = state.get("compare_label")
+            if base_label and base_label in self._images:
+                self.cmb_base.setCurrentText(base_label)
+                self._on_base_changed()
+            self._set_main_compare_selection(compare_label)
+            self._apply_config_state_to_main(state)
         self.lbl_live_status.setText("Preview settings applied to main")
-        self._live_preview_window.set_rendering_state("Applied to main window.", "applied")
+        win.set_rendering_state("Applied to main window.", "applied")
         if close_after:
             self.btn_live_preview.setChecked(False)
 
     def _on_live_preview_reset_requested(self) -> None:
         self._sync_live_preview_window_from_main()
-        if self._live_preview_window is not None:
-            self._live_preview_window.clear_preview()
+        if self.cmb_input_mode.currentIndex() == 1:
+            if self._live_preview_window_synthesis is not None:
+                self._live_preview_window_synthesis.clear_preview()
+        else:
+            if self._live_preview_window is not None:
+                self._live_preview_window.clear_preview()
         self._on_live_param_changed(False)
 
     def _on_live_preview_open_roi_manager(self) -> None:
+        if self.cmb_input_mode.currentIndex() == 1:
+            return
         if self._live_preview_window is None:
             return
         manager = self._ensure_preview_roi_manager()
@@ -10236,6 +10797,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.lbl_live_badge.setVisible(False)
 
         self._update_current_result()
+        self._update_syn_overall_preview(result.result_image)
         self._update_navigation()
         self.btn_export.setEnabled(True)
 
@@ -10376,12 +10938,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self.lbl_adv_badge.setVisible(False)
             return
         norm_labels = ["Percentile", "GLV-Mask", "Skip", "ROI-Match"]
-        sub_labels   = ["|diff|×2", "|diff|", "clip≥0"]
         align_labels = ["Phase", "NCC", "ECC", "Tmpl"]
         norm  = norm_labels[min(self.cmb_normalize_mode.currentIndex(),  len(norm_labels)  - 1)]
-        sub   = sub_labels  [min(self.cmb_subtract_mode.currentIndex(),  len(sub_labels)   - 1)]
         align = align_labels[min(self.cmb_align_method.currentIndex(),   len(align_labels) - 1)]
-        self.lbl_adv_badge.setText(f"Norm: {norm}  ·  {sub}  ·  Align: {align}")
+        is_synthesis = (self.cmb_input_mode.currentIndex() == 1)
+        if is_synthesis:
+            algo = "Weighted" if self.cmb_syn_algorithm.currentIndex() == 0 else "Shading"
+            self.lbl_adv_badge.setText(f"Norm: {norm}  ·  Algo: {algo}  ·  Align: {align}")
+        else:
+            sub_labels = ["|diff|×2", "|diff|", "clip≥0"]
+            sub = sub_labels[min(self.cmb_subtract_mode.currentIndex(), len(sub_labels) - 1)]
+            self.lbl_adv_badge.setText(f"Norm: {norm}  ·  {sub}  ·  Align: {align}")
         self.lbl_adv_badge.setVisible(True)
 
     def _update_step_states(self):
@@ -10401,13 +10968,26 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _SKIP_STATUS  = "font-size: 13px; color: #9CA3AF; background: transparent; border: none;"
         _PEND_STATUS  = "font-size: 13px; color: #D1D5DB; background: transparent; border: none;"
 
-        # ── Step 1: base selected + at least one compare checked ────────────
-        base_ok     = bool(self.cmb_base.currentText())
-        compare_ok  = any(
-            chk.isChecked() and chk.isEnabled()
-            for chk in self._compare_checkboxes
-        ) if hasattr(self, '_compare_checkboxes') else False
-        step1_done  = base_ok and compare_ok
+        is_synthesis = (self.cmb_input_mode.currentIndex() == 1)
+        if is_synthesis:
+            role_labels = {
+                role: cmb.currentText()
+                for role, cmb in self._syn_combos.items()
+            } if hasattr(self, "_syn_combos") else {}
+            bse_ok = bool(role_labels.get("bse")) and role_labels.get("bse") != "— None —"
+            non_bse_ok = any(
+                (role != "bse") and bool(label) and label != "— None —"
+                for role, label in role_labels.items()
+            )
+            step1_done = bse_ok and non_bse_ok
+        else:
+            # ── Step 1 (Standard): base selected + at least one compare checked ─
+            base_ok = bool(self.cmb_base.currentText())
+            compare_ok = any(
+                chk.isChecked() and chk.isEnabled()
+                for chk in self._compare_checkboxes
+            ) if hasattr(self, '_compare_checkboxes') else False
+            step1_done = base_ok and compare_ok
         self._step1_circle.setStyleSheet(_DONE_CIRCLE if step1_done else _PEND_CIRCLE)
         self._step1_status.setText("✓" if step1_done else "")
         self._step1_status.setStyleSheet(_DONE_STATUS if step1_done else _PEND_STATUS)
