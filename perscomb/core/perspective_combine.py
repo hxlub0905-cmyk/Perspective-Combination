@@ -58,25 +58,74 @@ class SinglePairResult:
 @dataclass
 class CombineResult:
     """Result of perspective combination operation."""
-    
+
     diff_image: np.ndarray          # Normalized difference map (0-255 uint8)
     snr_map: np.ndarray             # Local SNR highlighting (0-255 uint8)
     histogram: Tuple[np.ndarray, np.ndarray]  # (counts, bin_edges)
     alignments: List[AlignResult]   # Alignment results for each compare image
     stats: Dict[str, float]         # Statistical metrics
     blended_image: np.ndarray       # Average of aligned compare images
-    
+
     @property
     def overall_alignment_ok(self) -> bool:
         """Check if all alignments are acceptable."""
         return all(a.status in ('ok', 'warn') for a in self.alignments)
-    
+
     @property
     def worst_alignment_score(self) -> float:
         """Return the lowest alignment score."""
         if not self.alignments:
             return 0.0
         return min(a.final_score for a in self.alignments)
+
+
+# Role keys for multi-image synthesis (spatial meaning for shading algorithm)
+SYNTHESIS_ROLES = ("bse", "top", "bottom", "left", "right")
+
+
+@dataclass
+class SynthesisResult:
+    """Result of multi-image synthesis (BSE illuminator + up to 4 directional SE images).
+
+    Fields mirror SinglePairResult so existing display code works without
+    modification. Algorithm-specific data lives in the extra fields below.
+    """
+
+    # --- SinglePairResult-compatible fields ---
+    base_label: str                  # BSE image label (anchor)
+    compare_label: str               # Algorithm tag, e.g. "Weighted Blend"
+    operation: str                   # Always "synthesis"
+    result_image: np.ndarray         # Final uint8 synthesized image
+    snr_map: np.ndarray              # Local SNR map (0-255 uint8)
+    histogram: Tuple[np.ndarray, np.ndarray]
+    alignment: AlignResult           # Summary / dummy alignment for display
+    stats: Dict[str, float]
+
+    # --- Synthesis-specific fields ---
+    algorithm: str                           # "weighted" | "shading"
+    per_role_alignments: Dict[str, AlignResult]   # role → AlignResult (empty when no align)
+    role_images_used: Dict[str, np.ndarray]  # role → original uint8 image
+    aligned_roles: Dict[str, np.ndarray]     # role → aligned uint8 image
+
+    # Optional shading sub-maps (populated for algorithm="shading")
+    shading_maps: Optional[Dict[str, np.ndarray]] = None
+
+    # --- SinglePairResult compatibility stubs ---
+    blend_alpha: float = 0.5
+    blend_beta: float = 0.5
+    norm_a: float = 1.0
+    norm_b: float = 0.0
+    normalize_method: str = 'percentile'
+    normalized_compare: Optional[np.ndarray] = None
+    aligned_compare: Optional[np.ndarray] = None   # BSE image (for Split View)
+    defect_rois: List = field(default_factory=list)
+    roi_match_alpha: Optional[float] = None
+
+    @property
+    def alignment_ok(self) -> bool:
+        if self.per_role_alignments:
+            return all(a.status in ('ok', 'warn') for a in self.per_role_alignments.values())
+        return True
 
 
 def _normalize_image(img: np.ndarray) -> np.ndarray:
@@ -1766,9 +1815,299 @@ def compute_quadrant_fusion(
     )
 
 
+def _make_dummy_align() -> AlignResult:
+    """Return a no-op AlignResult used when alignment is skipped."""
+    return AlignResult(
+        dx=0, dy=0,
+        score_phase=1.0, score_ncc=1.0, score_residual=1.0,
+        final_score=100.0,
+        status='ok', method='none',
+        dx_subpixel=0.0, dy_subpixel=0.0,
+    )
+
+
+def _normalize_for_synthesis(
+    img: np.ndarray,
+    anchor_p2: float,
+    anchor_p98: float,
+    normalize_method: str,
+    glv_range: Optional[Tuple[int, int]],
+) -> np.ndarray:
+    """Normalize *img* to [0, 1] float32 anchored to the provided percentile range.
+
+    For 'skip' mode the image is simply divided by 255.  For all other modes
+    the P2/P98 of the *anchor* image (BSE) is used so every input lives on the
+    same intensity axis before blending.
+    """
+    f = img.astype(np.float32)
+    if normalize_method == 'skip':
+        return np.clip(f / 255.0, 0.0, 1.0)
+    # percentile / glv_mask / roi_match all use the anchor range
+    rng = anchor_p98 - anchor_p2
+    if rng < 1e-6:
+        rng = 1.0
+    return np.clip((f - anchor_p2) / rng, 0.0, 1.0)
+
+
+def compute_multi_synthesis(
+    role_images: Dict[str, Optional[np.ndarray]],
+    algorithm: str = "weighted",
+    weights: Optional[Dict[str, float]] = None,
+    shading_output: str = "topo",
+    light_angle_deg: float = 135.0,
+    normalize_method: str = "percentile",
+    glv_range: Optional[Tuple[int, int]] = None,
+    invert_result: bool = False,
+    align_to_bse: bool = False,
+    alignment_method: str = "phase",
+    snr_window_size: int = 31,
+    skip_snr_map: bool = False,
+    roi_set=None,
+) -> SynthesisResult:
+    """Synthesize BSE + up to 4 directional SE images into a single output.
+
+    Parameters
+    ----------
+    role_images : Dict with keys from SYNTHESIS_ROLES ("bse","top","bottom","left","right").
+        Values may be None for roles that are not assigned.
+    algorithm : "weighted" for weighted linear blend, "shading" for directional
+        topography/relief synthesis (uses compute_quadrant_fusion internally).
+    weights : Per-role blend weights for "weighted" algorithm.  Roles absent or
+        set to 0 are excluded.  Weights are auto-normalised to sum to 1.
+    shading_output : Output map for "shading" algorithm.
+        "topo"       — gradient-magnitude topography map
+        "bse_clean"  — BSE with topographic component removed
+        "composite"  — bse_clean + weighted topo overlay
+        "relief"     — 2-D shading relief (single light-direction shadow)
+    light_angle_deg : Light direction in degrees (0=right, 90=up, 135=upper-left).
+        Only used when shading_output="relief".
+    normalize_method : "percentile" | "glv_mask" | "skip" | "roi_match".
+        Anchored to BSE image statistics.
+    glv_range : (low, high) pixel range for "glv_mask" normalization.
+    invert_result : Apply 255 - result to the final output.
+    align_to_bse : Align each SE image to BSE before synthesis.
+    alignment_method : Alignment algorithm when align_to_bse=True.
+    snr_window_size : Box-filter window for SNR map.
+    skip_snr_map : Skip SNR map computation (fast path for live preview).
+    roi_set : Not used currently; reserved for future ROI-anchored normalization.
+
+    Returns
+    -------
+    SynthesisResult
+    """
+    eps = 1e-7
+
+    # ── 1. Collect present (non-None) role images ────────────────────────────
+    present: Dict[str, np.ndarray] = {
+        role: img for role, img in role_images.items()
+        if img is not None and role in SYNTHESIS_ROLES
+    }
+
+    if "bse" not in present:
+        raise ValueError("BSE (illuminator) image is required for synthesis.")
+    if len(present) < 2:
+        raise ValueError("At least 2 images (BSE + one SE) are required for synthesis.")
+
+    bse_img = present["bse"]
+    h, w = bse_img.shape[:2]
+
+    # ── 2. Anchor normalization to BSE statistics ─────────────────────────────
+    bse_f = bse_img.astype(np.float32)
+    if normalize_method == 'glv_mask' and glv_range is not None:
+        anchor_p2, anchor_p98 = _percentile_range_glv_masked(
+            bse_f, glv_range[0], glv_range[1]
+        )
+    elif normalize_method == 'skip':
+        anchor_p2, anchor_p98 = 0.0, 255.0
+    else:
+        anchor_p2, anchor_p98 = _percentile_range(bse_f)
+
+    # ── 3. Optional alignment of SE images to BSE ─────────────────────────────
+    per_role_alignments: Dict[str, AlignResult] = {}
+    aligned_roles: Dict[str, np.ndarray] = {}
+
+    for role, img in present.items():
+        if role == "bse":
+            aligned_roles["bse"] = img
+            continue
+        if align_to_bse:
+            align_res = _calculate_alignment(bse_img, img, alignment_method, search_radius=50)
+            aligned = _apply_alignment(
+                img.astype(np.float32),
+                align_res.dx_subpixel if align_res.dx_subpixel else align_res.dx,
+                align_res.dy_subpixel if align_res.dy_subpixel else align_res.dy,
+            )
+            aligned_roles[role] = np.clip(aligned, 0, 255).astype(np.uint8)
+            per_role_alignments[role] = align_res
+        else:
+            aligned_roles[role] = img
+
+    # ── 4. Normalize all aligned images to [0, 1] ────────────────────────────
+    norm_roles: Dict[str, np.ndarray] = {}
+    for role, img in aligned_roles.items():
+        norm_roles[role] = _normalize_for_synthesis(
+            img, anchor_p2, anchor_p98, normalize_method, glv_range
+        )
+
+    # ── 5. Synthesis ──────────────────────────────────────────────────────────
+    shading_maps_out: Optional[Dict[str, np.ndarray]] = None
+
+    if algorithm == "weighted":
+        # Default weights: equal across present images
+        if weights is None:
+            weights = {role: 1.0 for role in norm_roles}
+        w_sum = sum(weights.get(role, 0.0) for role in norm_roles)
+        if w_sum < eps:
+            w_sum = 1.0
+
+        result_f = np.zeros((h, w), dtype=np.float32)
+        for role, norm_img in norm_roles.items():
+            wt = weights.get(role, 0.0)
+            if wt > 0:
+                result_f += wt * norm_img
+        result_f /= w_sum
+        result_f = np.clip(result_f, 0.0, 1.0)
+
+    elif algorithm == "shading":
+        # Build Gx and Gy from directional SE pairs (or zero if pair incomplete)
+        left_n = norm_roles.get("left")
+        right_n = norm_roles.get("right")
+        top_n = norm_roles.get("top")
+        bottom_n = norm_roles.get("bottom")
+        bse_n = norm_roles["bse"]
+
+        if left_n is not None and right_n is not None:
+            gx = right_n - left_n
+        elif right_n is not None:
+            gx = right_n - bse_n
+        elif left_n is not None:
+            gx = bse_n - left_n
+        else:
+            gx = np.zeros((h, w), dtype=np.float32)
+
+        if top_n is not None and bottom_n is not None:
+            gy = top_n - bottom_n
+        elif top_n is not None:
+            gy = top_n - bse_n
+        elif bottom_n is not None:
+            gy = bse_n - bottom_n
+        else:
+            gy = np.zeros((h, w), dtype=np.float32)
+
+        topo = np.sqrt(gx * gx + gy * gy + eps)
+
+        # BSE-clean: least-squares α to nullify topographic contribution
+        topo_sq = float(np.sum(topo * topo))
+        if topo_sq > eps:
+            alpha_fit = float(np.sum(bse_n * topo)) / topo_sq
+        else:
+            alpha_fit = 0.0
+        alpha_fit = float(np.clip(alpha_fit, 0.0, 5.0))
+        bse_clean = bse_n - alpha_fit * topo
+
+        # Composite: bse_clean + 0.4 × topo
+        beta_comp = 0.4
+        composite = bse_clean + beta_comp * topo
+
+        # Relief: single-direction shading
+        angle_rad = np.deg2rad(light_angle_deg)
+        relief = gx * np.cos(angle_rad) + gy * np.sin(angle_rad)
+
+        # Build uint8 sub-maps
+        def _to_u8(arr: np.ndarray) -> np.ndarray:
+            return _percentile_to_uint8(arr)
+
+        shading_maps_out = {
+            "topo": _to_u8(topo),
+            "bse_clean": _to_u8(bse_clean),
+            "composite": _to_u8(composite),
+            "relief": _to_u8(relief),
+            "gx": _to_u8(gx),
+            "gy": _to_u8(gy),
+        }
+
+        chosen = shading_maps_out.get(shading_output, shading_maps_out["topo"])
+        result_f = chosen.astype(np.float32) / 255.0
+
+    else:
+        raise ValueError(f"Unknown synthesis algorithm: {algorithm!r}. Use 'weighted' or 'shading'.")
+
+    # ── 6. Invert result ──────────────────────────────────────────────────────
+    if invert_result:
+        result_f = 1.0 - result_f
+
+    result_u8 = np.clip(result_f * 255.0, 0, 255).astype(np.uint8)
+
+    # ── 7. SNR map ────────────────────────────────────────────────────────────
+    if skip_snr_map:
+        snr_map = np.zeros_like(result_u8)
+    else:
+        border = 16
+        snr_map, _ = compute_snr_map(result_u8, window_size=snr_window_size,
+                                     exclude_border=border)
+
+    # ── 8. Histogram & stats ──────────────────────────────────────────────────
+    counts, edges = np.histogram(result_u8.flatten(), bins=256, range=(0, 256))
+    hist = (counts, edges)
+
+    result_f_full = result_u8.astype(np.float32)
+    stats: Dict[str, float] = {
+        "diff_mean": float(result_f_full.mean() / 255.0),
+        "diff_std": float(result_f_full.std() / 255.0),
+        "diff_max": float(result_f_full.max() / 255.0),
+        "diff_min": float(result_f_full.min() / 255.0),
+        "hot_pixels": int(np.sum(result_u8 >= np.percentile(result_u8, 95))),
+        "dx_subpixel": 0.0,
+        "dy_subpixel": 0.0,
+        "alignment_score": 100.0,
+        "snr_peak": float(snr_map.max()) / 255.0 if not skip_snr_map else 0.0,
+    }
+
+    # ── 9. Summary alignment (for display compatibility) ─────────────────────
+    if per_role_alignments:
+        # Summarise: pick worst-score alignment across all SE roles
+        worst = min(per_role_alignments.values(), key=lambda a: a.final_score)
+        summary_align = worst
+    else:
+        summary_align = _make_dummy_align()
+
+    # ── 10. Build result ──────────────────────────────────────────────────────
+    # Use BSE image as aligned_compare so split-view shows BSE side-by-side with result
+    bse_for_split = aligned_roles["bse"]
+
+    algo_labels = {"weighted": "Weighted Blend", "shading": "Directional Shading"}
+    compare_label = algo_labels.get(algorithm, algorithm)
+    if algorithm == "shading":
+        shading_label = {
+            "topo": "Topo", "bse_clean": "BSE-Clean",
+            "composite": "Composite", "relief": "Relief",
+        }
+        compare_label += f" ({shading_label.get(shading_output, shading_output)})"
+
+    return SynthesisResult(
+        base_label="BSE",
+        compare_label=compare_label,
+        operation="synthesis",
+        algorithm=algorithm,
+        result_image=result_u8,
+        snr_map=snr_map,
+        histogram=hist,
+        alignment=summary_align,
+        stats=stats,
+        per_role_alignments=per_role_alignments,
+        role_images_used={role: img for role, img in present.items()},
+        aligned_roles=aligned_roles,
+        shading_maps=shading_maps_out,
+        normalize_method=normalize_method,
+        aligned_compare=bse_for_split,
+    )
+
+
 __all__ = [
     'CombineResult',
     'SinglePairResult',
+    'SynthesisResult',
+    'SYNTHESIS_ROLES',
     'OperationType',
     'DefectROI',
     'PCAFusionResult',
@@ -1778,6 +2117,7 @@ __all__ = [
     'compute_multi_pairs',
     'compute_pca_fusion',
     'compute_quadrant_fusion',
+    'compute_multi_synthesis',
     'compute_snr_map',
     'colorize_snr_map',
     'segment_defects',
