@@ -23,7 +23,12 @@ import numpy as np
 from PySide6 import QtCore
 from PySide6.QtCore import Signal
 
-from ..core.perspective_combine import compute_single_pair, SinglePairResult
+from ..core.perspective_combine import (
+    compute_single_pair,
+    compute_multi_synthesis,
+    SinglePairResult,
+    SynthesisResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -97,14 +102,18 @@ class _PreviewWorker(QtCore.QObject):
 class LivePreviewManager(QtCore.QObject):
     """Debounced live-preview orchestrator (main-thread QObject).
 
+    Supports both Pair mode (compute_single_pair) and Synthesis mode
+    (compute_multi_synthesis).  The mode is determined by the 'mode' key in
+    the params dict: 'pair' (default) or 'synthesis'.
+
     Signals
     -------
-    preview_ready(SinglePairResult)  — emitted when a preview finishes.
-    preview_error(str)               — emitted on computation error.
-    preview_started()                — emitted just before thread starts.
+    preview_ready(object)   — emitted with SinglePairResult or SynthesisResult.
+    preview_error(str)      — emitted on computation error.
+    preview_started()       — emitted just before thread starts.
     """
 
-    preview_ready = Signal(object)   # SinglePairResult
+    preview_ready = Signal(object)   # SinglePairResult | SynthesisResult
     preview_error = Signal(str)
     preview_started = Signal()
 
@@ -169,7 +178,33 @@ class LivePreviewManager(QtCore.QObject):
         params = self._pending_params
         self._pending_params = None
 
-        # Resolve cache
+        mode = params.get("mode", "pair")
+
+        if mode == "synthesis":
+            _run = self._build_synthesis_run(params)
+        else:
+            _run = self._build_pair_run(params)
+
+        # Spin up background thread
+        thread = QtCore.QThread()
+        worker = _PreviewWorker(_run)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_worker_finished)
+        worker.error.connect(self._on_worker_error)
+        worker.finished.connect(lambda _: thread.quit())
+        worker.error.connect(lambda _: thread.quit())
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_thread_done)
+
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+        self.preview_started.emit()
+
+    def _build_pair_run(self, params: dict):
+        """Build the _run closure for standard Pair mode."""
         cache_key = self._cache.make_key(
             params["base_label"],
             params["compare_label"],
@@ -179,7 +214,7 @@ class LivePreviewManager(QtCore.QObject):
         cached = self._cache.get(cache_key)
         pre_aligned = cached[0] if cached is not None else None
         pre_alignment = cached[1] if cached is not None else None
-        cache = self._cache  # capture for closure
+        cache = self._cache
 
         def _run() -> SinglePairResult:
             result = compute_single_pair(
@@ -205,33 +240,35 @@ class LivePreviewManager(QtCore.QObject):
                 roi_rect=params.get("roi_rect"),
                 roi_set=params.get("roi_set"),
                 roi_match=params.get("roi_match", False),
-                # Live-preview optimisations
                 skip_snr_map=True,
                 pre_aligned_compare=pre_aligned,
                 pre_alignment_result=pre_alignment,
             )
-            # Populate cache when alignment was freshly computed
             if pre_aligned is None and result.aligned_compare is not None:
                 cache.store(cache_key, result.aligned_compare, result.alignment)
             return result
 
-        # Spin up background thread
-        thread = QtCore.QThread()
-        worker = _PreviewWorker(_run)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_worker_finished)
-        worker.error.connect(self._on_worker_error)
-        worker.finished.connect(lambda _: thread.quit())
-        worker.error.connect(lambda _: thread.quit())
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._on_thread_done)
+        return _run
 
-        self._thread = thread
-        self._worker = worker
-        thread.start()
-        self.preview_started.emit()
+    def _build_synthesis_run(self, params: dict):
+        """Build the _run closure for Multi-Image Synthesis mode."""
+        def _run() -> SynthesisResult:
+            return compute_multi_synthesis(
+                role_images=params["role_images"],
+                algorithm=params["algorithm"],
+                weights=params.get("weights"),
+                shading_output=params.get("shading_output", "topo"),
+                light_angle_deg=params.get("light_angle_deg", 135.0),
+                normalize_method=params.get("normalize_method", "percentile"),
+                glv_range=params.get("glv_range"),
+                invert_result=params.get("invert_result", False),
+                align_to_bse=params.get("align_to_bse", False),
+                alignment_method=params.get("align_method", "phase"),
+                snr_window_size=params.get("snr_window_size", 31),
+                skip_snr_map=True,
+            )
+
+        return _run
 
     def _on_worker_finished(self, result: SinglePairResult) -> None:
         self.preview_ready.emit(result)

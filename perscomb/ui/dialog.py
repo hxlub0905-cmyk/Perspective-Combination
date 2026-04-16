@@ -27,11 +27,14 @@ from ..core.perspective_combine import (
     compute_single_pair,
     compute_multi_pairs,
     compute_quadrant_fusion,
+    compute_multi_synthesis,
     compute_roi_full_stats,
     colorize_snr_map,
     CombineResult,
     SinglePairResult,
+    SynthesisResult,
     QuadrantFusionResult,
+    SYNTHESIS_ROLES,
 )
 from ..core.roi_set import MultiROISet, NamedROI, ROIFullResult
 
@@ -6873,11 +6876,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         lbl_mode.setStyleSheet(f"font-weight: {Typography.FONT_WEIGHT_SEMIBOLD}; color: {UI_TEXT_PRIMARY_STRONG};")
         input_layout.addWidget(lbl_mode)
 
-        # Input mode (Standard only; Quadrant Fusion removed)
+        # Input mode selector
         self.cmb_input_mode = QtWidgets.QComboBox()
-        self.cmb_input_mode.addItems(["Standard (Base/Compare)"])
+        self.cmb_input_mode.addItems([
+            "Standard (Base/Compare)",
+            "Multi-Image Synthesis",
+        ])
         self.cmb_input_mode.setToolTip(
-            "Classic Base vs Compare subtract/blend workflow."
+            "Standard: Classic Base vs Compare subtract/blend workflow.\n"
+            "Multi-Image Synthesis: Combine BSE + up to 4 directional SE images."
         )
         input_layout.addWidget(self.cmb_input_mode)
 
@@ -6965,6 +6972,51 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_swap_base.setToolTip("Swap base image with compare image selection")
 
         input_layout.addWidget(self.wgt_standard_select)
+
+        # ── Multi-Image Synthesis mode widgets ────────────────────────────────
+        self.wgt_synthesis_select = QtWidgets.QWidget()
+        syn_sel_layout = QtWidgets.QVBoxLayout(self.wgt_synthesis_select)
+        syn_sel_layout.setContentsMargins(0, 4, 0, 0)
+        syn_sel_layout.setSpacing(6)
+        self.wgt_synthesis_select.setVisible(False)
+
+        # Helper: create one role row (label + combo)
+        _ROLE_DISPLAY = {
+            "bse":    "BSE Center",
+            "top":    "SE Top",
+            "bottom": "SE Bottom",
+            "left":   "SE Left",
+            "right":  "SE Right",
+        }
+        self._syn_combos: Dict[str, QtWidgets.QComboBox] = {}
+        for role in SYNTHESIS_ROLES:
+            row = QtWidgets.QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+            lbl_r = QtWidgets.QLabel(_ROLE_DISPLAY[role])
+            lbl_r.setFixedWidth(76)
+            lbl_r.setStyleSheet(
+                f"font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};"
+            )
+            row.addWidget(lbl_r)
+            cmb_r = QtWidgets.QComboBox()
+            cmb_r.addItem("— None —")
+            cmb_r.setToolTip(f"Assign an image to the {_ROLE_DISPLAY[role]} role")
+            row.addWidget(cmb_r, 1)
+            syn_sel_layout.addLayout(row)
+            self._syn_combos[role] = cmb_r
+
+        # Auto-detect button
+        self.btn_syn_auto_detect = QtWidgets.QPushButton("Auto-detect roles")
+        self.btn_syn_auto_detect.setProperty("role", "secondary")
+        self.btn_syn_auto_detect.setFixedHeight(26)
+        self.btn_syn_auto_detect.setToolTip(
+            "Attempt to assign images automatically based on filename keywords\n"
+            "(BSE/Illum, Top/Up, Bottom/Down, Left, Right)."
+        )
+        syn_sel_layout.addWidget(self.btn_syn_auto_detect)
+
+        input_layout.addWidget(self.wgt_synthesis_select)
 
         # --- PAIRING section ---
         card_pairing, pairing_layout = _make_sidebar_card("PAIRING")
@@ -7219,6 +7271,118 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         operation_card_layout.addWidget(self.grp_op)
 
+        # ── Synthesis algorithm settings (hidden in Standard mode) ────────────
+        self.grp_syn_op = QtWidgets.QWidget()
+        syn_op_layout = QtWidgets.QVBoxLayout(self.grp_syn_op)
+        syn_op_layout.setContentsMargins(0, 4, 0, 0)
+        syn_op_layout.setSpacing(6)
+        self.grp_syn_op.setVisible(False)
+
+        # Algorithm selector
+        syn_op_layout.addWidget(QtWidgets.QLabel("Algorithm"))
+        self.cmb_syn_algorithm = QtWidgets.QComboBox()
+        self.cmb_syn_algorithm.addItems(["Weighted Blend", "Directional Shading"])
+        self.cmb_syn_algorithm.setToolTip(
+            "Weighted Blend: weighted sum of all assigned images.\n"
+            "Directional Shading: extracts topography and material contrast\n"
+            "  using the directional asymmetry of SE signals."
+        )
+        syn_op_layout.addWidget(self.cmb_syn_algorithm)
+
+        # ── Weighted Blend settings ───────────────────────────────────────────
+        self.grp_syn_weights = QtWidgets.QWidget()
+        syn_w_layout = QtWidgets.QVBoxLayout(self.grp_syn_weights)
+        syn_w_layout.setContentsMargins(0, 4, 0, 0)
+        syn_w_layout.setSpacing(4)
+
+        _ROLE_DISPLAY_SHORT = {
+            "bse": "BSE", "top": "Top", "bottom": "Bot",
+            "left": "Left", "right": "Right",
+        }
+        self._syn_weight_sliders: Dict[str, QtWidgets.QSlider] = {}
+        self._syn_weight_labels: Dict[str, QtWidgets.QLabel] = {}
+        for role in SYNTHESIS_ROLES:
+            wrow = QtWidgets.QHBoxLayout()
+            wrow.setContentsMargins(0, 0, 0, 0)
+            wrow.setSpacing(4)
+            lbl_wr = QtWidgets.QLabel(_ROLE_DISPLAY_SHORT[role])
+            lbl_wr.setFixedWidth(30)
+            lbl_wr.setStyleSheet(f"font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};")
+            wrow.addWidget(lbl_wr)
+            sld = QtWidgets.QSlider(Qt.Horizontal)
+            sld.setRange(0, 100)
+            sld.setValue(50 if role == "bse" else 25)
+            wrow.addWidget(sld, 1)
+            val_lbl = QtWidgets.QLabel(f"{sld.value():3d}")
+            val_lbl.setFixedWidth(24)
+            val_lbl.setStyleSheet(
+                f"font-family: {Typography.FONT_FAMILY_MONO}; font-size: {Typography.FONT_SIZE_SMALL};"
+            )
+            wrow.addWidget(val_lbl)
+            syn_w_layout.addLayout(wrow)
+            self._syn_weight_sliders[role] = sld
+            self._syn_weight_labels[role] = val_lbl
+            sld.valueChanged.connect(
+                lambda v, lbl=val_lbl: lbl.setText(f"{v:3d}")
+            )
+
+        chk_norm_w = QtWidgets.QCheckBox("Auto-normalize weights")
+        chk_norm_w.setChecked(True)
+        chk_norm_w.setToolTip("Normalize weights to sum to 1 before blending")
+        syn_w_layout.addWidget(chk_norm_w)
+        self.chk_syn_normalize_weights = chk_norm_w
+
+        syn_op_layout.addWidget(self.grp_syn_weights)
+
+        # ── Directional Shading settings ──────────────────────────────────────
+        self.grp_syn_shading = QtWidgets.QWidget()
+        syn_sh_layout = QtWidgets.QVBoxLayout(self.grp_syn_shading)
+        syn_sh_layout.setContentsMargins(0, 4, 0, 0)
+        syn_sh_layout.setSpacing(4)
+        self.grp_syn_shading.setVisible(False)
+
+        syn_sh_layout.addWidget(QtWidgets.QLabel("Output map"))
+        self.cmb_syn_shading_output = QtWidgets.QComboBox()
+        self.cmb_syn_shading_output.addItems([
+            "Topography (|∇|)",
+            "BSE-Clean (material contrast)",
+            "Composite (BSE + Topo)",
+            "Shading Relief (directional)",
+        ])
+        self.cmb_syn_shading_output.setToolTip(
+            "Topography: gradient magnitude — surface height variation.\n"
+            "BSE-Clean: BSE with topographic component removed.\n"
+            "Composite: BSE-Clean + weighted Topo overlay.\n"
+            "Shading Relief: single-direction light shadow (like terrain map)."
+        )
+        syn_sh_layout.addWidget(self.cmb_syn_shading_output)
+
+        # Light angle (for Shading Relief)
+        self.grp_syn_light = QtWidgets.QWidget()
+        sh_light_row = QtWidgets.QHBoxLayout(self.grp_syn_light)
+        sh_light_row.setContentsMargins(0, 0, 0, 0)
+        sh_light_row.setSpacing(6)
+        sh_light_row.addWidget(QtWidgets.QLabel("Light angle"))
+        self.spn_syn_light_angle = QtWidgets.QSpinBox()
+        self.spn_syn_light_angle.setRange(0, 359)
+        self.spn_syn_light_angle.setValue(135)
+        self.spn_syn_light_angle.setSuffix("°")
+        self.spn_syn_light_angle.setToolTip(
+            "Direction of simulated light (0°=right, 90°=up, 135°=upper-left).\n"
+            "Only used when Output map is Shading Relief."
+        )
+        sh_light_row.addWidget(self.spn_syn_light_angle)
+        syn_sh_layout.addWidget(self.grp_syn_light)
+
+        syn_op_layout.addWidget(self.grp_syn_shading)
+
+        # Invert result (shared)
+        self.chk_syn_invert_result = QtWidgets.QCheckBox("Invert result")
+        self.chk_syn_invert_result.setToolTip("Apply 255 − result to the final output")
+        syn_op_layout.addWidget(self.chk_syn_invert_result)
+
+        operation_card_layout.addWidget(self.grp_syn_op)
+
         # --- ALIGNMENT section ---
         card_alignment, alignment_card_layout = _make_sidebar_card("ALIGNMENT")
         left_layout.addWidget(card_alignment)
@@ -7254,6 +7418,23 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         snr_win_row.addWidget(self.spn_snr_window)
         align_layout.addLayout(snr_win_row)
         alignment_card_layout.addWidget(self.grp_align)
+
+        # ── Synthesis alignment toggle (visible only in Synthesis mode) ────────
+        self.grp_syn_align = QtWidgets.QWidget()
+        syn_align_layout = QtWidgets.QVBoxLayout(self.grp_syn_align)
+        syn_align_layout.setContentsMargins(0, 4, 0, 0)
+        syn_align_layout.setSpacing(4)
+        self.grp_syn_align.setVisible(False)
+
+        self.chk_syn_align = QtWidgets.QCheckBox("Align SE images to BSE")
+        self.chk_syn_align.setChecked(False)
+        self.chk_syn_align.setToolTip(
+            "Align each SE image to the BSE (center) image before synthesis.\n"
+            "Leave unchecked if images were captured simultaneously on the same\n"
+            "scan field (they are already in registration)."
+        )
+        syn_align_layout.addWidget(self.chk_syn_align)
+        alignment_card_layout.addWidget(self.grp_syn_align)
 
         left_layout.addStretch()
 
@@ -7408,6 +7589,54 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
         self.stk_blend.addWidget(self.img_blend)  # index 1 split view
+
+        # index 2: 5-grid preview for Multi-Image Synthesis mode
+        self.wgt_syn_grid = QtWidgets.QWidget()
+        self.wgt_syn_grid.setStyleSheet(f"background: {UI_BG_VIEWER};")
+        syn_grid_outer = QtWidgets.QVBoxLayout(self.wgt_syn_grid)
+        syn_grid_outer.setContentsMargins(4, 4, 4, 4)
+        syn_grid_outer.setSpacing(2)
+
+        # 3×3 grid with thumbnails in physical positions
+        self._syn_grid_layout = QtWidgets.QGridLayout()
+        self._syn_grid_layout.setSpacing(3)
+        self._syn_thumb_labels: Dict[str, QtWidgets.QLabel] = {}
+        _GRID_POS = {   # role → (row, col)
+            "bse": (1, 1), "top": (0, 1), "bottom": (2, 1),
+            "left": (1, 0), "right": (1, 2),
+        }
+        _ROLE_DISPLAY_GRID = {
+            "bse": "BSE", "top": "Top", "bottom": "Bot",
+            "left": "Left", "right": "Right",
+        }
+        for role, (row, col) in _GRID_POS.items():
+            cell = QtWidgets.QWidget()
+            cell.setStyleSheet(
+                "background: #1F2937; border-radius: 4px;"
+            )
+            cell_layout = QtWidgets.QVBoxLayout(cell)
+            cell_layout.setContentsMargins(2, 2, 2, 2)
+            cell_layout.setSpacing(2)
+            img_lbl = QtWidgets.QLabel()
+            img_lbl.setAlignment(Qt.AlignCenter)
+            img_lbl.setStyleSheet("background: transparent; border: none;")
+            img_lbl.setMinimumSize(80, 80)
+            img_lbl.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+            )
+            role_lbl = QtWidgets.QLabel(_ROLE_DISPLAY_GRID[role])
+            role_lbl.setAlignment(Qt.AlignCenter)
+            role_lbl.setStyleSheet(
+                "color: #9CA3AF; font-size: 10px; background: transparent; border: none;"
+            )
+            cell_layout.addWidget(img_lbl, 1)
+            cell_layout.addWidget(role_lbl)
+            self._syn_grid_layout.addWidget(cell, row, col)
+            self._syn_thumb_labels[role] = img_lbl
+
+        syn_grid_outer.addLayout(self._syn_grid_layout, 1)
+        self.stk_blend.addWidget(self.wgt_syn_grid)  # index 2 synthesis grid
+
         self.stk_blend.setCurrentIndex(0)
         left_section.addWidget(self.stk_blend, stretch=1)
 
@@ -8012,6 +8241,29 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Input Mode selector
         self.cmb_input_mode.currentIndexChanged.connect(self._on_input_mode_changed)
 
+        # Synthesis: algorithm switch, auto-detect, weight sliders (live preview)
+        self.cmb_syn_algorithm.currentIndexChanged.connect(self._on_syn_algorithm_changed)
+        self.cmb_syn_shading_output.currentIndexChanged.connect(
+            lambda _: self._on_syn_light_visibility()
+        )
+        self.btn_syn_auto_detect.clicked.connect(self._on_syn_auto_detect)
+        for role, sld in self._syn_weight_sliders.items():
+            sld.valueChanged.connect(lambda _: self._emit_state_changed(False))
+        self.cmb_syn_shading_output.currentIndexChanged.connect(
+            lambda _: self._emit_state_changed(False)
+        )
+        self.spn_syn_light_angle.valueChanged.connect(
+            lambda _: self._emit_state_changed(False)
+        )
+        self.chk_syn_invert_result.stateChanged.connect(
+            lambda _: self._emit_state_changed(False)
+        )
+        self.chk_syn_align.stateChanged.connect(
+            lambda _: self._emit_state_changed(True)  # alignment change → Tier-1 debounce
+        )
+        for role, cmb in self._syn_combos.items():
+            cmb.currentIndexChanged.connect(self._on_syn_role_changed)
+
         # Quadrant Fusion ROI, auto-detect, and view toggles
         self.btn_qf_auto_detect.clicked.connect(self._on_qf_auto_detect)
         self.btn_qf_pick_roi.clicked.connect(self._on_qf_pick_roi)
@@ -8126,20 +8378,38 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     # ── Input Mode switching ─────────────────────────────────────────────
 
     def _on_input_mode_changed(self, index: int = None):
-        """Toggle between Standard (0) and Quadrant Fusion (1) UI panels."""
-        is_qf = self.cmb_input_mode.currentIndex() == 1
-        # Left panel: image selection
-        self.wgt_standard_select.setVisible(not is_qf)
-        self.wgt_quadrant_select.setVisible(is_qf)
-        # Left panel: Standard-only groups
-        self.grp_op.setVisible(not is_qf)
-        self.grp_align.setVisible(not is_qf)
-        # Keep using the existing embedded pages; never create/detach viewers here.
-        self.stk_right_panel.setCurrentIndex(1 if is_qf else 0)
+        """Toggle between Standard (0) and Multi-Image Synthesis (1) UI panels."""
+        mode_idx = self.cmb_input_mode.currentIndex()
+        is_synthesis = (mode_idx == 1)
+        is_standard = (mode_idx == 0)
 
-        if is_qf:
-            self.setWindowTitle("Fusi³ — Quadrant Fusion")
+        # Left panel: image selection widgets
+        self.wgt_standard_select.setVisible(is_standard)
+        self.wgt_synthesis_select.setVisible(is_synthesis)
+        self.wgt_quadrant_select.setVisible(False)  # legacy, always hidden
+
+        # Left panel: operation / alignment groups
+        self.grp_op.setVisible(is_standard)
+        self.grp_syn_op.setVisible(is_synthesis)
+        self.grp_align.setVisible(is_standard)
+        self.grp_syn_align.setVisible(is_synthesis)
+
+        # PAIRING card only meaningful in Standard mode
+        if hasattr(self, 'wgt_pairing_card'):
+            self.wgt_pairing_card.setVisible(is_standard)
+
+        # Right panel: keep standard embedded viewers for both modes
+        # (stk_right_panel index 0 = standard, index 1 = legacy QF — always 0 now)
+        self.stk_right_panel.setCurrentIndex(0)
+
+        # Center preview: page 0 = magnifier (standard), page 2 = 5-grid (synthesis)
+        if is_synthesis:
+            self.stk_blend.setCurrentIndex(2)
+            self.setWindowTitle("Fusi³ — Multi-Image Synthesis")
+            self._update_syn_grid_thumbnails()
         else:
+            # Restore standard view (page 0 magnifier or page 1 split)
+            self.stk_blend.setCurrentIndex(0)
             self.setWindowTitle("Fusi³ — SEM Perspective Combination Tool")
             self._refresh_standard_mode_views()
 
@@ -8166,6 +8436,122 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.btn_clear_hist_range.setEnabled(False)
         self.stats_widget.reset()
         self._sync_viewer_mode_buttons()
+
+    # ── Synthesis mode helpers ────────────────────────────────────────────────
+
+    def _on_syn_algorithm_changed(self, index: int) -> None:
+        """Show relevant settings group for the selected synthesis algorithm."""
+        is_shading = (index == 1)
+        self.grp_syn_weights.setVisible(not is_shading)
+        self.grp_syn_shading.setVisible(is_shading)
+        self._emit_state_changed(False)
+
+    def _on_syn_light_visibility(self) -> None:
+        """Show light-angle spinner only for Shading Relief output."""
+        is_relief = (self.cmb_syn_shading_output.currentIndex() == 3)
+        self.grp_syn_light.setVisible(is_relief)
+
+    def _on_syn_role_changed(self) -> None:
+        """Update grid thumbnails and emit state change when a role assignment changes."""
+        self._update_syn_grid_thumbnails()
+        self._emit_state_changed(False)
+
+    def _on_syn_auto_detect(self) -> None:
+        """Auto-assign roles based on filename keywords."""
+        file_labels = list(self._images.keys())
+        if not file_labels:
+            return
+        _kw = {
+            "bse":    ("bse", "illum", "center", "centre", "central"),
+            "top":    ("top", "up"),
+            "bottom": ("bottom", "bot", "down"),
+            "left":   ("left",),
+            "right":  ("right",),
+        }
+        for role, keywords in _kw.items():
+            cmb = self._syn_combos[role]
+            for i in range(1, cmb.count()):          # skip index 0 "— None —"
+                if any(kw in cmb.itemText(i).lower() for kw in keywords):
+                    cmb.setCurrentIndex(i)
+                    break
+        self._update_syn_grid_thumbnails()
+
+    def _update_syn_grid_thumbnails(self) -> None:
+        """Refresh the 5-grid preview thumbnails from current role assignments."""
+        for role, img_lbl in self._syn_thumb_labels.items():
+            cmb = self._syn_combos[role]
+            sel = cmb.currentText()
+            img = self._images.get(sel) if sel and sel != "— None —" else None
+            if img is not None:
+                thumb = self._make_thumb(img, 120)
+                img_lbl.setPixmap(thumb)
+            else:
+                img_lbl.setPixmap(QtGui.QPixmap())
+                img_lbl.setText("—")
+
+    @staticmethod
+    def _make_thumb(img: np.ndarray, size: int) -> QtGui.QPixmap:
+        """Convert a grayscale uint8 ndarray to a square QPixmap thumbnail."""
+        h, w = img.shape[:2]
+        # Fit into size×size keeping aspect ratio
+        scale = size / max(h, w)
+        nh, nw = max(1, int(h * scale)), max(1, int(w * scale))
+        import cv2 as _cv2
+        thumb = _cv2.resize(img, (nw, nh), interpolation=_cv2.INTER_AREA)
+        rgb = _cv2.cvtColor(thumb, _cv2.COLOR_GRAY2RGB)
+        qi = QtGui.QImage(rgb.data, nw, nh, nw * 3, QtGui.QImage.Format_RGB888)
+        return QtGui.QPixmap.fromImage(qi)
+
+    def _collect_synthesis_preview_params(self) -> Optional[dict]:
+        """Return synthesis params dict for live preview, or None if not ready."""
+        role_images: Dict[str, Optional[np.ndarray]] = {}
+        for role, cmb in self._syn_combos.items():
+            sel = cmb.currentText()
+            role_images[role] = self._images.get(sel) if sel and sel != "— None —" else None
+
+        if role_images.get("bse") is None:
+            return None
+        present = [r for r, img in role_images.items() if img is not None]
+        if len(present) < 2:
+            return None
+
+        algo_idx = self.cmb_syn_algorithm.currentIndex()
+        algorithm = "weighted" if algo_idx == 0 else "shading"
+
+        weights = {role: self._syn_weight_sliders[role].value() / 100.0
+                   for role in SYNTHESIS_ROLES}
+
+        shading_map = ["topo", "bse_clean", "composite", "relief"]
+        shading_output = shading_map[self.cmb_syn_shading_output.currentIndex()]
+
+        norm_mode = self.cmb_normalize_mode.currentIndex()
+        _method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
+        normalize_method = _method_map.get(norm_mode, "percentile")
+        glv_range = None
+        if norm_mode == 1:
+            glv_low = self.spn_glv_low.value()
+            glv_high = self.spn_glv_high.value()
+            if glv_low < glv_high:
+                glv_range = (glv_low, glv_high)
+
+        align_method = {0: "phase", 1: "ncc", 2: "ecc", 3: "template"}.get(
+            self.cmb_align_method.currentIndex(), "phase"
+        )
+
+        return {
+            "mode": "synthesis",
+            "role_images": role_images,
+            "algorithm": algorithm,
+            "weights": weights,
+            "shading_output": shading_output,
+            "light_angle_deg": float(self.spn_syn_light_angle.value()),
+            "normalize_method": normalize_method,
+            "glv_range": glv_range,
+            "invert_result": self.chk_syn_invert_result.isChecked(),
+            "align_to_bse": self.chk_syn_align.isChecked(),
+            "align_method": align_method,
+            "snr_window_size": self.spn_snr_window.value(),
+        }
 
     def _on_qf_auto_detect(self):
         """Auto-detect Quadrant Fusion detector assignments from filenames."""
@@ -8260,6 +8646,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Clear Quadrant Fusion combos
         for cmb in self._qf_combos.values():
             cmb.clear()
+        # Clear synthesis role combos
+        for cmb in self._syn_combos.values():
+            cmb.clear()
+            cmb.addItem("— None —")
 
         if not self._conditions:
             self._update_sidebar_empty_state(False)
@@ -8290,6 +8680,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
                 # Populate Quadrant Fusion combos
                 for cmb in self._qf_combos.values():
+                    cmb.addItem(label)
+                # Populate synthesis role combos
+                for cmb in self._syn_combos.values():
                     cmb.addItem(label)
 
         self.compare_layout.addStretch()
@@ -8543,6 +8936,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if not self._results:
             return
         result = self._results[self._current_result_idx]
+
+        if isinstance(result, SynthesisResult):
+            # Synthesis: "Base" shows BSE, "Compare" shows result image
+            if mode == 'base':
+                bse = result.aligned_roles.get("bse") or result.role_images_used.get("bse")
+                if bse is not None:
+                    self.img_base_mag.setImage(bse)
+            elif mode == 'compare':
+                self.img_base_mag.setImage(result.result_image)
+            return
+
         if mode == 'base':
             base_img = self._images.get(result.base_label)
             if base_img is not None:
@@ -8718,7 +9122,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if is_align_change:
             self._alignment_cache.clear()
 
-        params = self._collect_preview_params()
+        if self.cmb_input_mode.currentIndex() == 1:
+            params = self._collect_synthesis_preview_params()
+        else:
+            params = self._collect_preview_params()
         if params is None:
             return
         self._live_manager.schedule(params, is_align_change)
@@ -8800,16 +9207,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         import logging
         logging.getLogger(__name__).warning("Live preview error: %s", msg)
 
-    def _on_live_preview_ready(self, result: SinglePairResult) -> None:
-        """Update diff display, histogram and stats from a live preview result."""
+    def _on_live_preview_ready(self, result) -> None:
+        """Update diff display, histogram and stats from a live preview result.
+
+        Handles both SinglePairResult and SynthesisResult.
+        """
         import dataclasses
 
-        # If a full-compute result exists for this pair, preserve its SNR map
-        # so Z-Map mode continues to work correctly.
+        # If a full-compute result exists for this pair/synthesis, preserve its
+        # SNR map so Z-Map mode continues to work correctly.
         existing_snr = None
-        if self._results:
+        if self._results and not isinstance(result, SynthesisResult):
             cur = self._results[self._current_result_idx]
-            if cur.compare_label == result.compare_label:
+            if (not isinstance(cur, SynthesisResult)
+                    and cur.compare_label == result.compare_label):
                 existing_snr = cur.snr_map
 
         if existing_snr is not None:
@@ -9064,7 +9475,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._preview_roi_manager.close()
 
     def _on_compute(self):
-        """Run the combination computation for all selected pairs."""
+        """Run computation — routes to synthesis or standard pair mode."""
+        if self.cmb_input_mode.currentIndex() == 1:
+            self._on_compute_synthesis()
+            return
+
+        # Standard pair mode
         base_label = self.cmb_base.currentText()
         is_auto_pair = self.chk_auto_pair.isChecked()
 
@@ -9429,14 +9845,29 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._roi_remapped_sets = {}
         self._roi_ref_base_label = None
 
-    def _run_roi_analysis(self, results: List[SinglePairResult]) -> None:
+    def _run_roi_analysis(self, results) -> None:
         """Compute ROI full stats, grouped by base_label to support auto-pair mode.
 
         In standard mode all results share the same base_label → one ROIFullResult.
         In auto-pair mode each distinct base_label gets its own ROIFullResult so
         the ROI quantification is always computed against the correct base image.
+        SynthesisResult objects use the BSE image as the base.
         """
         from collections import defaultdict
+
+        # SynthesisResult: supply BSE as the base image for ROI analysis
+        patched_results = []
+        for r in results:
+            if isinstance(r, SynthesisResult):
+                bse_img = r.role_images_used.get("bse")
+                if bse_img is not None:
+                    # Temporarily override base_label lookup by injecting BSE into images
+                    self._images["__synthesis_bse__"] = bse_img
+                    import dataclasses
+                    r = dataclasses.replace(r, base_label="__synthesis_bse__",
+                                            aligned_compare=r.result_image)
+            patched_results.append(r)
+        results = patched_results
 
         norm_mode = self.cmb_normalize_mode.currentIndex()
         use_roi_match = (norm_mode == 3)
@@ -9696,6 +10127,133 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             on_done=self._on_compute_done,
         )
 
+    # ── Multi-Image Synthesis compute ─────────────────────────────────────────
+
+    def _on_compute_synthesis(self) -> None:
+        """Validate inputs and launch Multi-Image Synthesis computation."""
+        # Collect role images
+        role_images: Dict[str, Optional[np.ndarray]] = {}
+        for role, cmb in self._syn_combos.items():
+            sel = cmb.currentText()
+            role_images[role] = self._images.get(sel) if sel and sel != "— None —" else None
+
+        bse = role_images.get("bse")
+        if bse is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Synthesis", "Please assign an image to the BSE Center role."
+            )
+            return
+        present = [r for r, img in role_images.items() if img is not None]
+        if len(present) < 2:
+            QtWidgets.QMessageBox.warning(
+                self, "Synthesis",
+                "Please assign at least one SE image (Top/Bottom/Left/Right) in addition to BSE."
+            )
+            return
+
+        # Collect algorithm settings
+        algo_idx = self.cmb_syn_algorithm.currentIndex()
+        algorithm = "weighted" if algo_idx == 0 else "shading"
+        weights = {role: self._syn_weight_sliders[role].value() / 100.0
+                   for role in SYNTHESIS_ROLES}
+        shading_map = ["topo", "bse_clean", "composite", "relief"]
+        shading_output = shading_map[self.cmb_syn_shading_output.currentIndex()]
+        light_angle_deg = float(self.spn_syn_light_angle.value())
+        invert_result = self.chk_syn_invert_result.isChecked()
+        align_to_bse = self.chk_syn_align.isChecked()
+        align_method = {0: "phase", 1: "ncc", 2: "ecc", 3: "template"}.get(
+            self.cmb_align_method.currentIndex(), "phase"
+        )
+        snr_window_size = self.spn_snr_window.value()
+        if snr_window_size % 2 == 0:
+            snr_window_size += 1
+
+        norm_mode = self.cmb_normalize_mode.currentIndex()
+        _method_map = {0: "percentile", 1: "glv_mask", 2: "skip", 3: "roi_match"}
+        normalize_method = _method_map.get(norm_mode, "percentile")
+        glv_range = None
+        if norm_mode == 1:
+            glv_low = self.spn_glv_low.value()
+            glv_high = self.spn_glv_high.value()
+            if glv_low < glv_high:
+                glv_range = (glv_low, glv_high)
+
+        # Snapshot for thread (no Qt access inside thread)
+        _role_images = dict(role_images)
+        _algorithm = algorithm
+        _weights = dict(weights)
+        _shading_output = shading_output
+        _light = light_angle_deg
+        _norm = normalize_method
+        _glv = glv_range
+        _inv = invert_result
+        _align = align_to_bse
+        _align_m = align_method
+        _snr_w = snr_window_size
+
+        if self._live_manager is not None:
+            self._live_manager.cancel()
+
+        self.btn_compute.setEnabled(False)
+        self.btn_compute.setText("Computing…")
+        self.btn_export.setEnabled(False)
+        self._set_compute_busy(True)
+        self.progress_bar.setRange(0, 0)
+        self.lbl_progress_text.setText("Synthesizing images…")
+        self.wgt_progress_banner.setVisible(True)
+        QtWidgets.QApplication.processEvents()
+
+        def _run():
+            return compute_multi_synthesis(
+                role_images=_role_images,
+                algorithm=_algorithm,
+                weights=_weights,
+                shading_output=_shading_output,
+                light_angle_deg=_light,
+                normalize_method=_norm,
+                glv_range=_glv,
+                invert_result=_inv,
+                align_to_bse=_align,
+                alignment_method=_align_m,
+                snr_window_size=_snr_w,
+                skip_snr_map=False,
+            )
+
+        self._compute_thread, self._compute_worker = self._start_worker(
+            _run,
+            on_success=self._on_synthesis_compute_finished,
+            on_error=self._on_compute_error,
+            on_done=self._on_compute_done,
+        )
+
+    def _on_synthesis_compute_finished(self, result: SynthesisResult) -> None:
+        """Handle synthesis result — re-use the standard result display pipeline."""
+        # Wrap as a single-element result list so existing navigation code works
+        self._results = [result]
+        self._current_result_idx = 0
+        self._has_computed = True
+        self._is_live_preview = False
+        self.lbl_live_badge.setVisible(False)
+
+        self._update_current_result()
+        self._update_navigation()
+        self.btn_export.setEnabled(True)
+
+        # Post-compute layout (same as standard mode)
+        self.left_panel_scroll.setVisible(False)
+        self.wgt_diff_section.setVisible(True)
+        self.btn_back_to_settings.setVisible(True)
+        self.wgt_bottom_row.setVisible(True)
+        self.btn_split_view.setVisible(True)
+        self.btn_mode_compare.setVisible(True)
+        self.btn_prev_result.setVisible(False)   # synthesis always 1 result
+        self.btn_next_result.setVisible(False)
+        self.btn_export.setVisible(True)
+
+        # ROI analysis works on result_image as if it were a diff map
+        if self._multi_roi_set and result:
+            self._run_roi_analysis([result])
+
     def _on_qf_compute_finished(self, result: QuadrantFusionResult):
         """Handle Quadrant Fusion result — display in QF-specific viewers."""
         self._qf_last_result = result
@@ -9944,11 +10502,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if not self._results:
             return
         result = self._results[self._current_result_idx]
-        base_img = self._images.get(result.base_label)
-        # Use aligned compare so split view spatial coordinates match Diff/SNR maps
-        compare_img = (result.aligned_compare
-                       if result.aligned_compare is not None
-                       else self._images.get(result.compare_label))
+
+        if isinstance(result, SynthesisResult):
+            # For synthesis: show BSE image in magnifier, result in split-view
+            bse = result.aligned_roles.get("bse") or result.role_images_used.get("bse")
+            base_img = bse
+            compare_img = result.result_image
+        else:
+            base_img = self._images.get(result.base_label)
+            compare_img = (result.aligned_compare
+                           if result.aligned_compare is not None
+                           else self._images.get(result.compare_label))
 
         # Page 0 – Magnifier: show Base image
         if base_img is not None:
@@ -9961,8 +10525,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         ratio = 1.0 - self.slider_blend.value() / 100.0
         self.img_blend.set_divider(ratio)
 
-    def _update_alignment_display(self, result: SinglePairResult):
-        """Update alignment metrics in the LEFT Alignment panel."""
+    def _update_alignment_display(self, result):
+        """Update alignment metrics in the LEFT Alignment panel.
+
+        Handles both SinglePairResult and SynthesisResult.
+        """
+        if isinstance(result, SynthesisResult):
+            self._update_alignment_display_synthesis(result)
+            return
+
         a = result.alignment
 
         if a.final_score >= 75:
@@ -9995,24 +10566,99 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             status_color=status_color,
         )
 
-    def _update_stats_display(self, result: SinglePairResult):
-        """Update statistics widget for single result."""
+    def _update_alignment_display_synthesis(self, result: SynthesisResult) -> None:
+        """Show per-role alignment stats for Multi-Image Synthesis results."""
+        _ROLE_DISPLAY_SHORT = {
+            "top": "Top", "bottom": "Bot", "left": "Left", "right": "Right",
+        }
+        alignments = result.per_role_alignments
+        if not alignments:
+            # No alignment was performed
+            self.align_panel.update_alignment(
+                phase="—", ncc="—", residual="—", final="—",
+                shift="(0, 0)",
+                status="Simultaneous capture",
+                status_color=UI_SUCCESS,
+            )
+            self.stats_widget.update_alignment(
+                phase="—", ncc="—", residual="—", final="—",
+                shift="(0, 0)", status="Simultaneous", status_color=UI_SUCCESS,
+            )
+            return
+
+        # Build multi-line summary: one row per aligned SE role
+        lines = []
+        worst_score = 100.0
+        for role, a in alignments.items():
+            tag = _ROLE_DISPLAY_SHORT.get(role, role)
+            icon = "\u2713" if a.final_score >= 75 else ("\u26a0" if a.final_score >= 55 else "\u2717")
+            lines.append(
+                f"{icon} {tag}: ({a.dx:+d},{a.dy:+d})  NCC={a.score_ncc:.2f}"
+            )
+            worst_score = min(worst_score, a.final_score)
+
+        if worst_score >= 75:
+            status_text = "\u2713 OK"
+            status_color = UI_SUCCESS
+        elif worst_score >= 55:
+            status_text = "\u26a0 WARN"
+            status_color = UI_PRIMARY_HOVER
+        else:
+            status_text = "\u2717 FAIL"
+            status_color = UI_WARNING
+
+        # Use first SE alignment values for the legacy single-pair panel fields
+        first_a = next(iter(alignments.values()))
+        summary_shift = f"({first_a.dx:+d}, {first_a.dy:+d})"
+        detail = "  |  ".join(lines)
+
+        self.align_panel.update_alignment(
+            phase=f"{first_a.score_phase:.3f}",
+            ncc=f"{first_a.score_ncc:.3f}",
+            residual=f"{first_a.score_residual:.3f}",
+            final=f"{worst_score:.1f}",
+            shift=summary_shift,
+            status=f"{status_text}  [{detail}]",
+            status_color=status_color,
+        )
+        self.stats_widget.update_alignment(
+            phase="—", ncc="—", residual="—",
+            final=f"{worst_score:.1f}",
+            shift=summary_shift,
+            status=status_text,
+            status_color=status_color,
+        )
+
+    def _update_stats_display(self, result):
+        """Update statistics widget for single result (SinglePairResult or SynthesisResult)."""
         s = result.stats
         self.stats_widget.stats_labels["diff_mean"].setText(f"{s.get('diff_mean', 0):.4f}")
         self.stats_widget.stats_labels["diff_std"].setText(f"{s.get('diff_std', 0):.4f}")
         self.stats_widget.stats_labels["hot_pixels"].setText(f"{s.get('hot_pixels', 0)}")
-        # Display normalize coefficients: a*I + b
-        method_display = _NORMALIZE_METHOD_LABELS.get(result.normalize_method, result.normalize_method)
-        is_linear = result.normalize_method in ('percentile', 'glv_mask')
-        if is_linear:
+
+        if isinstance(result, SynthesisResult):
+            algo_display = {
+                "weighted": "Weighted Blend",
+                "shading": "Directional Shading",
+            }.get(result.algorithm, result.algorithm)
             self.stats_widget.stats_labels["norm_coeff"].setText(
-                f"{method_display}  a={result.norm_a:.4f}"
+                f"{algo_display} / {result.normalize_method}"
             )
+            dx_f = 0.0
+            dy_f = 0.0
         else:
-            self.stats_widget.stats_labels["norm_coeff"].setText(method_display)
-        # Sub-pixel shift
-        dx_f = s.get('dx_subpixel', float(result.alignment.dx))
-        dy_f = s.get('dy_subpixel', float(result.alignment.dy))
+            # Display normalize coefficients: a*I + b
+            method_display = _NORMALIZE_METHOD_LABELS.get(result.normalize_method, result.normalize_method)
+            is_linear = result.normalize_method in ('percentile', 'glv_mask')
+            if is_linear:
+                self.stats_widget.stats_labels["norm_coeff"].setText(
+                    f"{method_display}  a={result.norm_a:.4f}"
+                )
+            else:
+                self.stats_widget.stats_labels["norm_coeff"].setText(method_display)
+            dx_f = s.get('dx_subpixel', float(result.alignment.dx))
+            dy_f = s.get('dy_subpixel', float(result.alignment.dy))
+
         self.stats_widget.stats_labels["subpixel_shift"].setText(f"({dx_f:+.2f}, {dy_f:+.2f})")
 
         # ROI-Match alpha readout (STATE A sidebar label)
