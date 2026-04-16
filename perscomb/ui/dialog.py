@@ -6674,6 +6674,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, conditions: List[EbeamCondition] = None):
         super().__init__(parent)
         self.setWindowTitle("Fusi\u00b3 \u2014 SEM Perspective Combination Tool")
+        self.setWindowFlags(Qt.Window)   # enables maximize / fullscreen
         self.setMinimumSize(1500, 900)
         self.resize(1600, 950)
 
@@ -6935,20 +6936,29 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ================================================================
         # CONTENT AREA: sidebar + viewer
         # ================================================================
-        content_layout = QtWidgets.QHBoxLayout()
-        content_layout.setSpacing(8)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout = content_layout  # stored for ROI slide-in panel
+        # Outer content row: [_main_splitter (sidebar|viewer)] + [roi panel]
+        # Using QHBoxLayout for the outer row so roi_side_panel stays as a
+        # fixed slide-in panel outside the resizable splitter.
+        _content_hbox = QtWidgets.QHBoxLayout()
+        _content_hbox.setSpacing(0)
+        _content_hbox.setContentsMargins(0, 0, 0, 0)
+
+        # Splitter: sidebar | viewer stacked panel
+        self._main_splitter = QtWidgets.QSplitter(Qt.Horizontal)
+        self._main_splitter.setChildrenCollapsible(False)
+        self._main_splitter.setHandleWidth(5)
+        self._main_splitter.setStyleSheet(
+            "QSplitter::handle { background: transparent; }"
+            "QSplitter::handle:hover { background: rgba(99,102,241,0.35); border-radius: 2px; }"
+        )
 
         # === LEFT SIDEBAR ===
         self.left_panel = QtWidgets.QWidget()
         left_panel = self.left_panel   # local alias for existing code below
         left_panel.setObjectName("LeftPanel")
-        self._sidebar_pref_width = 320
+        self._sidebar_pref_width = 340
         self._sidebar_min_width = 260
-        self._sidebar_max_width = 360
         left_panel.setMinimumWidth(self._sidebar_min_width)
-        left_panel.setMaximumWidth(self._sidebar_max_width)
         left_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.MinimumExpanding)
         left_panel.setStyleSheet(f"""
             QWidget#LeftPanel {{
@@ -7859,10 +7869,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.left_panel_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
-        self.left_panel_scroll.setMaximumWidth(self._sidebar_max_width)
         self.left_panel_scroll.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         self.left_panel_scroll.setWidget(left_panel)
-        content_layout.addWidget(self.left_panel_scroll, stretch=0)
+        self._main_splitter.addWidget(self.left_panel_scroll)   # splitter index 0
 
         # ================================================================
         # RIGHT PANEL: Viewer + Controls
@@ -7881,8 +7890,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             }}
         """
 
-        left_section = QtWidgets.QVBoxLayout()
+        # Wrap left_section in a widget so it can be placed in a QSplitter
+        self._left_viewer_widget = QtWidgets.QWidget()
+        left_section = QtWidgets.QVBoxLayout(self._left_viewer_widget)
         left_section.setSpacing(4)
+        left_section.setContentsMargins(0, 0, 0, 0)
 
         # Left control bar: Base | Compare  +  Split View toggle + slider
         left_ctrl_bar = QtWidgets.QFrame()
@@ -7963,27 +7975,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_syn_grid.setStyleSheet(f"background: {UI_BG_VIEWER};")
         syn_grid_outer = QtWidgets.QVBoxLayout(self.wgt_syn_grid)
         syn_grid_outer.setContentsMargins(4, 4, 4, 4)
-        syn_grid_outer.setSpacing(6)
+        syn_grid_outer.setSpacing(0)
 
-        syn_mode_row = QtWidgets.QHBoxLayout()
-        syn_mode_row.setContentsMargins(0, 0, 0, 0)
-        syn_mode_row.setSpacing(0)
-        self.btn_syn_view_sources = QtWidgets.QPushButton("5-Grid Sources")
-        self.btn_syn_view_sources.setCheckable(True)
-        self.btn_syn_view_sources.setChecked(True)
-        self.btn_syn_view_sources.setProperty("viewerMode", True)
-        self.btn_syn_view_sources.setObjectName("ViewerModeFirst")
-        self.btn_syn_view_result = QtWidgets.QPushButton("Result Preview")
-        self.btn_syn_view_result.setCheckable(True)
-        self.btn_syn_view_result.setProperty("viewerMode", True)
-        self.btn_syn_view_result.setObjectName("ViewerModeLast")
-        for btn in (self.btn_syn_view_sources, self.btn_syn_view_result):
-            btn.setFixedHeight(30)
-            syn_mode_row.addWidget(btn)
-        syn_mode_row.addStretch(1)
-        syn_grid_outer.addLayout(syn_mode_row)
-
-        self._syn_preview_stack = QtWidgets.QStackedWidget()
+        # Vertical splitter: compact compass grid (top) + result tabs (bottom).
+        # No toggle buttons needed — both panels are always visible.
+        self._syn_view_splitter = QtWidgets.QSplitter(Qt.Vertical)
+        self._syn_view_splitter.setChildrenCollapsible(False)
+        self._syn_view_splitter.setHandleWidth(5)
+        self._syn_view_splitter.setStyleSheet(
+            "QSplitter::handle { background: transparent; }"
+            "QSplitter::handle:hover { background: rgba(99,102,241,0.35); border-radius: 2px; }"
+        )
 
         # 3×3 grid with thumbnails in physical positions
         self._syn_sources_view = QtWidgets.QWidget()
@@ -8023,6 +8025,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._syn_thumb_labels[role] = img_lbl
 
         sources_layout.addLayout(self._syn_grid_layout, 1)
+        # Compact: compass grid is the top pane; give it a bounded initial height
+        self._syn_sources_view.setMaximumHeight(260)
 
         self._syn_result_view = QtWidgets.QWidget()
         result_layout = QtWidgets.QVBoxLayout(self._syn_result_view)
@@ -8078,9 +8082,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._syn_map_tabs.setTabVisible(_i, False)
 
         result_layout.addWidget(self._syn_map_tabs, 1)
-        self._syn_preview_stack.addWidget(self._syn_sources_view)
-        self._syn_preview_stack.addWidget(self._syn_result_view)
-        syn_grid_outer.addWidget(self._syn_preview_stack, 1)
+
+        self._syn_view_splitter.addWidget(self._syn_sources_view)
+        self._syn_view_splitter.addWidget(self._syn_result_view)
+        self._syn_view_splitter.setStretchFactor(0, 0)  # compass — compact
+        self._syn_view_splitter.setStretchFactor(1, 1)  # result tabs — expanding
+        syn_grid_outer.addWidget(self._syn_view_splitter, 1)
         self.stk_blend.addWidget(self.wgt_syn_grid)  # index 2 synthesis grid
 
         self.stk_blend.setCurrentIndex(0)
@@ -8194,14 +8201,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _top_btn_row.addStretch()
         right_layout.addLayout(_top_btn_row)
 
-        image_row = QtWidgets.QHBoxLayout()
-        image_row.setSpacing(8)
-        image_row.addLayout(left_section, stretch=1)
-        image_row.addWidget(self.wgt_diff_section, stretch=1)
-        image_row.setStretch(0, 1)
-        image_row.setStretch(1, 1)
+        # Viewer splitter: stk_blend (left) | wgt_diff_section (right)
+        self._viewer_splitter = QtWidgets.QSplitter(Qt.Horizontal)
+        self._viewer_splitter.setChildrenCollapsible(False)
+        self._viewer_splitter.setHandleWidth(5)
+        self._viewer_splitter.setStyleSheet(
+            "QSplitter::handle { background: transparent; }"
+            "QSplitter::handle:hover { background: rgba(99,102,241,0.35); border-radius: 2px; }"
+        )
+        self._viewer_splitter.addWidget(self._left_viewer_widget)
+        self._viewer_splitter.addWidget(self.wgt_diff_section)
+        self._viewer_splitter.setStretchFactor(0, 1)
+        self._viewer_splitter.setStretchFactor(1, 1)
         self.wgt_diff_section.setVisible(False)  # hidden until compute
-        right_layout.addLayout(image_row, stretch=4)
+        right_layout.addWidget(self._viewer_splitter, stretch=4)
 
         # Hidden backward-compat widgets (not shown)
         self.lbl_blend_info = QtWidgets.QLabel("")
@@ -8462,7 +8475,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.addWidget(qf_right_panel)  # index 1 = Quadrant Fusion
         self.stk_right_panel.setCurrentIndex(0)
 
-        content_layout.addWidget(self.stk_right_panel, stretch=1)
+        self._main_splitter.addWidget(self.stk_right_panel)     # splitter index 1
+        self._main_splitter.setStretchFactor(0, 0)  # sidebar — fixed
+        self._main_splitter.setStretchFactor(1, 1)  # viewer  — expanding
 
         # P1-2: ROI Manager slide-in side panel (hidden by default)
         self.roi_side_panel = QtWidgets.QFrame()
@@ -8516,12 +8531,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self._roi_panel_populated = False  # filled on first open
         self.roi_side_panel.setVisible(False)
-        content_layout.addWidget(self.roi_side_panel, stretch=0)
 
-        content_layout.setStretch(0, 0)
-        content_layout.setStretch(1, 1)
-        content_layout.setStretch(2, 0)
-        outer_layout.addLayout(content_layout, stretch=1)
+        _content_hbox.addWidget(self._main_splitter, stretch=1)
+        _content_hbox.addWidget(self.roi_side_panel, stretch=0)
+        outer_layout.addLayout(_content_hbox, stretch=1)
 
         # ── Embedded progress banner (shown during compute) ───────────────
         self.wgt_progress_banner = QtWidgets.QWidget()
@@ -8582,23 +8595,30 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         self._apply_responsive_sidebar_layout()
 
+        # F11 toggles fullscreen
+        _fs_sc = QtGui.QShortcut(QtGui.QKeySequence(Qt.Key_F11), self)
+        _fs_sc.activated.connect(self._toggle_fullscreen)
+
+    # ── Fullscreen ────────────────────────────────────────────────────────────
+    def _toggle_fullscreen(self) -> None:
+        """Toggle between fullscreen and normal window state (F11)."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
         self._apply_responsive_sidebar_layout()
 
     def _apply_responsive_sidebar_layout(self):
-        """Apply responsive sidebar sizing and control reflow based on current width."""
+        """Apply responsive control reflow based on current sidebar width.
+
+        Width constraints are now managed by the QSplitter so we only handle
+        element reflow (e.g., stacking labels when the sidebar is narrow).
+        """
         if not hasattr(self, "left_panel"):
             return
-
-        total_w = max(1, self.width())
-        # Keep sidebar readable and bounded; viewer gets most extra space.
-        target_w = int(total_w * 0.27)
-        target_w = max(self._sidebar_min_width, min(self._sidebar_max_width, target_w))
-        self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
-        self.left_panel_scroll.setMaximumWidth(target_w)
-        self.left_panel.setMinimumWidth(self._sidebar_min_width)
-        self.left_panel.setMaximumWidth(target_w)
 
         sidebar_w = self.left_panel.width()
         compact = sidebar_w < 305
@@ -8703,8 +8723,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.spn_syn_light_angle.valueChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
-        self.btn_syn_view_sources.clicked.connect(lambda: self._set_syn_preview_page(0))
-        self.btn_syn_view_result.clicked.connect(lambda: self._set_syn_preview_page(1))
+        # btn_syn_view_sources / btn_syn_view_result removed — unified view uses splitter
         self.chk_syn_invert_result.stateChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
@@ -8945,10 +8964,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._on_live_param_changed(False)
 
     def _set_syn_preview_page(self, page_idx: int) -> None:
-        page_idx = 0 if page_idx == 0 else 1
-        self._syn_preview_stack.setCurrentIndex(page_idx)
-        self.btn_syn_view_sources.setChecked(page_idx == 0)
-        self.btn_syn_view_result.setChecked(page_idx == 1)
+        """No-op: compass and result tabs are always visible in the vertical splitter."""
 
     def _on_syn_auto_detect(self) -> None:
         """Auto-assign roles based on filename keywords."""
@@ -10467,6 +10483,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_back_to_settings(self) -> None:
         """Restore pre-compute state: show settings panel, hide diff viewer."""
+        # In synthesis mode the sidebar was never hidden, so this is a no-op for it;
+        # in standard mode it was hidden and needs to be restored.
         self.left_panel_scroll.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
@@ -10902,8 +10920,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._syn_map_tabs.setCurrentIndex(0)
         self._set_syn_preview_page(1)
 
-        # Post-compute layout (same as standard mode)
-        self.left_panel_scroll.setVisible(False)
+        # Post-compute layout for synthesis: keep the sidebar visible so the
+        # user retains context (roles/algorithm they configured).  Only the
+        # diff viewer needs to be revealed; the sidebar stays put.
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
