@@ -1360,6 +1360,111 @@ class ImageDisplayWidget(QtWidgets.QLabel):
         self._update_display()
 
 
+class _ScalableThumbLabel(QtWidgets.QLabel):
+    """QLabel that rescales its source pixmap on resize to fill available space.
+
+    Use ``set_source_pixmap()`` instead of ``setPixmap()`` so the image stays
+    sharp regardless of how the panel is resized.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._src_pixmap: Optional[QtGui.QPixmap] = None
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+
+    def set_source_pixmap(self, pixmap: Optional[QtGui.QPixmap]) -> None:
+        self._src_pixmap = pixmap
+        self._rescale()
+
+    def _rescale(self) -> None:
+        if self._src_pixmap is None or self._src_pixmap.isNull():
+            super().setPixmap(QtGui.QPixmap())
+            return
+        avail = self.size() - QtCore.QSize(4, 4)
+        if avail.width() <= 0 or avail.height() <= 0:
+            return
+        scaled = self._src_pixmap.scaled(
+            avail, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        super().setPixmap(scaled)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._rescale()
+
+
+def _make_bulb_pixmap(size: int, angle_deg: float) -> QtGui.QPixmap:
+    """Draw a rotated SE-detector light-bulb icon (transparent background)."""
+    import math
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    p.translate(size / 2, size / 2)
+    p.rotate(angle_deg)
+    r = size * 0.26
+    bulb_cy = -size * 0.10
+    # Rays
+    ray_pen = QtGui.QPen(QtGui.QColor("#FFB800"), max(1, int(size * 0.055)))
+    ray_pen.setCapStyle(Qt.RoundCap)
+    p.setPen(ray_pen)
+    p.setBrush(Qt.NoBrush)
+    ri, ro = r * 1.15, r * 1.72
+    for deg in (-50, 0, 50):
+        rad = math.radians(deg - 90)
+        p.drawLine(
+            int(math.cos(rad) * ri), int(math.sin(rad) * ri + bulb_cy),
+            int(math.cos(rad) * ro), int(math.sin(rad) * ro + bulb_cy),
+        )
+    # Bulb circle
+    p.setBrush(QtGui.QBrush(QtGui.QColor("#FFE44D")))
+    p.setPen(QtGui.QPen(QtGui.QColor("#555"), max(1, int(size * 0.05))))
+    p.drawEllipse(QtCore.QPointF(0.0, bulb_cy), r, r)
+    # Shine
+    p.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 110)))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QtCore.QPointF(-r * 0.28, bulb_cy - r * 0.28), r * 0.28, r * 0.28)
+    # Screw-base stripes
+    base_top = bulb_cy + r + size * 0.015
+    stripe_h = size * 0.072
+    p.setBrush(QtGui.QBrush(QtGui.QColor("#9CA3AF")))
+    p.setPen(QtGui.QPen(QtGui.QColor("#666"), max(1, int(size * 0.04))))
+    for i in range(3):
+        w = r * (1.5 - i * 0.35)
+        p.drawRoundedRect(
+            QtCore.QRectF(-w / 2, base_top + i * stripe_h * 1.12, w, stripe_h * 0.88),
+            1.5, 1.5,
+        )
+    p.end()
+    return pm
+
+
+def _make_bse_pixmap(size: int) -> QtGui.QPixmap:
+    """Draw a BSE Elluminator concentric-ring icon (transparent background)."""
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    cx, cy = size / 2, size / 2
+    r_outer = size * 0.38
+    # Outer ring
+    p.setPen(QtGui.QPen(QtGui.QColor("#6366F1"), max(2, int(size * 0.09))))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QtCore.QPointF(cx, cy), r_outer, r_outer)
+    # Middle ring
+    p.setPen(QtGui.QPen(QtGui.QColor("#6366F1"), max(1, int(size * 0.05))))
+    p.drawEllipse(QtCore.QPointF(cx, cy), r_outer * 0.62, r_outer * 0.62)
+    # Centre dot
+    p.setBrush(QtGui.QBrush(QtGui.QColor("#6366F1")))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QtCore.QPointF(cx, cy), r_outer * 0.22, r_outer * 0.22)
+    p.end()
+    return pm
+
+
 class HistogramCanvas(FigureCanvas):
     """Interactive matplotlib canvas for histogram display.
 
@@ -6472,17 +6577,56 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
         viewer_layout.setContentsMargins(12, 12, 12, 12)
         viewer_layout.setSpacing(8)
         viewer_layout.addWidget(QtWidgets.QLabel("Synthesis Sources & Result"))
+        # 2×2 corner grid: SE detectors at corners + BSE row below with icon
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(4)
         self._thumbs: Dict[str, QtWidgets.QLabel] = {}
-        pos = {"top": (0, 1), "left": (1, 0), "bse": (1, 1), "right": (1, 2), "bottom": (2, 1)}
-        for role, (r, c) in pos.items():
-            lbl = QtWidgets.QLabel("—")
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setMinimumSize(110, 90)
-            lbl.setStyleSheet("background:#1F2937; border-radius:4px;")
-            grid.addWidget(lbl, r, c)
+        # Corner positions: top-left=SE_Top, top-right=SE_Right,
+        #                   bot-left=SE_Left, bot-right=SE_Bottom
+        _corner_pos = {
+            "top":    (0, 0, 135.0),
+            "right":  (0, 2, 225.0),
+            "left":   (2, 0,  45.0),
+            "bottom": (2, 2, 315.0),
+        }
+        for role, (r, c, angle) in _corner_pos.items():
+            cell = QtWidgets.QWidget()
+            cell.setStyleSheet("background: #1F2937; border-radius: 4px;")
+            cell_lay = QtWidgets.QVBoxLayout(cell)
+            cell_lay.setContentsMargins(4, 4, 4, 2)
+            cell_lay.setSpacing(2)
+            _icon = QtWidgets.QLabel()
+            _icon.setAlignment(Qt.AlignCenter)
+            _icon.setFixedSize(30, 30)
+            _icon.setStyleSheet("background: transparent; border: none;")
+            _icon.setPixmap(_make_bulb_pixmap(30, angle))
+            cell_lay.addWidget(_icon, 0, Qt.AlignCenter)
+            lbl = _ScalableThumbLabel()
+            lbl.setText("—")
+            lbl.setMinimumSize(90, 70)
+            lbl.setStyleSheet("background: transparent; border: none;")
+            cell_lay.addWidget(lbl, 1)
+            grid.addWidget(cell, r, c)
             self._thumbs[role] = lbl
+        # BSE at center (row 1, col 1) with ring icon
+        _bse_cell = QtWidgets.QWidget()
+        _bse_cell.setStyleSheet("background: #1F2937; border-radius: 4px;")
+        _bse_cell_lay = QtWidgets.QVBoxLayout(_bse_cell)
+        _bse_cell_lay.setContentsMargins(4, 4, 4, 2)
+        _bse_cell_lay.setSpacing(2)
+        _bse_icon = QtWidgets.QLabel()
+        _bse_icon.setAlignment(Qt.AlignCenter)
+        _bse_icon.setFixedSize(30, 30)
+        _bse_icon.setStyleSheet("background: transparent; border: none;")
+        _bse_icon.setPixmap(_make_bse_pixmap(30))
+        _bse_cell_lay.addWidget(_bse_icon, 0, Qt.AlignCenter)
+        _bse_thumb = _ScalableThumbLabel()
+        _bse_thumb.setText("—")
+        _bse_thumb.setMinimumSize(90, 70)
+        _bse_thumb.setStyleSheet("background: transparent; border: none;")
+        _bse_cell_lay.addWidget(_bse_thumb, 1)
+        grid.addWidget(_bse_cell, 1, 1)
+        self._thumbs["bse"] = _bse_thumb
         viewer_layout.addLayout(grid, 0)
         self.img_preview_diff = SyncZoomImageWidget("Synthesis Preview")
         viewer_layout.addWidget(self.img_preview_diff, 1)
@@ -6598,10 +6742,10 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
             img = role_images.get(role)
             if img is None:
                 lbl.setText("—")
-                lbl.setPixmap(QtGui.QPixmap())
+                lbl.set_source_pixmap(None)
             else:
                 lbl.setText("")
-                lbl.setPixmap(self._thumb(img))
+                lbl.set_source_pixmap(self._thumb(img, 512))
 
     def clear_diff_preview(self) -> None:
         self.img_preview_diff.setImage(None)
@@ -6638,6 +6782,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, conditions: List[EbeamCondition] = None):
         super().__init__(parent)
         self.setWindowTitle("Fusi\u00b3 \u2014 SEM Perspective Combination Tool")
+        self.setWindowFlags(Qt.Window)   # enables maximize / fullscreen
         self.setMinimumSize(1500, 900)
         self.resize(1600, 950)
 
@@ -6899,20 +7044,29 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # ================================================================
         # CONTENT AREA: sidebar + viewer
         # ================================================================
-        content_layout = QtWidgets.QHBoxLayout()
-        content_layout.setSpacing(8)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout = content_layout  # stored for ROI slide-in panel
+        # Outer content row: [_main_splitter (sidebar|viewer)] + [roi panel]
+        # Using QHBoxLayout for the outer row so roi_side_panel stays as a
+        # fixed slide-in panel outside the resizable splitter.
+        _content_hbox = QtWidgets.QHBoxLayout()
+        _content_hbox.setSpacing(0)
+        _content_hbox.setContentsMargins(0, 0, 0, 0)
+
+        # Splitter: sidebar | viewer stacked panel
+        self._main_splitter = QtWidgets.QSplitter(Qt.Horizontal)
+        self._main_splitter.setChildrenCollapsible(False)
+        self._main_splitter.setHandleWidth(5)
+        self._main_splitter.setStyleSheet(
+            "QSplitter::handle { background: transparent; }"
+            "QSplitter::handle:hover { background: rgba(99,102,241,0.35); border-radius: 2px; }"
+        )
 
         # === LEFT SIDEBAR ===
         self.left_panel = QtWidgets.QWidget()
         left_panel = self.left_panel   # local alias for existing code below
         left_panel.setObjectName("LeftPanel")
-        self._sidebar_pref_width = 320
+        self._sidebar_pref_width = 340
         self._sidebar_min_width = 260
-        self._sidebar_max_width = 360
         left_panel.setMinimumWidth(self._sidebar_min_width)
-        left_panel.setMaximumWidth(self._sidebar_max_width)
         left_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.MinimumExpanding)
         left_panel.setStyleSheet(f"""
             QWidget#LeftPanel {{
@@ -7302,43 +7456,72 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_synthesis_select = QtWidgets.QWidget()
         syn_sel_layout = QtWidgets.QVBoxLayout(self.wgt_synthesis_select)
         syn_sel_layout.setContentsMargins(0, 4, 0, 0)
-        syn_sel_layout.setSpacing(6)
+        syn_sel_layout.setSpacing(4)
         self.wgt_synthesis_select.setVisible(False)
 
-        # Helper: create one role row (label + combo)
-        _ROLE_DISPLAY = {
-            "bse":    "BSE Center",
-            "top":    "SE Top",
-            "bottom": "SE Bottom",
-            "left":   "SE Left",
-            "right":  "SE Right",
-        }
+        # ── Position diagram: 3×3 corner grid (icons only, no combos inside)
+        # Detectors at 45°/135°/225°/315° diagonal positions around BSE centre.
+        # Bulb angle = direction the light shines (tip points toward BSE centre).
+        #   SE Top  → NW corner, bulb at 135° (shines toward SE)
+        #   SE Right→ NE corner, bulb at 225° (shines toward SW)
+        #   SE Left → SW corner, bulb at 315° (shines toward NE)
+        #   SE Bot  → SE corner, bulb at  45° (shines toward NW)
+        _ICON_POS = [
+            ("top",    0, 0, 135.0),
+            ("right",  0, 2, 225.0),
+            ("bse",    1, 1,  None),
+            ("left",   2, 0,  45.0),
+            ("bottom", 2, 2, 315.0),
+        ]
+        _pos_diagram_wgt = QtWidgets.QWidget()
+        _pos_grid = QtWidgets.QGridLayout(_pos_diagram_wgt)
+        _pos_grid.setSpacing(2)
+        _pos_grid.setContentsMargins(0, 0, 0, 4)
+        for _role, _row, _col, _angle in _ICON_POS:
+            _ic = QtWidgets.QLabel()
+            _ic.setAlignment(Qt.AlignCenter)
+            _ic.setFixedSize(40, 40)
+            _ic.setStyleSheet("background: transparent; border: none;")
+            _ic.setPixmap(_make_bse_pixmap(40) if _angle is None else _make_bulb_pixmap(40, _angle))
+            _pos_grid.addWidget(_ic, _row, _col)
+        syn_sel_layout.addWidget(_pos_diagram_wgt, 0, Qt.AlignCenter)
+
+        # ── Combo rows: [mini-icon] [role label] [combo box — full remaining width]
         self._syn_combos: Dict[str, QtWidgets.QComboBox] = {}
-        for role in SYNTHESIS_ROLES:
-            row = QtWidgets.QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(6)
-            lbl_r = QtWidgets.QLabel(_ROLE_DISPLAY[role])
-            lbl_r.setFixedWidth(76)
-            lbl_r.setStyleSheet(
+        _ROLE_ROWS = [
+            ("bse",    "BSE",     None),
+            ("top",    "SE Top",  135.0),
+            ("right",  "SE Right",225.0),
+            ("left",   "SE Left",  45.0),
+            ("bottom", "SE Bot",  315.0),
+        ]
+        for role, lbl_text, angle in _ROLE_ROWS:
+            row_lay = QtWidgets.QHBoxLayout()
+            row_lay.setContentsMargins(0, 0, 0, 0)
+            row_lay.setSpacing(4)
+            mini_ic = QtWidgets.QLabel()
+            mini_ic.setFixedSize(20, 20)
+            mini_ic.setStyleSheet("background: transparent; border: none;")
+            mini_ic.setPixmap(_make_bse_pixmap(20) if angle is None else _make_bulb_pixmap(20, angle))
+            row_lay.addWidget(mini_ic)
+            lbl_role = QtWidgets.QLabel(lbl_text)
+            lbl_role.setFixedWidth(50)
+            lbl_role.setStyleSheet(
                 f"font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};"
+                " background: transparent; border: none;"
             )
-            row.addWidget(lbl_r)
+            row_lay.addWidget(lbl_role)
             cmb_r = QtWidgets.QComboBox()
             cmb_r.addItem("— None —")
-            cmb_r.setToolTip(f"Assign an image to the {_ROLE_DISPLAY[role]} role")
-            row.addWidget(cmb_r, 1)
-            syn_sel_layout.addLayout(row)
+            cmb_r.setToolTip(f"Assign an image to the {lbl_text} role")
+            row_lay.addWidget(cmb_r, 1)
             self._syn_combos[role] = cmb_r
+            syn_sel_layout.addLayout(row_lay)
 
-        # Auto-detect button
-        self.btn_syn_auto_detect = QtWidgets.QPushButton("Auto-detect roles")
-        self.btn_syn_auto_detect.setProperty("role", "secondary")
-        self.btn_syn_auto_detect.setFixedHeight(26)
-        self.btn_syn_auto_detect.setToolTip(
-            "Attempt to assign images automatically based on filename keywords\n"
-            "(BSE/Illum, Top/Up, Bottom/Down, Left, Right)."
-        )
+        # Generate button — directly triggers synthesis compute
+        self.btn_syn_auto_detect = QtWidgets.QPushButton("⚡  Generate")
+        self.btn_syn_auto_detect.setFixedHeight(28)
+        self.btn_syn_auto_detect.setToolTip("Run Multi-Image Synthesis with current role assignments.")
         syn_sel_layout.addWidget(self.btn_syn_auto_detect)
 
         input_layout.addWidget(self.wgt_synthesis_select)
@@ -7823,10 +8006,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.left_panel_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
-        self.left_panel_scroll.setMaximumWidth(self._sidebar_max_width)
         self.left_panel_scroll.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         self.left_panel_scroll.setWidget(left_panel)
-        content_layout.addWidget(self.left_panel_scroll, stretch=0)
+        self._main_splitter.addWidget(self.left_panel_scroll)   # splitter index 0
 
         # ================================================================
         # RIGHT PANEL: Viewer + Controls
@@ -7845,8 +8027,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             }}
         """
 
-        left_section = QtWidgets.QVBoxLayout()
+        # Wrap left_section in a widget so it can be placed in a QSplitter
+        self._left_viewer_widget = QtWidgets.QWidget()
+        left_section = QtWidgets.QVBoxLayout(self._left_viewer_widget)
         left_section.setSpacing(4)
+        left_section.setContentsMargins(0, 0, 0, 0)
 
         # Left control bar: Base | Compare  +  Split View toggle + slider
         left_ctrl_bar = QtWidgets.QFrame()
@@ -7927,86 +8112,13 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_syn_grid.setStyleSheet(f"background: {UI_BG_VIEWER};")
         syn_grid_outer = QtWidgets.QVBoxLayout(self.wgt_syn_grid)
         syn_grid_outer.setContentsMargins(4, 4, 4, 4)
-        syn_grid_outer.setSpacing(6)
+        syn_grid_outer.setSpacing(0)
 
-        syn_mode_row = QtWidgets.QHBoxLayout()
-        syn_mode_row.setContentsMargins(0, 0, 0, 0)
-        syn_mode_row.setSpacing(0)
-        self.btn_syn_view_sources = QtWidgets.QPushButton("5-Grid Sources")
-        self.btn_syn_view_sources.setCheckable(True)
-        self.btn_syn_view_sources.setChecked(True)
-        self.btn_syn_view_sources.setProperty("viewerMode", True)
-        self.btn_syn_view_sources.setObjectName("ViewerModeFirst")
-        self.btn_syn_view_result = QtWidgets.QPushButton("Result Preview")
-        self.btn_syn_view_result.setCheckable(True)
-        self.btn_syn_view_result.setProperty("viewerMode", True)
-        self.btn_syn_view_result.setObjectName("ViewerModeLast")
-        for btn in (self.btn_syn_view_sources, self.btn_syn_view_result):
-            btn.setFixedHeight(30)
-            syn_mode_row.addWidget(btn)
-        syn_mode_row.addStretch(1)
-        syn_grid_outer.addLayout(syn_mode_row)
-
-        self._syn_preview_stack = QtWidgets.QStackedWidget()
-
-        # 3×3 grid with thumbnails in physical positions
-        self._syn_sources_view = QtWidgets.QWidget()
-        sources_layout = QtWidgets.QVBoxLayout(self._syn_sources_view)
-        sources_layout.setContentsMargins(0, 0, 0, 0)
-        sources_layout.setSpacing(2)
-        self._syn_grid_layout = QtWidgets.QGridLayout()
-        self._syn_grid_layout.setSpacing(3)
-        self._syn_thumb_labels: Dict[str, QtWidgets.QLabel] = {}
-        _GRID_POS = {   # role → (row, col)
-            "bse": (1, 1), "top": (0, 1), "bottom": (2, 1),
-            "left": (1, 0), "right": (1, 2),
-        }
-        _ROLE_DISPLAY_GRID = {
-            "bse": "BSE", "top": "Top", "bottom": "Bot",
-            "left": "Left", "right": "Right",
-        }
-        for role, (row, col) in _GRID_POS.items():
-            cell = QtWidgets.QWidget()
-            cell.setStyleSheet(
-                "background: #1F2937; border-radius: 4px;"
-            )
-            cell_layout = QtWidgets.QVBoxLayout(cell)
-            cell_layout.setContentsMargins(2, 2, 2, 2)
-            cell_layout.setSpacing(2)
-            img_lbl = QtWidgets.QLabel()
-            img_lbl.setAlignment(Qt.AlignCenter)
-            img_lbl.setStyleSheet("background: transparent; border: none;")
-            img_lbl.setMinimumSize(80, 80)
-            img_lbl.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-            )
-            role_lbl = QtWidgets.QLabel(_ROLE_DISPLAY_GRID[role])
-            role_lbl.setAlignment(Qt.AlignCenter)
-            role_lbl.setStyleSheet(
-                "color: #9CA3AF; font-size: 10px; background: transparent; border: none;"
-            )
-            cell_layout.addWidget(img_lbl, 1)
-            cell_layout.addWidget(role_lbl)
-            self._syn_grid_layout.addWidget(cell, row, col)
-            self._syn_thumb_labels[role] = img_lbl
-
-        sources_layout.addLayout(self._syn_grid_layout, 1)
-
-        self._syn_result_view = QtWidgets.QWidget()
-        result_layout = QtWidgets.QVBoxLayout(self._syn_result_view)
-        result_layout.setContentsMargins(0, 0, 0, 0)
-        result_layout.setSpacing(4)
-        result_layout.addWidget(QtWidgets.QLabel("Overall Synthesis Preview"))
-        self._syn_overall_preview = QtWidgets.QLabel("Live preview not ready")
-        self._syn_overall_preview.setAlignment(Qt.AlignCenter)
-        self._syn_overall_preview.setMinimumHeight(240)
-        self._syn_overall_preview.setStyleSheet(
-            "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
-        )
-        result_layout.addWidget(self._syn_overall_preview, 1)
-        self._syn_preview_stack.addWidget(self._syn_sources_view)
-        self._syn_preview_stack.addWidget(self._syn_result_view)
-        syn_grid_outer.addWidget(self._syn_preview_stack, 1)
+        # Single full-size SyncZoomImageWidget — ROI-drawable synthesis preview.
+        # Shading sub-maps are shown in the horizontal strip below wgt_bottom_row.
+        self.img_syn_preview = SyncZoomImageWidget("Synthesis Preview")
+        self.img_syn_preview.setMinimumHeight(220)
+        syn_grid_outer.addWidget(self.img_syn_preview, 1)
         self.stk_blend.addWidget(self.wgt_syn_grid)  # index 2 synthesis grid
 
         self.stk_blend.setCurrentIndex(0)
@@ -8120,14 +8232,20 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         _top_btn_row.addStretch()
         right_layout.addLayout(_top_btn_row)
 
-        image_row = QtWidgets.QHBoxLayout()
-        image_row.setSpacing(8)
-        image_row.addLayout(left_section, stretch=1)
-        image_row.addWidget(self.wgt_diff_section, stretch=1)
-        image_row.setStretch(0, 1)
-        image_row.setStretch(1, 1)
+        # Viewer splitter: stk_blend (left) | wgt_diff_section (right)
+        self._viewer_splitter = QtWidgets.QSplitter(Qt.Horizontal)
+        self._viewer_splitter.setChildrenCollapsible(False)
+        self._viewer_splitter.setHandleWidth(5)
+        self._viewer_splitter.setStyleSheet(
+            "QSplitter::handle { background: transparent; }"
+            "QSplitter::handle:hover { background: rgba(99,102,241,0.35); border-radius: 2px; }"
+        )
+        self._viewer_splitter.addWidget(self._left_viewer_widget)
+        self._viewer_splitter.addWidget(self.wgt_diff_section)
+        self._viewer_splitter.setStretchFactor(0, 1)
+        self._viewer_splitter.setStretchFactor(1, 1)
         self.wgt_diff_section.setVisible(False)  # hidden until compute
-        right_layout.addLayout(image_row, stretch=4)
+        right_layout.addWidget(self._viewer_splitter, stretch=4)
 
         # Hidden backward-compat widgets (not shown)
         self.lbl_blend_info = QtWidgets.QLabel("")
@@ -8200,6 +8318,54 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_score_widget.setVisible(False)
 
         right_layout.addWidget(self.wgt_bottom_row)
+
+        # ── Post-compute shading sub-map strip (Option A) ────────────────────
+        # Appears below wgt_bottom_row after a Directional Shading compute.
+        self.wgt_syn_submap_strip = QtWidgets.QWidget()
+        self.wgt_syn_submap_strip.setVisible(False)
+        _strip_outer = QtWidgets.QVBoxLayout(self.wgt_syn_submap_strip)
+        _strip_outer.setContentsMargins(0, 4, 0, 0)
+        _strip_outer.setSpacing(0)
+        _strip_title = QtWidgets.QLabel("Shading Sub-Maps")
+        _strip_title.setStyleSheet(
+            f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_SMALL};"
+            f" color: {UI_TEXT}; border: none; background: transparent; padding-bottom: 3px;"
+        )
+        _strip_outer.addWidget(_strip_title)
+        _strip_row = QtWidgets.QHBoxLayout()
+        _strip_row.setSpacing(6)
+        _strip_row.setContentsMargins(0, 0, 0, 0)
+        _SUBMAP_DEFS = [
+            ("topo",      "Topo"),
+            ("bse_clean", "BSE-Clean"),
+            ("composite", "Composite"),
+            ("relief",    "Relief"),
+        ]
+        self._syn_shading_map_labels: Dict[str, _ScalableThumbLabel] = {}
+        for _key, _title in _SUBMAP_DEFS:
+            _card = QtWidgets.QFrame()
+            _card.setObjectName("BottomCard")
+            _card_lay = QtWidgets.QVBoxLayout(_card)
+            _card_lay.setContentsMargins(6, 6, 6, 4)
+            _card_lay.setSpacing(3)
+            _card_title_lbl = QtWidgets.QLabel(_title)
+            _card_title_lbl.setAlignment(Qt.AlignCenter)
+            _card_title_lbl.setStyleSheet(
+                f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_SMALL};"
+                f" color: {UI_TEXT}; border: none; background: transparent;"
+            )
+            _card_lay.addWidget(_card_title_lbl)
+            _slbl = _ScalableThumbLabel()
+            _slbl.setText("—")
+            _slbl.setMinimumHeight(110)
+            _slbl.setStyleSheet(
+                "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:4px;"
+            )
+            _card_lay.addWidget(_slbl, 1)
+            self._syn_shading_map_labels[_key] = _slbl
+            _strip_row.addWidget(_card, 1)
+        _strip_outer.addLayout(_strip_row)
+        right_layout.addWidget(self.wgt_syn_submap_strip)
 
         # === QUADRANT FUSION RIGHT PANEL (Page 1) ===
         qf_right_panel = QtWidgets.QWidget()
@@ -8388,7 +8554,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.stk_right_panel.addWidget(qf_right_panel)  # index 1 = Quadrant Fusion
         self.stk_right_panel.setCurrentIndex(0)
 
-        content_layout.addWidget(self.stk_right_panel, stretch=1)
+        self._main_splitter.addWidget(self.stk_right_panel)     # splitter index 1
+        self._main_splitter.setStretchFactor(0, 0)  # sidebar — fixed
+        self._main_splitter.setStretchFactor(1, 1)  # viewer  — expanding
 
         # P1-2: ROI Manager slide-in side panel (hidden by default)
         self.roi_side_panel = QtWidgets.QFrame()
@@ -8442,12 +8610,10 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         self._roi_panel_populated = False  # filled on first open
         self.roi_side_panel.setVisible(False)
-        content_layout.addWidget(self.roi_side_panel, stretch=0)
 
-        content_layout.setStretch(0, 0)
-        content_layout.setStretch(1, 1)
-        content_layout.setStretch(2, 0)
-        outer_layout.addLayout(content_layout, stretch=1)
+        _content_hbox.addWidget(self._main_splitter, stretch=1)
+        _content_hbox.addWidget(self.roi_side_panel, stretch=0)
+        outer_layout.addLayout(_content_hbox, stretch=1)
 
         # ── Embedded progress banner (shown during compute) ───────────────
         self.wgt_progress_banner = QtWidgets.QWidget()
@@ -8508,23 +8674,30 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         )
         self._apply_responsive_sidebar_layout()
 
+        # F11 toggles fullscreen
+        _fs_sc = QtGui.QShortcut(QtGui.QKeySequence(Qt.Key_F11), self)
+        _fs_sc.activated.connect(self._toggle_fullscreen)
+
+    # ── Fullscreen ────────────────────────────────────────────────────────────
+    def _toggle_fullscreen(self) -> None:
+        """Toggle between fullscreen and normal window state (F11)."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
         self._apply_responsive_sidebar_layout()
 
     def _apply_responsive_sidebar_layout(self):
-        """Apply responsive sidebar sizing and control reflow based on current width."""
+        """Apply responsive control reflow based on current sidebar width.
+
+        Width constraints are now managed by the QSplitter so we only handle
+        element reflow (e.g., stacking labels when the sidebar is narrow).
+        """
         if not hasattr(self, "left_panel"):
             return
-
-        total_w = max(1, self.width())
-        # Keep sidebar readable and bounded; viewer gets most extra space.
-        target_w = int(total_w * 0.27)
-        target_w = max(self._sidebar_min_width, min(self._sidebar_max_width, target_w))
-        self.left_panel_scroll.setMinimumWidth(self._sidebar_min_width)
-        self.left_panel_scroll.setMaximumWidth(target_w)
-        self.left_panel.setMinimumWidth(self._sidebar_min_width)
-        self.left_panel.setMaximumWidth(target_w)
 
         sidebar_w = self.left_panel.width()
         compact = sidebar_w < 305
@@ -8620,7 +8793,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_syn_shading_output.currentIndexChanged.connect(
             lambda _: self._on_syn_light_visibility()
         )
-        self.btn_syn_auto_detect.clicked.connect(self._on_syn_auto_detect)
+        self.btn_syn_auto_detect.clicked.connect(lambda: self._on_live_param_changed(False))
         for role, sld in self._syn_weight_sliders.items():
             sld.valueChanged.connect(lambda _: self._on_live_param_changed(False))
         self.cmb_syn_shading_output.currentIndexChanged.connect(
@@ -8629,8 +8802,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.spn_syn_light_angle.valueChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
-        self.btn_syn_view_sources.clicked.connect(lambda: self._set_syn_preview_page(0))
-        self.btn_syn_view_result.clicked.connect(lambda: self._set_syn_preview_page(1))
+        # btn_syn_view_sources / btn_syn_view_result removed — unified view uses splitter
         self.chk_syn_invert_result.stateChanged.connect(
             lambda _: self._on_live_param_changed(False)
         )
@@ -8871,10 +9043,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._on_live_param_changed(False)
 
     def _set_syn_preview_page(self, page_idx: int) -> None:
-        page_idx = 0 if page_idx == 0 else 1
-        self._syn_preview_stack.setCurrentIndex(page_idx)
-        self.btn_syn_view_sources.setChecked(page_idx == 0)
-        self.btn_syn_view_result.setChecked(page_idx == 1)
+        """No-op: compass and result tabs are always visible in the vertical splitter."""
 
     def _on_syn_auto_detect(self) -> None:
         """Auto-assign roles based on filename keywords."""
@@ -8897,26 +9066,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_syn_grid_thumbnails()
 
     def _update_syn_grid_thumbnails(self) -> None:
-        """Refresh the 5-grid preview thumbnails from current role assignments."""
-        for role, img_lbl in self._syn_thumb_labels.items():
-            cmb = self._syn_combos[role]
-            sel = cmb.currentText()
-            img = self._images.get(sel) if sel and sel != "— None —" else None
-            if img is not None:
-                thumb = self._make_thumb(img, 120)
-                img_lbl.setPixmap(thumb)
-            else:
-                img_lbl.setPixmap(QtGui.QPixmap())
-                img_lbl.setText("—")
-        self._update_syn_overall_preview(None)
+        """Trigger live preview when role assignments change (grid removed)."""
+        self._on_live_param_changed(False)
 
     def _update_syn_overall_preview(self, img: Optional[np.ndarray]) -> None:
-        if img is None:
-            self._syn_overall_preview.setPixmap(QtGui.QPixmap())
-            self._syn_overall_preview.setText("Live preview not ready")
-            return
-        self._syn_overall_preview.setPixmap(self._make_thumb(img, 220))
-        self._syn_overall_preview.setText("")
+        self.img_syn_preview.setImage(img)
 
     @staticmethod
     def _make_thumb(img: np.ndarray, size: int) -> QtGui.QPixmap:
@@ -9444,7 +9598,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if isinstance(result, SynthesisResult):
             # Synthesis: "Base" shows BSE, "Compare" shows result image
             if mode == 'base':
-                bse = result.aligned_roles.get("bse") or result.role_images_used.get("bse")
+                _bse_al = result.aligned_roles.get("bse")
+                bse = _bse_al if _bse_al is not None else result.role_images_used.get("bse")
                 if bse is not None:
                     self.img_base_mag.setImage(bse)
             elif mode == 'compare':
@@ -9624,7 +9779,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_param_changed(self, is_align_change: bool = False) -> None:
         """Called when any watched parameter widget changes."""
-        if not self._live_preview_enabled:
+        _is_synthesis = self.cmb_input_mode.currentIndex() == 1
+        if not self._live_preview_enabled and not _is_synthesis:
             return
         if not self._images:
             return
@@ -9635,7 +9791,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if is_align_change:
             self._alignment_cache.clear()
 
-        if self.cmb_input_mode.currentIndex() == 1:
+        if _is_synthesis:
             params = self._collect_synthesis_preview_params()
         else:
             params = self._collect_preview_params()
@@ -10390,6 +10546,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_back_to_settings(self) -> None:
         """Restore pre-compute state: show settings panel, hide diff viewer."""
+        # In synthesis mode the sidebar was never hidden, so this is a no-op for it;
+        # in standard mode it was hidden and needs to be restored.
         self.left_panel_scroll.setVisible(True)
         self.wgt_diff_section.setVisible(False)
         self.btn_back_to_settings.setVisible(False)
@@ -10403,6 +10561,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_panel.reset()
         self.diff_roi_panel.reset()
         self._roi_full_results = {}
+        # Reset synthesis preview: hide submap strip and clear labels
+        self.wgt_syn_submap_strip.setVisible(False)
+        for _lbl in self._syn_shading_map_labels.values():
+            _lbl.set_source_pixmap(None)
+            _lbl.setText("—")
+        self._update_syn_overall_preview(None)
         self._roi_remapped_sets = {}
         self._roi_ref_base_label = None
 
@@ -10764,7 +10928,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_progress_banner.setVisible(True)
         QtWidgets.QApplication.processEvents()
 
-        def _run():
+        def _run(_worker=None):
             return compute_multi_synthesis(
                 role_images=_role_images,
                 algorithm=_algorithm,
@@ -10801,8 +10965,22 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_navigation()
         self.btn_export.setEnabled(True)
 
-        # Post-compute layout (same as standard mode)
-        self.left_panel_scroll.setVisible(False)
+        # ── Populate shading sub-map strip ───────────────────────────────────
+        _has_shading = result.shading_maps is not None
+        self.wgt_syn_submap_strip.setVisible(_has_shading)
+        if _has_shading:
+            for _key, _lbl in self._syn_shading_map_labels.items():
+                _sub = result.shading_maps.get(_key)
+                if _sub is not None:
+                    _lbl.set_source_pixmap(self._make_thumb(_sub, 512))
+                    _lbl.setText("")
+                else:
+                    _lbl.set_source_pixmap(None)
+                    _lbl.setText("— not available —")
+
+        # Post-compute layout for synthesis: keep the sidebar visible so the
+        # user retains context (roles/algorithm they configured).  Only the
+        # diff viewer needs to be revealed; the sidebar stays put.
         self.wgt_diff_section.setVisible(True)
         self.btn_back_to_settings.setVisible(True)
         self.wgt_bottom_row.setVisible(True)
@@ -11085,7 +11263,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         if isinstance(result, SynthesisResult):
             # For synthesis: show BSE image in magnifier, result in split-view
-            bse = result.aligned_roles.get("bse") or result.role_images_used.get("bse")
+            _bse_aligned = result.aligned_roles.get("bse")
+            bse = _bse_aligned if _bse_aligned is not None else result.role_images_used.get("bse")
             base_img = bse
             compare_img = result.result_image
         else:
@@ -11389,23 +11568,38 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         # Ensure the embedded widget is always visible (accept() may have hidden it)
         self._roi_manager.setVisible(True)
 
-        # Provide current base image shape for pixel→norm conversion
-        base_label = self.cmb_base.currentText()
-        base_img = self._images.get(base_label)
-        if base_img is not None:
-            self._roi_manager.set_image_shape(base_img.shape[:2])
-            self._apply_roi_visibility()
+        _is_synthesis = self.cmb_input_mode.currentIndex() == 1
 
-        # In auto-pair mode before any compute, img_base_mag may show stale or
-        # empty content because _on_base_changed() is not called when auto-pair
-        # is toggled on.  Force-display the cmb_base image so the user draws ROI
-        # on a known, labeled image, ensuring _roi_ref_base_label is correct.
-        if self.chk_auto_pair.isChecked() and not self._results and base_img is not None:
-            self.img_base_mag.setImage(base_img)
+        if _is_synthesis:
+            # In synthesis mode retarget ROI drawing to the synthesis preview widget.
+            self._roi_manager.set_base_widget(self.img_syn_preview)
+            # Derive image shape from BSE or synthesized result
+            _bse_img = self._syn_combos["bse"].currentText()
+            _ref_img = self._images.get(_bse_img) if _bse_img and _bse_img != "— None —" else None
+            if _ref_img is None and self._results:
+                _r = self._results[self._current_result_idx]
+                if isinstance(_r, SynthesisResult):
+                    _ref_img = _r.result_image
+            if _ref_img is not None:
+                self._roi_manager.set_image_shape(_ref_img.shape[:2])
+                self.img_syn_preview.set_multi_roi_set(self._multi_roi_set)
+        else:
+            # Standard mode: retarget back to img_base_mag (handles mode switches)
+            self._roi_manager.set_base_widget(self.img_base_mag)
+            base_label = self.cmb_base.currentText()
+            base_img = self._images.get(base_label)
+            if base_img is not None:
+                self._roi_manager.set_image_shape(base_img.shape[:2])
+                self._apply_roi_visibility()
+
+            # In auto-pair mode before any compute, img_base_mag may show stale or
+            # empty content because _on_base_changed() is not called when auto-pair
+            # is toggled on.  Force-display the cmb_base image so the user draws ROI
+            # on a known, labeled image, ensuring _roi_ref_base_label is correct.
+            if self.chk_auto_pair.isChecked() and not self._results and base_img is not None:
+                self.img_base_mag.setImage(base_img)
 
         # Record which base image the ROI is being drawn on.
-        # In auto-pair mode, use the currently displayed result's base_label
-        # (that image is what img_base_mag shows).  In standard mode, use cmb_base.
         self._capture_roi_ref_base()
 
         self.roi_side_panel.setVisible(True)
