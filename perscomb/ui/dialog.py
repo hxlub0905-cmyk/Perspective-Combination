@@ -1396,6 +1396,75 @@ class _ScalableThumbLabel(QtWidgets.QLabel):
         self._rescale()
 
 
+def _make_bulb_pixmap(size: int, angle_deg: float) -> QtGui.QPixmap:
+    """Draw a rotated SE-detector light-bulb icon (transparent background)."""
+    import math
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    p.translate(size / 2, size / 2)
+    p.rotate(angle_deg)
+    r = size * 0.26
+    bulb_cy = -size * 0.10
+    # Rays
+    ray_pen = QtGui.QPen(QtGui.QColor("#FFB800"), max(1, int(size * 0.055)))
+    ray_pen.setCapStyle(Qt.RoundCap)
+    p.setPen(ray_pen)
+    p.setBrush(Qt.NoBrush)
+    ri, ro = r * 1.15, r * 1.72
+    for deg in (-50, 0, 50):
+        rad = math.radians(deg - 90)
+        p.drawLine(
+            int(math.cos(rad) * ri), int(math.sin(rad) * ri + bulb_cy),
+            int(math.cos(rad) * ro), int(math.sin(rad) * ro + bulb_cy),
+        )
+    # Bulb circle
+    p.setBrush(QtGui.QBrush(QtGui.QColor("#FFE44D")))
+    p.setPen(QtGui.QPen(QtGui.QColor("#555"), max(1, int(size * 0.05))))
+    p.drawEllipse(QtCore.QPointF(0.0, bulb_cy), r, r)
+    # Shine
+    p.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 110)))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QtCore.QPointF(-r * 0.28, bulb_cy - r * 0.28), r * 0.28, r * 0.28)
+    # Screw-base stripes
+    base_top = bulb_cy + r + size * 0.015
+    stripe_h = size * 0.072
+    p.setBrush(QtGui.QBrush(QtGui.QColor("#9CA3AF")))
+    p.setPen(QtGui.QPen(QtGui.QColor("#666"), max(1, int(size * 0.04))))
+    for i in range(3):
+        w = r * (1.5 - i * 0.35)
+        p.drawRoundedRect(
+            QtCore.QRectF(-w / 2, base_top + i * stripe_h * 1.12, w, stripe_h * 0.88),
+            1.5, 1.5,
+        )
+    p.end()
+    return pm
+
+
+def _make_bse_pixmap(size: int) -> QtGui.QPixmap:
+    """Draw a BSE Elluminator concentric-ring icon (transparent background)."""
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    cx, cy = size / 2, size / 2
+    r_outer = size * 0.38
+    # Outer ring
+    p.setPen(QtGui.QPen(QtGui.QColor("#6366F1"), max(2, int(size * 0.09))))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QtCore.QPointF(cx, cy), r_outer, r_outer)
+    # Middle ring
+    p.setPen(QtGui.QPen(QtGui.QColor("#6366F1"), max(1, int(size * 0.05))))
+    p.drawEllipse(QtCore.QPointF(cx, cy), r_outer * 0.62, r_outer * 0.62)
+    # Centre dot
+    p.setBrush(QtGui.QBrush(QtGui.QColor("#6366F1")))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QtCore.QPointF(cx, cy), r_outer * 0.22, r_outer * 0.22)
+    p.end()
+    return pm
+
+
 class HistogramCanvas(FigureCanvas):
     """Interactive matplotlib canvas for histogram display.
 
@@ -6508,17 +6577,56 @@ class SynthesisLivePreviewWindow(QtWidgets.QDialog):
         viewer_layout.setContentsMargins(12, 12, 12, 12)
         viewer_layout.setSpacing(8)
         viewer_layout.addWidget(QtWidgets.QLabel("Synthesis Sources & Result"))
+        # 2×2 corner grid: SE detectors at corners + BSE row below with icon
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(4)
         self._thumbs: Dict[str, QtWidgets.QLabel] = {}
-        pos = {"top": (0, 1), "left": (1, 0), "bse": (1, 1), "right": (1, 2), "bottom": (2, 1)}
-        for role, (r, c) in pos.items():
+        # Corner positions: top-left=SE_Top, top-right=SE_Right,
+        #                   bot-left=SE_Left, bot-right=SE_Bottom
+        _corner_pos = {
+            "top":    (0, 0, 135.0),
+            "right":  (0, 2, 225.0),
+            "left":   (2, 0,  45.0),
+            "bottom": (2, 2, 315.0),
+        }
+        for role, (r, c, angle) in _corner_pos.items():
+            cell = QtWidgets.QWidget()
+            cell.setStyleSheet("background: #1F2937; border-radius: 4px;")
+            cell_lay = QtWidgets.QVBoxLayout(cell)
+            cell_lay.setContentsMargins(4, 4, 4, 2)
+            cell_lay.setSpacing(2)
+            _icon = QtWidgets.QLabel()
+            _icon.setAlignment(Qt.AlignCenter)
+            _icon.setFixedSize(30, 30)
+            _icon.setStyleSheet("background: transparent; border: none;")
+            _icon.setPixmap(_make_bulb_pixmap(30, angle))
+            cell_lay.addWidget(_icon, 0, Qt.AlignCenter)
             lbl = _ScalableThumbLabel()
             lbl.setText("—")
-            lbl.setMinimumSize(110, 90)
-            lbl.setStyleSheet("background:#1F2937; border-radius:4px;")
-            grid.addWidget(lbl, r, c)
+            lbl.setMinimumSize(90, 70)
+            lbl.setStyleSheet("background: transparent; border: none;")
+            cell_lay.addWidget(lbl, 1)
+            grid.addWidget(cell, r, c)
             self._thumbs[role] = lbl
+        # BSE at center (row 1, col 1) with ring icon
+        _bse_cell = QtWidgets.QWidget()
+        _bse_cell.setStyleSheet("background: #1F2937; border-radius: 4px;")
+        _bse_cell_lay = QtWidgets.QVBoxLayout(_bse_cell)
+        _bse_cell_lay.setContentsMargins(4, 4, 4, 2)
+        _bse_cell_lay.setSpacing(2)
+        _bse_icon = QtWidgets.QLabel()
+        _bse_icon.setAlignment(Qt.AlignCenter)
+        _bse_icon.setFixedSize(30, 30)
+        _bse_icon.setStyleSheet("background: transparent; border: none;")
+        _bse_icon.setPixmap(_make_bse_pixmap(30))
+        _bse_cell_lay.addWidget(_bse_icon, 0, Qt.AlignCenter)
+        _bse_thumb = _ScalableThumbLabel()
+        _bse_thumb.setText("—")
+        _bse_thumb.setMinimumSize(90, 70)
+        _bse_thumb.setStyleSheet("background: transparent; border: none;")
+        _bse_cell_lay.addWidget(_bse_thumb, 1)
+        grid.addWidget(_bse_cell, 1, 1)
+        self._thumbs["bse"] = _bse_thumb
         viewer_layout.addLayout(grid, 0)
         self.img_preview_diff = SyncZoomImageWidget("Synthesis Preview")
         viewer_layout.addWidget(self.img_preview_diff, 1)
@@ -7348,34 +7456,63 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_synthesis_select = QtWidgets.QWidget()
         syn_sel_layout = QtWidgets.QVBoxLayout(self.wgt_synthesis_select)
         syn_sel_layout.setContentsMargins(0, 4, 0, 0)
-        syn_sel_layout.setSpacing(6)
+        syn_sel_layout.setSpacing(4)
         self.wgt_synthesis_select.setVisible(False)
 
-        # Helper: create one role row (label + combo)
-        _ROLE_DISPLAY = {
-            "bse":    "BSE Center",
-            "top":    "SE Top",
-            "bottom": "SE Bottom",
-            "left":   "SE Left",
-            "right":  "SE Right",
-        }
+        # ── Detector position diagram: cross layout (BSE center + 4 directional SE)
+        # Each cell: rotated bulb icon  +  role label  +  combo box
+        # Angles: bulb "tip" (light) points toward the BSE centre.
+        #   SE Top   → bulb rotated 180° (base at top, tip points down)
+        #   SE Left  → bulb rotated  90° (tip points right)
+        #   BSE      → concentric-ring icon (no rotation)
+        #   SE Right → bulb rotated 270° (tip points left)
+        #   SE Bottom→ bulb rotated   0° (tip points up)
+        _ROLE_CONFIG = [
+            ("top",    0, 1, 180.0, "SE Top"),
+            ("left",   1, 0,  90.0, "SE Left"),
+            ("bse",    1, 1,  None, "BSE"),
+            ("right",  1, 2, 270.0, "SE Right"),
+            ("bottom", 2, 1,   0.0, "SE Bottom"),
+        ]
+        _det_grid_wgt = QtWidgets.QWidget()
+        _det_grid = QtWidgets.QGridLayout(_det_grid_wgt)
+        _det_grid.setSpacing(4)
+        _det_grid.setContentsMargins(0, 0, 0, 0)
         self._syn_combos: Dict[str, QtWidgets.QComboBox] = {}
-        for role in SYNTHESIS_ROLES:
-            row = QtWidgets.QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(6)
-            lbl_r = QtWidgets.QLabel(_ROLE_DISPLAY[role])
-            lbl_r.setFixedWidth(76)
-            lbl_r.setStyleSheet(
+
+        for role, row, col, angle, lbl_text in _ROLE_CONFIG:
+            cell_wgt = QtWidgets.QWidget()
+            cell_lay = QtWidgets.QVBoxLayout(cell_wgt)
+            cell_lay.setContentsMargins(2, 2, 2, 2)
+            cell_lay.setSpacing(2)
+
+            icon_lbl = QtWidgets.QLabel()
+            icon_lbl.setAlignment(Qt.AlignCenter)
+            icon_lbl.setFixedSize(44, 44)
+            icon_lbl.setStyleSheet("background: transparent; border: none;")
+            if angle is None:
+                icon_lbl.setPixmap(_make_bse_pixmap(44))
+            else:
+                icon_lbl.setPixmap(_make_bulb_pixmap(44, angle))
+            cell_lay.addWidget(icon_lbl, 0, Qt.AlignCenter)
+
+            lbl_role = QtWidgets.QLabel(lbl_text)
+            lbl_role.setAlignment(Qt.AlignCenter)
+            lbl_role.setStyleSheet(
                 f"font-size: {Typography.FONT_SIZE_SMALL}; color: {UI_TEXT};"
+                " background: transparent; border: none;"
             )
-            row.addWidget(lbl_r)
+            cell_lay.addWidget(lbl_role)
+
             cmb_r = QtWidgets.QComboBox()
             cmb_r.addItem("— None —")
-            cmb_r.setToolTip(f"Assign an image to the {_ROLE_DISPLAY[role]} role")
-            row.addWidget(cmb_r, 1)
-            syn_sel_layout.addLayout(row)
+            cmb_r.setToolTip(f"Assign an image to the {lbl_text} role")
+            cell_lay.addWidget(cmb_r)
             self._syn_combos[role] = cmb_r
+
+            _det_grid.addWidget(cell_wgt, row, col)
+
+        syn_sel_layout.addWidget(_det_grid_wgt)
 
         # Auto-detect button
         self.btn_syn_auto_detect = QtWidgets.QPushButton("Auto-detect roles")
@@ -7977,117 +8114,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         syn_grid_outer.setContentsMargins(4, 4, 4, 4)
         syn_grid_outer.setSpacing(0)
 
-        # Vertical splitter: compact compass grid (top) + result tabs (bottom).
-        # No toggle buttons needed — both panels are always visible.
-        self._syn_view_splitter = QtWidgets.QSplitter(Qt.Vertical)
-        self._syn_view_splitter.setChildrenCollapsible(False)
-        self._syn_view_splitter.setHandleWidth(5)
-        self._syn_view_splitter.setStyleSheet(
-            "QSplitter::handle { background: transparent; }"
-            "QSplitter::handle:hover { background: rgba(99,102,241,0.35); border-radius: 2px; }"
-        )
-
-        # 3×3 grid with thumbnails in physical positions
-        self._syn_sources_view = QtWidgets.QWidget()
-        sources_layout = QtWidgets.QVBoxLayout(self._syn_sources_view)
-        sources_layout.setContentsMargins(0, 0, 0, 0)
-        sources_layout.setSpacing(2)
-        self._syn_grid_layout = QtWidgets.QGridLayout()
-        self._syn_grid_layout.setSpacing(3)
-        self._syn_thumb_labels: Dict[str, QtWidgets.QLabel] = {}
-        _GRID_POS = {   # role → (row, col)
-            "bse": (1, 1), "top": (0, 1), "bottom": (2, 1),
-            "left": (1, 0), "right": (1, 2),
-        }
-        _ROLE_DISPLAY_GRID = {
-            "bse": "BSE", "top": "Top", "bottom": "Bot",
-            "left": "Left", "right": "Right",
-        }
-        for role, (row, col) in _GRID_POS.items():
-            cell = QtWidgets.QWidget()
-            cell.setStyleSheet(
-                "background: #1F2937; border-radius: 4px;"
-            )
-            cell_layout = QtWidgets.QVBoxLayout(cell)
-            cell_layout.setContentsMargins(2, 2, 2, 2)
-            cell_layout.setSpacing(2)
-            img_lbl = _ScalableThumbLabel()
-            img_lbl.setStyleSheet("background: transparent; border: none;")
-            img_lbl.setMinimumSize(80, 80)
-            role_lbl = QtWidgets.QLabel(_ROLE_DISPLAY_GRID[role])
-            role_lbl.setAlignment(Qt.AlignCenter)
-            role_lbl.setStyleSheet(
-                "color: #9CA3AF; font-size: 10px; background: transparent; border: none;"
-            )
-            cell_layout.addWidget(img_lbl, 1)
-            cell_layout.addWidget(role_lbl)
-            self._syn_grid_layout.addWidget(cell, row, col)
-            self._syn_thumb_labels[role] = img_lbl
-
-        sources_layout.addLayout(self._syn_grid_layout, 1)
-        # Compact: compass grid is the top pane; give it a bounded initial height
-        self._syn_sources_view.setMaximumHeight(260)
-
-        self._syn_result_view = QtWidgets.QWidget()
-        result_layout = QtWidgets.QVBoxLayout(self._syn_result_view)
-        result_layout.setContentsMargins(0, 0, 0, 0)
-        result_layout.setSpacing(0)
-
-        # ── Tab widget: "Result" always shown; shading sub-map tabs appear after
-        #    a Directional Shading compute finishes. ───────────────────────────
-        self._syn_map_tabs = QtWidgets.QTabWidget()
-        self._syn_map_tabs.setDocumentMode(True)
-        self._syn_map_tabs.setStyleSheet(
-            "QTabWidget::pane { border: none; margin: 0; }"
-            "QTabBar::tab { padding: 4px 10px; font-size: 11px; }"
-        )
-
-        # Tab 0 — main synthesised result (always visible)
-        _result_tab = QtWidgets.QWidget()
-        _rt_layout = QtWidgets.QVBoxLayout(_result_tab)
-        _rt_layout.setContentsMargins(0, 4, 0, 0)
-        self._syn_overall_preview = _ScalableThumbLabel()
-        self._syn_overall_preview.setText("Live preview not ready")
-        self._syn_overall_preview.setMinimumHeight(220)
-        self._syn_overall_preview.setStyleSheet(
-            "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
-        )
-        _rt_layout.addWidget(self._syn_overall_preview, 1)
-        self._syn_map_tabs.addTab(_result_tab, "Result")
-
-        # Tabs 1-4 — shading sub-maps (hidden until Directional Shading compute)
-        _SHADING_TABS: List[Tuple[str, str, str]] = [
-            ("topo",      "Topo",      "Gradient-magnitude topography"),
-            ("bse_clean", "BSE-Clean", "BSE with topography removed"),
-            ("composite", "Composite", "BSE-Clean + 0.4 × Topo"),
-            ("relief",    "Relief",    "Directional light-shading"),
-        ]
-        self._syn_shading_map_labels: Dict[str, _ScalableThumbLabel] = {}
-        for _key, _tab_title, _hint in _SHADING_TABS:
-            _stab = QtWidgets.QWidget()
-            _sl = QtWidgets.QVBoxLayout(_stab)
-            _sl.setContentsMargins(0, 4, 0, 0)
-            _slbl = _ScalableThumbLabel()
-            _slbl.setText(_hint)
-            _slbl.setMinimumHeight(220)
-            _slbl.setStyleSheet(
-                "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:6px;"
-            )
-            _sl.addWidget(_slbl, 1)
-            self._syn_shading_map_labels[_key] = _slbl
-            self._syn_map_tabs.addTab(_stab, _tab_title)
-
-        # Hide shading tabs by default
-        for _i in range(1, self._syn_map_tabs.count()):
-            self._syn_map_tabs.setTabVisible(_i, False)
-
-        result_layout.addWidget(self._syn_map_tabs, 1)
-
-        self._syn_view_splitter.addWidget(self._syn_sources_view)
-        self._syn_view_splitter.addWidget(self._syn_result_view)
-        self._syn_view_splitter.setStretchFactor(0, 0)  # compass — compact
-        self._syn_view_splitter.setStretchFactor(1, 1)  # result tabs — expanding
-        syn_grid_outer.addWidget(self._syn_view_splitter, 1)
+        # Single full-size SyncZoomImageWidget — ROI-drawable synthesis preview.
+        # Shading sub-maps are shown in the horizontal strip below wgt_bottom_row.
+        self.img_syn_preview = SyncZoomImageWidget("Synthesis Preview")
+        self.img_syn_preview.setMinimumHeight(220)
+        syn_grid_outer.addWidget(self.img_syn_preview, 1)
         self.stk_blend.addWidget(self.wgt_syn_grid)  # index 2 synthesis grid
 
         self.stk_blend.setCurrentIndex(0)
@@ -8287,6 +8318,54 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_score_widget.setVisible(False)
 
         right_layout.addWidget(self.wgt_bottom_row)
+
+        # ── Post-compute shading sub-map strip (Option A) ────────────────────
+        # Appears below wgt_bottom_row after a Directional Shading compute.
+        self.wgt_syn_submap_strip = QtWidgets.QWidget()
+        self.wgt_syn_submap_strip.setVisible(False)
+        _strip_outer = QtWidgets.QVBoxLayout(self.wgt_syn_submap_strip)
+        _strip_outer.setContentsMargins(0, 4, 0, 0)
+        _strip_outer.setSpacing(0)
+        _strip_title = QtWidgets.QLabel("Shading Sub-Maps")
+        _strip_title.setStyleSheet(
+            f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_SMALL};"
+            f" color: {UI_TEXT}; border: none; background: transparent; padding-bottom: 3px;"
+        )
+        _strip_outer.addWidget(_strip_title)
+        _strip_row = QtWidgets.QHBoxLayout()
+        _strip_row.setSpacing(6)
+        _strip_row.setContentsMargins(0, 0, 0, 0)
+        _SUBMAP_DEFS = [
+            ("topo",      "Topo"),
+            ("bse_clean", "BSE-Clean"),
+            ("composite", "Composite"),
+            ("relief",    "Relief"),
+        ]
+        self._syn_shading_map_labels: Dict[str, _ScalableThumbLabel] = {}
+        for _key, _title in _SUBMAP_DEFS:
+            _card = QtWidgets.QFrame()
+            _card.setObjectName("BottomCard")
+            _card_lay = QtWidgets.QVBoxLayout(_card)
+            _card_lay.setContentsMargins(6, 6, 6, 4)
+            _card_lay.setSpacing(3)
+            _card_title_lbl = QtWidgets.QLabel(_title)
+            _card_title_lbl.setAlignment(Qt.AlignCenter)
+            _card_title_lbl.setStyleSheet(
+                f"font-weight: {Typography.FONT_WEIGHT_BOLD}; font-size: {Typography.FONT_SIZE_SMALL};"
+                f" color: {UI_TEXT}; border: none; background: transparent;"
+            )
+            _card_lay.addWidget(_card_title_lbl)
+            _slbl = _ScalableThumbLabel()
+            _slbl.setText("—")
+            _slbl.setMinimumHeight(110)
+            _slbl.setStyleSheet(
+                "background:#111827; color:#9CA3AF; border:1px solid #374151; border-radius:4px;"
+            )
+            _card_lay.addWidget(_slbl, 1)
+            self._syn_shading_map_labels[_key] = _slbl
+            _strip_row.addWidget(_card, 1)
+        _strip_outer.addLayout(_strip_row)
+        right_layout.addWidget(self.wgt_syn_submap_strip)
 
         # === QUADRANT FUSION RIGHT PANEL (Page 1) ===
         qf_right_panel = QtWidgets.QWidget()
@@ -8987,29 +9066,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_syn_grid_thumbnails()
 
     def _update_syn_grid_thumbnails(self) -> None:
-        """Refresh the 5-grid preview thumbnails from current role assignments."""
-        for role, img_lbl in self._syn_thumb_labels.items():
-            cmb = self._syn_combos[role]
-            sel = cmb.currentText()
-            img = self._images.get(sel) if sel and sel != "— None —" else None
-            if img is not None:
-                img_lbl.set_source_pixmap(self._make_thumb(img, 512))
-                img_lbl.setText("")
-            else:
-                img_lbl.set_source_pixmap(None)
-                img_lbl.setText("—")
-        # Only clear the live-preview result when no full compute has been run yet;
-        # after compute the result stays valid until the user changes settings.
-        if not self._has_computed:
-            self._update_syn_overall_preview(None)
+        """Trigger live preview when role assignments change (grid removed)."""
+        self._on_live_param_changed(False)
 
     def _update_syn_overall_preview(self, img: Optional[np.ndarray]) -> None:
-        if img is None:
-            self._syn_overall_preview.set_source_pixmap(None)
-            self._syn_overall_preview.setText("Live preview not ready")
-            return
-        self._syn_overall_preview.set_source_pixmap(self._make_thumb(img, 512))
-        self._syn_overall_preview.setText("")
+        self.img_syn_preview.setImage(img)
 
     @staticmethod
     def _make_thumb(img: np.ndarray, size: int) -> QtGui.QPixmap:
@@ -9717,7 +9778,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_param_changed(self, is_align_change: bool = False) -> None:
         """Called when any watched parameter widget changes."""
-        if not self._live_preview_enabled:
+        _is_synthesis = self.cmb_input_mode.currentIndex() == 1
+        if not self._live_preview_enabled and not _is_synthesis:
             return
         if not self._images:
             return
@@ -9728,7 +9790,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         if is_align_change:
             self._alignment_cache.clear()
 
-        if self.cmb_input_mode.currentIndex() == 1:
+        if _is_synthesis:
             params = self._collect_synthesis_preview_params()
         else:
             params = self._collect_preview_params()
@@ -10498,14 +10560,12 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.align_panel.reset()
         self.diff_roi_panel.reset()
         self._roi_full_results = {}
-        # Reset synthesis preview: hide shading tabs, return to sources grid
-        for _i in range(1, self._syn_map_tabs.count()):
-            self._syn_map_tabs.setTabVisible(_i, False)
-        self._syn_map_tabs.setCurrentIndex(0)
+        # Reset synthesis preview: hide submap strip and clear labels
+        self.wgt_syn_submap_strip.setVisible(False)
         for _lbl in self._syn_shading_map_labels.values():
             _lbl.set_source_pixmap(None)
+            _lbl.setText("—")
         self._update_syn_overall_preview(None)
-        self._set_syn_preview_page(0)
         self._roi_remapped_sets = {}
         self._roi_ref_base_label = None
 
@@ -10867,7 +10927,7 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.wgt_progress_banner.setVisible(True)
         QtWidgets.QApplication.processEvents()
 
-        def _run():
+        def _run(_worker=None):
             return compute_multi_synthesis(
                 role_images=_role_images,
                 algorithm=_algorithm,
@@ -10904,10 +10964,9 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_navigation()
         self.btn_export.setEnabled(True)
 
-        # ── Populate shading sub-map tabs ────────────────────────────────────
+        # ── Populate shading sub-map strip ───────────────────────────────────
         _has_shading = result.shading_maps is not None
-        for _i in range(1, self._syn_map_tabs.count()):
-            self._syn_map_tabs.setTabVisible(_i, _has_shading)
+        self.wgt_syn_submap_strip.setVisible(_has_shading)
         if _has_shading:
             for _key, _lbl in self._syn_shading_map_labels.items():
                 _sub = result.shading_maps.get(_key)
@@ -10917,8 +10976,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 else:
                     _lbl.set_source_pixmap(None)
                     _lbl.setText("— not available —")
-        self._syn_map_tabs.setCurrentIndex(0)
-        self._set_syn_preview_page(1)
 
         # Post-compute layout for synthesis: keep the sidebar visible so the
         # user retains context (roles/algorithm they configured).  Only the
