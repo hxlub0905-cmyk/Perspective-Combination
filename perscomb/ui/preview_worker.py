@@ -147,7 +147,12 @@ class LivePreviewManager(QtCore.QObject):
             Uses longer debounce and already-cleared cache.
         """
         self._pending_params = params.copy()
-        delay = self.TIER1_DEBOUNCE_MS if is_align_change else self.TIER2_DEBOUNCE_MS
+        if is_align_change:
+            delay = self.TIER1_DEBOUNCE_MS
+        elif params.get("mode") == "synthesis":
+            delay = 300  # synthesis param change: 300 ms
+        else:
+            delay = self.TIER2_DEBOUNCE_MS
         self._timer.start(delay)
 
     def cancel(self) -> None:
