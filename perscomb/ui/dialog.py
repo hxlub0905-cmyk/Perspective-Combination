@@ -6844,7 +6844,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._alignment_cache: AlignmentCache = AlignmentCache()
         self._live_manager: Optional[LivePreviewManager] = None
         self._live_preview_window: Optional[LivePreviewWindow] = None
-        self._live_preview_window_synthesis: Optional[SynthesisLivePreviewWindow] = None
         self._live_preview_started_at: Optional[float] = None
         self._live_preview_cache_hit: bool = False
         self._preview_roi_manager: Optional[MultiROIManagerWidget] = None
@@ -6917,8 +6916,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._live_manager.cancel()
         if self._live_preview_window is not None:
             self._live_preview_window.close()
-        if self._live_preview_window_synthesis is not None:
-            self._live_preview_window_synthesis.close()
         if self._preview_roi_manager is not None:
             self._preview_roi_manager.close()
         if self._compute_thread is not None:
@@ -7517,12 +7514,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             row_lay.addWidget(cmb_r, 1)
             self._syn_combos[role] = cmb_r
             syn_sel_layout.addLayout(row_lay)
-
-        # Generate button — directly triggers synthesis compute
-        self.btn_syn_auto_detect = QtWidgets.QPushButton("⚡  Generate")
-        self.btn_syn_auto_detect.setFixedHeight(28)
-        self.btn_syn_auto_detect.setToolTip("Run Multi-Image Synthesis with current role assignments.")
-        syn_sel_layout.addWidget(self.btn_syn_auto_detect)
 
         input_layout.addWidget(self.wgt_synthesis_select)
 
@@ -8793,7 +8784,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.cmb_syn_shading_output.currentIndexChanged.connect(
             lambda _: self._on_syn_light_visibility()
         )
-        self.btn_syn_auto_detect.clicked.connect(lambda: self._on_live_param_changed(False))
         for role, sld in self._syn_weight_sliders.items():
             sld.valueChanged.connect(lambda _: self._on_live_param_changed(False))
         self.cmb_syn_shading_output.currentIndexChanged.connect(
@@ -8985,16 +8975,15 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self._update_syn_grid_thumbnails()
             if self._live_preview_window is not None and self._live_preview_window.isVisible():
                 self._live_preview_window.close()
-            self.btn_live_preview.setToolTip(
-                "Open a dedicated Multi-Image Synthesis live-preview workspace."
-            )
+            self.btn_live_preview.setVisible(False)
+            # Auto-trigger preview with a short delay so the UI settles first
+            QtCore.QTimer.singleShot(200, lambda: self._on_live_param_changed(False))
         else:
             # Restore standard view (page 0 magnifier or page 1 split)
             self.stk_blend.setCurrentIndex(0)
             self.setWindowTitle("Fusi³ — SEM Perspective Combination Tool")
             self._refresh_standard_mode_views()
-            if self._live_preview_window_synthesis is not None and self._live_preview_window_synthesis.isVisible():
-                self._live_preview_window_synthesis.close()
+            self.btn_live_preview.setVisible(True)
             self.btn_live_preview.setToolTip(
                 "Open a dedicated workspace for pair tuning and live diff preview."
             )
@@ -9327,16 +9316,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
         if self._live_preview_window is not None:
             self._live_preview_window.set_image_labels(self._get_image_labels())
-        if self._live_preview_window_synthesis is not None:
-            self._live_preview_window_synthesis.set_image_labels(self._get_image_labels())
-        if self._live_preview_window is not None or self._live_preview_window_synthesis is not None:
+        if self._live_preview_window is not None:
             if has_images:
                 self._sync_live_preview_window_from_main()
             else:
-                if self._live_preview_window is not None:
-                    self._live_preview_window.clear_preview()
-                if self._live_preview_window_synthesis is not None:
-                    self._live_preview_window_synthesis.clear_preview()
+                self._live_preview_window.clear_preview()
 
     def _update_sidebar_empty_state(self, has_images: bool):
         """Update sidebar placeholders and enablement when image set is empty/non-empty."""
@@ -9478,19 +9462,11 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._update_step_states()
 
     def _sync_live_preview_window_from_main(self) -> None:
-        state = self._collect_main_config_state()
         if self.cmb_input_mode.currentIndex() == 1:
-            if self._live_preview_window_synthesis is None:
-                return
-            self._live_preview_window_synthesis.set_image_labels(self._get_image_labels())
-            self._live_preview_window_synthesis.set_state(state, include_pair=False)
-            role_images = {}
-            for role, label in state.get("syn_role_labels", {}).items():
-                role_images[role] = self._images.get(label) if label and label != "— None —" else None
-            self._live_preview_window_synthesis.set_role_images(role_images)
             return
         if self._live_preview_window is None:
             return
+        state = self._collect_main_config_state()
         self._live_preview_window.set_image_labels(self._get_image_labels())
         self._live_preview_window.set_state(state, include_pair=True)
         self._update_live_preview_source_images(state.get("base_label"), state.get("compare_label"))
@@ -9744,15 +9720,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self._live_manager.preview_started.connect(self._on_live_preview_started)
 
     def _ensure_live_preview_window(self):
-        is_synthesis = self.cmb_input_mode.currentIndex() == 1
-        if is_synthesis:
-            if self._live_preview_window_synthesis is None:
-                self._live_preview_window_synthesis = SynthesisLivePreviewWindow(self)
-                self._live_preview_window_synthesis.preview_state_changed.connect(self._on_live_param_changed)
-                self._live_preview_window_synthesis.apply_to_main_requested.connect(self._on_live_preview_apply_requested)
-                self._live_preview_window_synthesis.reset_from_main_requested.connect(self._on_live_preview_reset_requested)
-                self._live_preview_window_synthesis.window_closed.connect(self._on_live_preview_window_closed)
-            return self._live_preview_window_synthesis
         if self._live_preview_window is None:
             self._live_preview_window = LivePreviewWindow(self)
             self._live_preview_window.preview_state_changed.connect(self._on_live_param_changed)
@@ -9776,28 +9743,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             self.lbl_live_status.setText("")
             if self._live_manager:
                 self._live_manager.cancel()
-
-    def _on_live_param_changed(self, is_align_change: bool = False) -> None:
-        """Called when any watched parameter widget changes."""
-        _is_synthesis = self.cmb_input_mode.currentIndex() == 1
-        if not self._live_preview_enabled and not _is_synthesis:
-            return
-        if not self._images:
-            return
-        if self._compute_thread is not None:
-            # Full compute in progress — don't overlap
-            return
-
-        if is_align_change:
-            self._alignment_cache.clear()
-
-        if _is_synthesis:
-            params = self._collect_synthesis_preview_params()
-        else:
-            params = self._collect_preview_params()
-        if params is None:
-            return
-        self._live_manager.schedule(params, is_align_change)
 
     def _collect_preview_params(self) -> Optional[dict]:
         """Return current UI parameter dict for preview, or None if not ready."""
@@ -9868,57 +9813,6 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
             "roi_match": use_roi_match,
         }
 
-    def _on_live_preview_started(self) -> None:
-        self.lbl_live_status.setText("Computing…")
-
-    def _on_live_preview_error(self, msg: str) -> None:
-        self.lbl_live_status.setText("\u26a0 Preview error")
-        import logging
-        logging.getLogger(__name__).warning("Live preview error: %s", msg)
-
-    def _on_live_preview_ready(self, result) -> None:
-        """Update diff display, histogram and stats from a live preview result.
-
-        Handles both SinglePairResult and SynthesisResult.
-        """
-        import dataclasses
-
-        # If a full-compute result exists for this pair/synthesis, preserve its
-        # SNR map so Z-Map mode continues to work correctly.
-        existing_snr = None
-        if self._results and not isinstance(result, SynthesisResult):
-            cur = self._results[self._current_result_idx]
-            if (not isinstance(cur, SynthesisResult)
-                    and cur.compare_label == result.compare_label):
-                existing_snr = cur.snr_map
-
-        if existing_snr is not None:
-            result = dataclasses.replace(result, snr_map=existing_snr)
-
-        # Store / update result
-        if self._results and self._results[self._current_result_idx].compare_label == result.compare_label:
-            self._results[self._current_result_idx] = result
-        else:
-            self._results = [result]
-            self._current_result_idx = 0
-
-        self._is_live_preview = True
-
-        # Show diff section if not yet visible (pre-compute first-fire)
-        if not self.wgt_diff_section.isVisible():
-            self._show_live_preview_layout()
-
-        # Update displays (reuse existing methods)
-        self._refresh_diff_display()
-        counts, edges = result.histogram
-        self.histogram_canvas.plot_histogram(counts, edges)
-        self._update_alignment_display(result)
-        self._update_stats_display(result)
-
-        # Show badge and update status label
-        self.lbl_live_badge.setVisible(True)
-        self.lbl_live_status.setText("Preview ready \u2014 press Compute for full result")
-
     def _show_live_preview_layout(self) -> None:
         """Switch to diff-viewer layout for the first live preview (pre-compute)."""
         self.left_panel_scroll.setVisible(False)
@@ -9959,53 +9853,62 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
                 self._live_manager.cancel()
             if self._live_preview_window is not None and self._live_preview_window.isVisible():
                 self._live_preview_window.close()
-            if self._live_preview_window_synthesis is not None and self._live_preview_window_synthesis.isVisible():
-                self._live_preview_window_synthesis.close()
             self.lbl_live_status.setText("")
 
     def _on_live_param_changed(self, is_align_change: bool = False) -> None:
-        """Schedule preview rendering from the preview workspace state."""
+        """Schedule a live preview render.
+
+        Synthesis mode: always runs directly from main-sidebar settings and
+        updates img_syn_preview — no floating window required.
+        Standard mode: requires Live Preview window to be open.
+        """
+        _is_synthesis = self.cmb_input_mode.currentIndex() == 1
+
+        if _is_synthesis:
+            if self._compute_thread is not None:
+                return
+            if not self._images:
+                return
+            if is_align_change:
+                self._alignment_cache.clear()
+            params = self._collect_synthesis_preview_params()
+            if params is None:
+                return
+            self._live_preview_cache_hit = False
+            self._live_preview_started_at = time.perf_counter()
+            self._live_manager.schedule(params, is_align_change)
+            return
+
+        # Standard mode — requires the floating Live Preview window
         if not self._live_preview_enabled:
             return
-        win = self._live_preview_window_synthesis if self.cmb_input_mode.currentIndex() == 1 else self._live_preview_window
+        win = self._live_preview_window
         if win is None or not win.isVisible():
             return
         if self._compute_thread is not None:
             return
-
         if is_align_change:
             self._alignment_cache.clear()
-
         state = win.current_state()
-        if self.cmb_input_mode.currentIndex() == 1:
-            role_images = {}
-            for role, label in state.get("syn_role_labels", {}).items():
-                role_images[role] = self._images.get(label) if label and label != "— None —" else None
-            win.set_role_images(role_images)
-            win.clear_diff_preview()
-            params = self._collect_synthesis_preview_params_from_state(state)
-            self._live_preview_cache_hit = False
-        else:
-            self._update_live_preview_source_images(
-                state.get("base_label"),
-                state.get("compare_label"),
-            )
-            win.clear_diff_preview()
-            params = self._collect_preview_params(
-                base_label=state.get("base_label"),
-                compare_label=state.get("compare_label"),
-                settings=state,
-            )
+        self._update_live_preview_source_images(
+            state.get("base_label"),
+            state.get("compare_label"),
+        )
+        win.clear_diff_preview()
+        params = self._collect_preview_params(
+            base_label=state.get("base_label"),
+            compare_label=state.get("compare_label"),
+            settings=state,
+        )
         if params is None:
             return
-        if params.get("mode") != "synthesis":
-            cache_key = self._alignment_cache.make_key(
-                params["base_label"],
-                params["compare_label"],
-                params["align_method"],
-                params["search_radius"],
-            )
-            self._live_preview_cache_hit = self._alignment_cache.get(cache_key) is not None
+        cache_key = self._alignment_cache.make_key(
+            params["base_label"],
+            params["compare_label"],
+            params["align_method"],
+            params["search_radius"],
+        )
+        self._live_preview_cache_hit = self._alignment_cache.get(cache_key) is not None
         self._live_preview_started_at = time.perf_counter()
         self._live_manager.schedule(params, is_align_change)
 
@@ -10081,33 +9984,30 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_preview_started(self) -> None:
         self.lbl_live_status.setText("Preview computing…")
-        win = self._live_preview_window_synthesis if self.cmb_input_mode.currentIndex() == 1 else self._live_preview_window
-        if win is not None:
-            win.set_rendering_state("Rendering preview…", "computing")
+        if self._live_preview_window is not None:
+            self._live_preview_window.set_rendering_state("Rendering preview…", "computing")
 
     def _on_live_preview_error(self, msg: str) -> None:
         self.lbl_live_status.setText("\u26a0 Preview error")
-        win = self._live_preview_window_synthesis if self.cmb_input_mode.currentIndex() == 1 else self._live_preview_window
-        if win is not None:
-            win.set_rendering_state(f"Preview error: {msg}", "error")
+        if self._live_preview_window is not None:
+            self._live_preview_window.set_rendering_state(f"Preview error: {msg}", "error")
         import logging
         logging.getLogger(__name__).warning("Live preview error: %s", msg)
 
     def _on_live_preview_ready(self, result) -> None:
-        """Render preview output inside the independent preview workspace."""
-        win = self._live_preview_window_synthesis if isinstance(result, SynthesisResult) else self._live_preview_window
-        if win is None:
-            return
+        """Render preview output — synthesis goes to img_syn_preview, standard to the live window."""
         latency_ms = None
         if self._live_preview_started_at is not None:
             latency_ms = (time.perf_counter() - self._live_preview_started_at) * 1000.0
         if isinstance(result, SynthesisResult):
-            base_img = result.role_images_used.get("bse")
-            compare_img = result.result_image
             self._update_syn_overall_preview(result.result_image)
-        else:
-            base_img = self._images.get(result.base_label)
-            compare_img = result.aligned_compare if result.aligned_compare is not None else self._images.get(result.compare_label)
+            self.lbl_live_status.setText("Preview ready")
+            return
+        win = self._live_preview_window
+        if win is None:
+            return
+        base_img = self._images.get(result.base_label)
+        compare_img = result.aligned_compare if result.aligned_compare is not None else self._images.get(result.compare_label)
         win.update_preview(
             base_image=base_img,
             aligned_compare=compare_img,
@@ -10118,37 +10018,17 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
         self.lbl_live_status.setText("Preview ready")
 
     def _on_live_preview_apply_requested(self, close_after: bool) -> None:
-        is_synthesis = self.cmb_input_mode.currentIndex() == 1
-        win = self._live_preview_window_synthesis if is_synthesis else self._live_preview_window
+        win = self._live_preview_window
         if win is None:
             return
         state = win.current_state()
-        if is_synthesis:
-            role_labels = state.get("syn_role_labels", {})
-            for role, cmb in self._syn_combos.items():
-                sel = role_labels.get(role, "— None —")
-                cmb.setCurrentText(sel if sel else "— None —")
-            self.cmb_syn_algorithm.setCurrentIndex(state.get("syn_algorithm_index", self.cmb_syn_algorithm.currentIndex()))
-            weight_values = state.get("syn_weight_values", {})
-            for role, slider in self._syn_weight_sliders.items():
-                slider.setValue(int(weight_values.get(role, slider.value())))
-            self.cmb_syn_shading_output.setCurrentIndex(state.get("syn_shading_output_index", self.cmb_syn_shading_output.currentIndex()))
-            self.spn_syn_light_angle.setValue(float(state.get("syn_light_angle", self.spn_syn_light_angle.value())))
-            self.chk_syn_invert_result.setChecked(bool(state.get("syn_invert_result", self.chk_syn_invert_result.isChecked())))
-            self.chk_syn_align.setChecked(bool(state.get("syn_align_to_bse", self.chk_syn_align.isChecked())))
-            self.cmb_align_method.setCurrentIndex(state.get("align_method_index", self.cmb_align_method.currentIndex()))
-            self.cmb_normalize_mode.setCurrentIndex(state.get("normalize_mode_index", self.cmb_normalize_mode.currentIndex()))
-            self.spn_glv_low.setValue(int(state.get("glv_low", self.spn_glv_low.value())))
-            self.spn_glv_high.setValue(int(state.get("glv_high", self.spn_glv_high.value())))
-            self._update_syn_grid_thumbnails()
-        else:
-            base_label = state.get("base_label")
-            compare_label = state.get("compare_label")
-            if base_label and base_label in self._images:
-                self.cmb_base.setCurrentText(base_label)
-                self._on_base_changed()
-            self._set_main_compare_selection(compare_label)
-            self._apply_config_state_to_main(state)
+        base_label = state.get("base_label")
+        compare_label = state.get("compare_label")
+        if base_label and base_label in self._images:
+            self.cmb_base.setCurrentText(base_label)
+            self._on_base_changed()
+        self._set_main_compare_selection(compare_label)
+        self._apply_config_state_to_main(state)
         self.lbl_live_status.setText("Preview settings applied to main")
         win.set_rendering_state("Applied to main window.", "applied")
         if close_after:
@@ -10156,12 +10036,8 @@ class PerspectiveCombinationDialog(QtWidgets.QDialog):
 
     def _on_live_preview_reset_requested(self) -> None:
         self._sync_live_preview_window_from_main()
-        if self.cmb_input_mode.currentIndex() == 1:
-            if self._live_preview_window_synthesis is not None:
-                self._live_preview_window_synthesis.clear_preview()
-        else:
-            if self._live_preview_window is not None:
-                self._live_preview_window.clear_preview()
+        if self._live_preview_window is not None:
+            self._live_preview_window.clear_preview()
         self._on_live_param_changed(False)
 
     def _on_live_preview_open_roi_manager(self) -> None:
